@@ -1,0 +1,348 @@
+package com.watchpicture.app.ui.screen
+
+import android.app.Activity
+import android.net.Uri
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import coil3.compose.AsyncImage
+import com.watchpicture.app.WatchPictureApp
+import com.watchpicture.app.coil.ZipImageSource
+import com.watchpicture.app.model.PackImage
+import com.watchpicture.app.ui.viewmodel.ViewerViewModel
+import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.Icon
+import top.yukonga.miuix.kmp.basic.IconButton
+import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
+import top.yukonga.miuix.kmp.basic.Slider
+import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.theme.MiuixTheme
+import java.io.File
+import kotlin.math.roundToInt
+
+/**
+ * Fullscreen picture viewer providing:
+ * - HorizontalPager page flipping
+ * - Double-tap zoom (1x <-> 2.5x)
+ * - Pinch-to-zoom and pan gestures
+ * - Single-tap toggle for immersive full-screen mode
+ * - Floating bottom controller with MiuixSlider for sub-second rapid jumping
+ */
+@Composable
+fun GalleryViewerScreen(
+    packId: String,
+    initialIndex: Int,
+    viewModel: ViewerViewModel,
+    onBack: () -> Unit
+) {
+    val uiState by viewModel.uiState.collectAsState()
+    val passwordStore = WatchPictureApp.instance.sessionPasswordStore
+    val sessionPassword = remember(packId) { passwordStore.get(packId) }
+    val coroutineScope = rememberCoroutineScope()
+    var isImmersive by remember { mutableStateOf(false) }
+
+    // Toggle system bars for immersive viewing
+    val view = LocalView.current
+    val window = (view.context as? Activity)?.window
+
+    DisposableEffect(isImmersive) {
+        if (window != null) {
+            val insetsController = WindowCompat.getInsetsController(window, view)
+            if (isImmersive) {
+                insetsController.hide(WindowInsetsCompat.Type.systemBars())
+                insetsController.systemBarsBehavior =
+                    WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+            } else {
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+        onDispose {
+            if (window != null) {
+                val insetsController = WindowCompat.getInsetsController(window, view)
+                insetsController.show(WindowInsetsCompat.Type.systemBars())
+            }
+        }
+    }
+
+    LaunchedEffect(packId) {
+        if (uiState.images.isEmpty()) {
+            viewModel.loadImages(packId)
+        }
+    }
+
+    val images = uiState.images
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Color.Black)
+    ) {
+        if (uiState.isLoading || images.isEmpty()) {
+            Box(
+                modifier = Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center
+            ) {
+                InfiniteProgressIndicator(
+                    modifier = Modifier.size(40.dp),
+                    color = Color.White
+                )
+            }
+        } else {
+            val safeInitialPage = initialIndex.coerceIn(0, images.size - 1)
+            val pagerState = rememberPagerState(
+                initialPage = safeInitialPage,
+                pageCount = { images.size }
+            )
+
+            // Horizontal Pager
+            HorizontalPager(
+                state = pagerState,
+                beyondViewportPageCount = 1,
+                userScrollEnabled = true,
+                modifier = Modifier.fillMaxSize()
+            ) { pageIndex ->
+                val image = images[pageIndex]
+                ZoomableImage(
+                    image = image,
+                    sessionPassword = sessionPassword,
+                    onSingleTap = { isImmersive = !isImmersive }
+                )
+            }
+
+            // Top Floating Controls
+            AnimatedVisibility(
+                visible = !isImmersive,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.TopCenter)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Color(0x88000000))
+                        .statusBarsPadding()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    IconButton(onClick = onBack) {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                            contentDescription = "返回",
+                            tint = Color.White
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    val currentImage = images.getOrNull(pagerState.currentPage)
+                    Text(
+                        text = currentImage?.displayName ?: "",
+                        style = MiuixTheme.textStyles.title4,
+                        color = Color.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f)
+                    )
+
+                    Spacer(modifier = Modifier.width(8.dp))
+
+                    Text(
+                        text = "${pagerState.currentPage + 1} / ${images.size}",
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.9f)
+                    )
+                }
+            }
+
+            // Bottom Floating Controller Bar with MiuixSlider
+            AnimatedVisibility(
+                visible = !isImmersive,
+                enter = fadeIn(),
+                exit = fadeOut(),
+                modifier = Modifier.align(Alignment.BottomCenter)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .padding(horizontal = 16.dp, vertical = 16.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    // Floating Capsule Control Bar
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(24.dp))
+                            .background(Color(0xCC1E1E1E))
+                            .padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text(
+                            text = "${pagerState.currentPage + 1}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            modifier = Modifier.width(36.dp)
+                        )
+
+                        // Miuix Slider for rapid page scrub
+                        Slider(
+                            value = (pagerState.currentPage + 1).toFloat(),
+                            onValueChange = { newVal ->
+                                val targetPage = (newVal.roundToInt() - 1).coerceIn(0, images.size - 1)
+                                if (targetPage != pagerState.currentPage) {
+                                    coroutineScope.launch {
+                                        pagerState.scrollToPage(targetPage)
+                                    }
+                                }
+                            },
+                            valueRange = 1f..images.size.toFloat().coerceAtLeast(1f),
+                            modifier = Modifier
+                                .weight(1f)
+                                .padding(horizontal = 8.dp)
+                        )
+
+                        Text(
+                            text = "${images.size}",
+                            fontSize = 14.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = Color.White.copy(alpha = 0.7f),
+                            modifier = Modifier.width(36.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Individual image container supporting double-tap zoom, pinch-to-zoom, and pan gestures.
+ */
+@Composable
+private fun ZoomableImage(
+    image: PackImage,
+    sessionPassword: String?,
+    onSingleTap: () -> Unit
+) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+
+    val imageModel: Any? = remember(image, sessionPassword) {
+        val direct = image.directFilePath?.let { File(it) }
+        if (direct != null && direct.exists()) {
+            if (direct.isDirectory) {
+                File(direct, image.entryPath)
+            } else {
+                ZipImageSource(
+                    zipFile = direct,
+                    entryName = image.entryPath,
+                    password = sessionPassword
+                )
+            }
+        } else if (image.fileUri != null) {
+            Uri.parse(image.fileUri)
+        } else {
+            null
+        }
+    }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .pointerInput(Unit) {
+                detectTapGestures(
+                    onDoubleTap = {
+                        if (scale > 1.05f) {
+                            scale = 1f
+                            offset = Offset.Zero
+                        } else {
+                            scale = 2.5f
+                        }
+                    },
+                    onTap = { onSingleTap() }
+                )
+            }
+            .pointerInput(scale) {
+                if (scale > 1f) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        scale = (scale * zoom).coerceIn(1f, 5f)
+                        if (scale == 1f) {
+                            offset = Offset.Zero
+                        } else {
+                            offset = Offset(
+                                x = offset.x + pan.x,
+                                y = offset.y + pan.y
+                            )
+                        }
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        if (imageModel != null) {
+            AsyncImage(
+                model = imageModel,
+                contentDescription = image.displayName,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    }
+            )
+        }
+    }
+}

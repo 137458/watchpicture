@@ -1,0 +1,14 @@
+<resources>
+    <string name="app_name">WatchPicture</string>
+    <string name="select_folder">选择根目录</string>
+    <string name="change_folder">更改目录</string>
+    <string name="refresh">刷新</string>
+    <string name="empty_pack_hint">当前目录下没有找到图片文件夹或 ZIP/CBZ 压缩包</string>
+    <string name="pick_folder_prompt">请点击上方按钮选取图包根目录</string>
+    <string name="password_required_title">输入解密密码</string>
+    <string name="password_hint">压缩包密码</string>
+    <string name="password_incorrect">密码错误或解密失败，请重试</string>
+    <string name="confirm">确认</string>
+    <string name="cancel">取消</string>
+    <string name="loading">加载中…</string>
+</resources>
