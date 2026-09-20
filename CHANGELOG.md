@@ -17,7 +17,9 @@ All notable changes to this project will be documented in this file.
 - 图包排序与即时搜索过滤：新增 `PackSorter` 与 `PackFilter`，支持按名称、修改时间、文件大小、图片张数升降序排序与模糊关键词检索。
 - 深度嵌套目录识别：新增 `DeepFolderImageResolver`，支持递归检索图包子目录图片并按自然排序统一展平。
 - 根路径状态持久化：通过 `PreferencesRepository`（Jetpack DataStore）保存用户已授权的根目录，冷启动免去重复授权选择。
-- 会话密码主动重置：在缩略图预览与大图画廊中支持主动加锁注销内存临时密码。
+- 画廊手势防冲突与平滑缩放：大图放大时动态解除 Pager 翻页拦截，基于 `Animatable` 实现以触摸点为中心平滑缩放与严格视口边界限制。
+- 日漫模式 (RTL) 与阅读方向切换：画廊支持标准从左到右 (LTR) 与日漫从右到左 (RTL) 翻页切换。
+- 会话密码优化与主动重置：支持优先复用最近成功密码尝试静默解密，并可在缩略图预览与大图画廊中主动加锁注销内存临时密码。
 
 ### 修复
 - 目录图包模型解析：修复普通文件夹内图片被误当做 ZIP 压缩包传入 ZipArchiveManager 的缺陷，统一通过 `PackImage.toImageModel()` 分发。
