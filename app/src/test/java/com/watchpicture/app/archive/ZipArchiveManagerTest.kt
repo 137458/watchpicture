@@ -142,4 +142,26 @@ class ZipArchiveManagerTest {
         val bytes = stream.use { it.readBytes() }
         assertArrayEquals(testImageBytes, bytes)
     }
+
+    @Test
+    fun `ZipArchiveManager seamlessly delegates 7z archive operations`() {
+        val manager = ZipArchiveManager()
+        val sevenZFile = tempFolder.newFile("sample.7z")
+        org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(sevenZFile).use { out ->
+            val entry = out.createArchiveEntry(tempFolder.newFile("t"), "page_01.jpg")
+            entry.size = testImageBytes.size.toLong()
+            out.putArchiveEntry(entry)
+            out.write(testImageBytes)
+            out.closeArchiveEntry()
+        }
+
+        assertFalse(manager.isEncrypted(sevenZFile))
+        val entries = manager.getImageEntries(sevenZFile)
+        assertEquals(1, entries.size)
+        assertEquals("page_01.jpg", entries[0].name)
+
+        val stream = manager.getEntryInputStream(sevenZFile, "page_01.jpg")
+        val bytes = stream.use { it.readBytes() }
+        assertArrayEquals(testImageBytes, bytes)
+    }
 }

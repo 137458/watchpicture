@@ -116,6 +116,35 @@ class ArchiveFileResolverTest {
     }
 
     @Test
+    fun `createZipPackFromFile identifies 7z archive correctly and sets formatLabel to 7Z`() {
+        val sevenZ = tempFolder.newFile("seven_z_pack.7z")
+        org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(sevenZ).use { out ->
+            val entry1 = out.createArchiveEntry(tempFolder.newFile("e1"), "page1.jpg")
+            entry1.size = testImageBytes.size.toLong()
+            out.putArchiveEntry(entry1)
+            out.write(testImageBytes)
+            out.closeArchiveEntry()
+
+            val entry2 = out.createArchiveEntry(tempFolder.newFile("e2"), "page2.jpg")
+            entry2.size = testImageBytes.size.toLong()
+            out.putArchiveEntry(entry2)
+            out.write(testImageBytes)
+            out.closeArchiveEntry()
+        }
+
+        assertTrue(resolver.isValidArchive(sevenZ))
+        val pack = resolver.createZipPackFromFile(sevenZ)
+        assertNotNull("7z pack should be resolved", pack)
+        pack!!
+
+        assertEquals("seven_z_pack", pack.name)
+        assertTrue(pack.is7z)
+        assertFalse(pack.isCbz)
+        assertEquals("7Z", pack.formatLabel)
+        assertEquals(2, pack.itemCount)
+    }
+
+    @Test
     fun `createZipPackFromFile identifies encrypted archive`() {
         val pack = resolver.createZipPackFromFile(aesZip)
         assertNotNull(pack)

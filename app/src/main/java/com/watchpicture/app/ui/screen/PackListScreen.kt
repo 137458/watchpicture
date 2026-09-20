@@ -114,7 +114,11 @@ fun PackListScreen(
             arrayOf(
                 "application/zip",
                 "application/x-zip-compressed",
-                "application/x-cbz"
+                "application/x-cbz",
+                "application/x-7z-compressed",
+                "application/7z",
+                "application/octet-stream",
+                "*/*"
             )
         )
     }

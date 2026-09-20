@@ -99,8 +99,9 @@ class SafManager(
                 }
                 val isZip = lowerName.endsWith(".zip")
                 val isCbz = lowerName.endsWith(".cbz")
+                val is7z = lowerName.endsWith(".7z")
 
-                if (isZip || isCbz) {
+                if (isZip || isCbz || is7z) {
                     val isEncrypted = zipArchiveManager.isEncrypted(child)
                     val cachedPassword = passwordStore.get(child.absolutePath)
                     val entries = zipArchiveManager.getImageEntries(child, cachedPassword)
@@ -126,7 +127,8 @@ class SafManager(
                             fileSize = child.length(),
                             lastModified = child.lastModified(),
                             coverImage = cover,
-                            isCbz = isCbz
+                            isCbz = isCbz,
+                            is7z = is7z
                         )
                     )
                 }
@@ -184,8 +186,9 @@ class SafManager(
                 }
                 val isZip = lowerName.endsWith(".zip")
                 val isCbz = lowerName.endsWith(".cbz")
+                val is7z = lowerName.endsWith(".7z")
 
-                if (isZip || isCbz) {
+                if (isZip || isCbz || is7z) {
                     // Try to resolve direct file if possible
                     val directFile = resolveDirectFile(doc.uri)
                     if (directFile != null && directFile.exists()) {
@@ -215,7 +218,8 @@ class SafManager(
                                 fileSize = doc.length(),
                                 lastModified = doc.lastModified(),
                                 coverImage = cover,
-                                isCbz = isCbz
+                                isCbz = isCbz,
+                                is7z = is7z
                             )
                         )
                     }

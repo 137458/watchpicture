@@ -12,7 +12,9 @@ import java.util.Locale
  * High-performance, streaming archive manager powered by Zip4j.
  * Strictly avoids extracting archives to disk; delivers entries as memory streams.
  */
-class ZipArchiveManager {
+class ZipArchiveManager(
+    private val sevenZManager: SevenZArchiveManager = SevenZArchiveManager()
+) {
 
     companion object {
         private val GBK_CHARSET = Charset.forName("GBK")
@@ -35,12 +37,20 @@ class ZipArchiveManager {
                     normalized.endsWith(".DS_Store", ignoreCase = true) ||
                     normalized.endsWith("Thumbs.db", ignoreCase = true)
         }
+
+        fun isSevenZFile(file: File): Boolean {
+            return file.name.endsWith(".7z", ignoreCase = true) ||
+                    SevenZArchiveManager.isValidSevenZArchive(file)
+        }
     }
 
     /**
-     * Determines whether the ZIP archive has any encrypted entries.
+     * Determines whether the archive has any encrypted entries.
      */
     fun isEncrypted(file: File): Boolean {
+        if (isSevenZFile(file)) {
+            return sevenZManager.isEncrypted(file)
+        }
         return try {
             ZipFile(file).use { zip ->
                 if (zip.isEncrypted) return true
@@ -55,6 +65,10 @@ class ZipArchiveManager {
      * Retrieves all valid image entries sorted in human-intuitive natural order.
      */
     fun getImageEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
+        if (isSevenZFile(file)) {
+            return sevenZManager.getImageEntries(file, password)
+        }
+
         fun readEntries(charset: Charset?): List<ArchiveEntryInfo> {
             val zip = if (password != null) {
                 ZipFile(file, password.toCharArray())
@@ -97,6 +111,10 @@ class ZipArchiveManager {
      * Tests whether the provided password can successfully decrypt an encrypted entry in the archive.
      */
     fun verifyPassword(file: File, password: String): Boolean {
+        if (isSevenZFile(file)) {
+            return sevenZManager.verifyPassword(file, password)
+        }
+
         fun tryVerify(charset: Charset?): Boolean {
             return try {
                 val zip = ZipFile(file, password.toCharArray())
@@ -135,6 +153,10 @@ class ZipArchiveManager {
      * The returned InputStream is directly backed by the ZipFile entry stream.
      */
     fun getEntryInputStream(file: File, entryName: String, password: String? = null): InputStream {
+        if (isSevenZFile(file)) {
+            return sevenZManager.getEntryInputStream(file, entryName, password)
+        }
+
         val normalized = entryName.replace('\\', '/')
 
         fun tryOpen(charset: Charset?): InputStream? {

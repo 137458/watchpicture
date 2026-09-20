@@ -43,6 +43,8 @@
                 <data android:mimeType="application/x-zip-compressed" />
                 <data android:mimeType="application/x-cbz" />
                 <data android:mimeType="application/vnd.comicbook+zip" />
+                <data android:mimeType="application/x-7z-compressed" />
+                <data android:mimeType="application/7z" />
                 <data android:mimeType="application/octet-stream" />
             </intent-filter>
 
@@ -56,8 +58,10 @@
                 <data android:host="*" />
                 <data android:pathPattern=".*\\.zip" />
                 <data android:pathPattern=".*\\.cbz" />
+                <data android:pathPattern=".*\\.7z" />
                 <data android:pathPattern=".*\\..*\\.zip" />
                 <data android:pathPattern=".*\\..*\\.cbz" />
+                <data android:pathPattern=".*\\..*\\.7z" />
             </intent-filter>
         </activity>
 

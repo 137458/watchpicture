@@ -32,7 +32,7 @@ class ArchiveFileResolver(
         private val FORBIDDEN_EXTENSIONS = setOf(
             "apk", "xapk", "apks", "apkm", "aab", "jar", "aar", "dex", "ipa"
         )
-        private val ALLOWED_EXTENSIONS = setOf("zip", "cbz")
+        private val ALLOWED_EXTENSIONS = setOf("zip", "cbz", "7z")
 
         /**
          * Checks if the filename ends with an explicitly disallowed application or library extension.
@@ -67,11 +67,22 @@ class ArchiveFileResolver(
     }
 
     /**
+     * Quickly verifies if a file starts with valid 7z magic bytes: 37 7A BC AF 27 1C
+     */
+    fun isValidSevenZArchive(file: File): Boolean = SevenZArchiveManager.isValidSevenZArchive(file)
+
+    /**
+     * Checks if the file is a supported archive format (ZIP, CBZ, or 7z).
+     */
+    fun isValidArchive(file: File): Boolean = isValidZipArchive(file) || isValidSevenZArchive(file)
+
+    /**
      * Detects whether a ZIP file is an Android application package (.apk)
      * or software library containing compiled code or manifests.
      */
     fun isAppOrPackageArchive(file: File): Boolean {
         if (isDisallowedExtension(file.name)) return true
+        if (isValidSevenZArchive(file)) return false
         if (!isValidZipArchive(file)) return false
 
         return try {
@@ -98,7 +109,7 @@ class ArchiveFileResolver(
         uriString: String? = null,
         cachedPassword: String? = null
     ): ZipPack? {
-        if (!isValidZipArchive(file)) return null
+        if (!isValidArchive(file)) return null
 
         val lowerName = file.name.lowercase()
         val ext = lowerName.substringAfterLast('.', "")
@@ -108,6 +119,7 @@ class ArchiveFileResolver(
         if (isAppOrPackageArchive(file)) return null
 
         val isCbz = lowerName.endsWith(".cbz")
+        val is7z = lowerName.endsWith(".7z") || isValidSevenZArchive(file)
         val isEncrypted = zipArchiveManager.isEncrypted(file)
         val password = cachedPassword ?: passwordStore.get(file.absolutePath)
         val entries = zipArchiveManager.getImageEntries(file, password)
@@ -135,7 +147,8 @@ class ArchiveFileResolver(
             fileSize = file.length(),
             lastModified = file.lastModified(),
             coverImage = cover,
-            isCbz = isCbz
+            isCbz = isCbz,
+            is7z = is7z
         )
     }
 
@@ -187,7 +200,7 @@ class ArchiveFileResolver(
         val targetFile = File(cacheDir, "${uriHash}_$safeName")
 
         val expectedSize = queryFileSize(context, uri)
-        if (targetFile.exists() && targetFile.length() > 0 && isValidZipArchive(targetFile)) {
+        if (targetFile.exists() && targetFile.length() > 0 && isValidArchive(targetFile)) {
             if (expectedSize == null || expectedSize == targetFile.length()) {
                 return targetFile // Cache hit, skip redundant I/O
             }
@@ -207,7 +220,7 @@ class ArchiveFileResolver(
                 }
             }
 
-            if (tempFile.exists() && tempFile.length() > 0 && isValidZipArchive(tempFile)) {
+            if (tempFile.exists() && tempFile.length() > 0 && isValidArchive(tempFile)) {
                 if (targetFile.exists()) targetFile.delete()
                 tempFile.renameTo(targetFile)
                 targetFile

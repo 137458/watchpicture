@@ -45,7 +45,12 @@ data class ZipPack(
     override val fileSize: Long = 0L,
     override val lastModified: Long = 0L,
     override val coverImage: PackImage? = null,
-    val isCbz: Boolean = false
+    val isCbz: Boolean = false,
+    val is7z: Boolean = false
 ) : PackItem {
-    override val formatLabel: String = if (isCbz) "CBZ" else "ZIP"
+    override val formatLabel: String = when {
+        is7z -> "7Z"
+        isCbz -> "CBZ"
+        else -> "ZIP"
+    }
 }

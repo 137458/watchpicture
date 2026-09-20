@@ -111,8 +111,10 @@ dependencies {
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
     implementation("com.squareup.okio:okio:3.9.1")
 
-    // Archive Engine: Zip4j
+    // Archive Engine: Zip4j & Apache Commons Compress (7z)
     implementation("net.lingala.zip4j:zip4j:2.11.5")
+    implementation("org.apache.commons:commons-compress:1.27.1")
+    implementation("org.tukaani:xz:1.10")
 
     // Coroutines & Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
