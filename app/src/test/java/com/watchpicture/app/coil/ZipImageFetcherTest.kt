@@ -117,4 +117,36 @@ class ZipImageFetcherTest {
             assertEquals("MIME mismatch for $fileName", expectedMime, mime)
         }
     }
+
+    @Test
+    fun `fetches entry via ArchiveDiskCache as file source with DataSource DISK`() = runBlocking {
+        val manager = ZipArchiveManager()
+        val data = ZipImageSource(
+            zipFile = encryptedZip,
+            entryName = entryName,
+            password = password
+        )
+
+        val diskCacheDir = tempFolder.newFolder("archive_disk_cache")
+        val archiveDiskCache = com.watchpicture.app.archive.ArchiveDiskCache(diskCacheDir)
+
+        val options = Options(
+            context = object : android.content.ContextWrapper(null) {},
+            fileSystem = FileSystem.SYSTEM
+        )
+
+        val fetcher = ZipImageFetcher(data, options, manager, archiveDiskCache)
+        val result = fetcher.fetch()
+
+        assertTrue("Result must be SourceFetchResult", result is SourceFetchResult)
+        val sourceResult = result as SourceFetchResult
+        assertEquals("image/jpeg", sourceResult.mimeType)
+        assertEquals("Must be DISK data source when disk cache is active", DataSource.DISK, sourceResult.dataSource)
+
+        assertNotNull("ImageSource must have a concrete file path for subsampling decoders", sourceResult.source.fileOrNull())
+
+        val readBytes = sourceResult.source.source().readByteArray()
+        assertArrayEquals("Streamed bytes from disk cache must match original", sampleBytes, readBytes)
+        sourceResult.source.close()
+    }
 }

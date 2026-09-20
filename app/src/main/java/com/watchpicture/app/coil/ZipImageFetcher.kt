@@ -7,23 +7,27 @@ import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
+import com.watchpicture.app.archive.ArchiveDiskCache
 import com.watchpicture.app.archive.ZipArchiveManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import okio.buffer
-import okio.source
 import okio.Path.Companion.toOkioPath
-import java.io.File
 import java.util.Locale
 
 /**
  * Custom Coil 3 Fetcher that streams decompressed image bytes directly
  * from ZipArchiveManager and serves them via an AutoCloseable seekable file source.
+ *
+ * When an [ArchiveDiskCache] is present, decompressed entries are streamed directly
+ * to a dedicated disk cache file and returned as a native [DataSource.DISK] FileSource.
+ * This completely avoids large heap buffer allocations for 10MB+ files and enables
+ * sub-sampling tile decoders (BitmapRegionDecoder) to seek directly on disk.
  */
 class ZipImageFetcher(
     private val data: ZipImageSource,
     private val options: Options,
-    private val zipArchiveManager: ZipArchiveManager
+    private val zipArchiveManager: ZipArchiveManager,
+    private val archiveDiskCache: ArchiveDiskCache? = null
 ) : Fetcher {
 
     override suspend fun fetch(): FetchResult = withContext(Dispatchers.IO) {
@@ -31,6 +35,35 @@ class ZipImageFetcher(
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.get(data.zipFile.absolutePath) }.getOrNull()
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.lastUsedPassword }.getOrNull()
 
+        val mimeType = resolveMimeType(data.entryName)
+
+        val diskCache = archiveDiskCache
+            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.archiveDiskCache }.getOrNull()
+
+        if (diskCache != null) {
+            val cachedFile = diskCache.getOrPut(
+                zipFile = data.zipFile,
+                entryName = data.entryName,
+                password = password
+            ) {
+                zipArchiveManager.getEntryInputStream(
+                    file = data.zipFile,
+                    entryName = data.entryName,
+                    password = password
+                )
+            }
+
+            return@withContext SourceFetchResult(
+                source = ImageSource(
+                    file = cachedFile.toOkioPath(),
+                    fileSystem = options.fileSystem
+                ),
+                mimeType = mimeType,
+                dataSource = DataSource.DISK
+            )
+        }
+
+        // In-memory fallback if disk cache is unavailable
         val inputStream = zipArchiveManager.getEntryInputStream(
             file = data.zipFile,
             entryName = data.entryName,
@@ -41,8 +74,6 @@ class ZipImageFetcher(
         inputStream.use { input ->
             buffer.readFrom(input)
         }
-
-        val mimeType = resolveMimeType(data.entryName)
 
         SourceFetchResult(
             source = ImageSource(
@@ -71,14 +102,15 @@ class ZipImageFetcher(
     }
 
     class Factory(
-        private val zipArchiveManager: ZipArchiveManager
+        private val zipArchiveManager: ZipArchiveManager,
+        private val archiveDiskCache: ArchiveDiskCache? = null
     ) : Fetcher.Factory<ZipImageSource> {
         override fun create(
             data: ZipImageSource,
             options: Options,
             imageLoader: ImageLoader
         ): Fetcher {
-            return ZipImageFetcher(data, options, zipArchiveManager)
+            return ZipImageFetcher(data, options, zipArchiveManager, archiveDiskCache)
         }
     }
 }

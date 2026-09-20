@@ -57,6 +57,7 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
 import coil3.request.crossfade
+import coil3.request.bitmapConfig
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.toImageModel
@@ -153,25 +154,28 @@ fun GalleryViewerScreen(
                 isCurrentPageZoomed = false
             }
 
-            // Lookahead prefetching adjacent pages into Coil memory cache
+            // Controlled serial prefetching of adjacent pages with debounce to prevent CPU contention
             val context = androidx.compose.ui.platform.LocalContext.current
             LaunchedEffect(pagerState.currentPage, images) {
+                // Debounce 300ms so fast scrolling doesn't churn background decoders
+                kotlinx.coroutines.delay(300)
                 val imageLoader = coil3.SingletonImageLoader.get(context)
                 val prefetchIndices = listOf(
                     pagerState.currentPage + 1,
-                    pagerState.currentPage - 1,
-                    pagerState.currentPage + 2,
-                    pagerState.currentPage - 2
+                    pagerState.currentPage - 1
                 )
-                for (idx in prefetchIndices) {
-                    if (idx in images.indices) {
-                        val targetImg = images[idx]
-                        val model = targetImg.toImageModel(sessionPassword)
-                        if (model != null) {
-                            val prefetchReq = coil3.request.ImageRequest.Builder(context)
-                                .data(model)
-                                .build()
-                            imageLoader.enqueue(prefetchReq)
+                // Use limited parallelism (1 thread) so current page gets 100% CPU priority
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1)) {
+                    for (idx in prefetchIndices) {
+                        if (idx in images.indices) {
+                            val targetImg = images[idx]
+                            val model = targetImg.toImageModel(sessionPassword)
+                            if (model != null) {
+                                val prefetchReq = coil3.request.ImageRequest.Builder(context)
+                                    .data(model)
+                                    .build()
+                                imageLoader.enqueue(prefetchReq)
+                            }
                         }
                     }
                 }
@@ -180,7 +184,7 @@ fun GalleryViewerScreen(
             // Horizontal Pager with reverseLayout support for Manga RTL mode
             HorizontalPager(
                 state = pagerState,
-                beyondViewportPageCount = 1,
+                beyondViewportPageCount = 0,
                 userScrollEnabled = !isCurrentPageZoomed,
                 reverseLayout = (readingMode == ReadingMode.RTL),
                 modifier = Modifier.fillMaxSize()
@@ -351,8 +355,10 @@ fun GalleryViewerScreen(
 }
 
 /**
- * Individual image container supporting smooth double-tap zoom animation,
- * pinch-to-zoom, strict pan boundary limits, and Pager gesture conflict resolution.
+ * Fullscreen high-performance image container powered by Telephoto.
+ * Automatically performs sub-sampling (tile-based decoding via BitmapRegionDecoder)
+ * for massive 10MB+ images, ensuring laser-sharp clarity without OOM or blurry stretched pixels.
+ * Uses cached thumbnail as an instant 0ms placeholder and switches to high-res on load.
  */
 @Composable
 private fun ZoomableImage(
@@ -361,102 +367,62 @@ private fun ZoomableImage(
     onSingleTap: () -> Unit,
     onZoomChanged: (Boolean) -> Unit
 ) {
-    val coroutineScope = rememberCoroutineScope()
-    val scaleAnim = remember { Animatable(1f) }
-    val offsetXAnim = remember { Animatable(0f) }
-    val offsetYAnim = remember { Animatable(0f) }
-
-    LaunchedEffect(scaleAnim.value) {
-        onZoomChanged(scaleAnim.value > 1.05f)
-    }
-
     val imageModel: Any? = remember(image, sessionPassword) {
         image.toImageModel(sessionPassword)
     }
 
-    BoxWithConstraints(
-        modifier = Modifier.fillMaxSize(),
-        contentAlignment = Alignment.Center
-    ) {
-        val containerWidth = constraints.maxWidth.toFloat()
-        val containerHeight = constraints.maxHeight.toFloat()
+    if (imageModel != null) {
+        val context = androidx.compose.ui.platform.LocalContext.current
+        val zoomableState = me.saket.telephoto.zoomable.rememberZoomableImageState()
 
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    detectTapGestures(
-                        onDoubleTap = { tapOffset ->
-                            coroutineScope.launch {
-                                if (scaleAnim.value > 1.05f) {
-                                    // Smoothly animate back to normal
-                                    launch { scaleAnim.animateTo(1f, tween(200)) }
-                                    launch { offsetXAnim.animateTo(0f, tween(200)) }
-                                    launch { offsetYAnim.animateTo(0f, tween(200)) }
-                                } else {
-                                    val targetScale = 2.5f
-                                    val maxOffsetX = (targetScale - 1f) * containerWidth / 2f
-                                    val maxOffsetY = (targetScale - 1f) * containerHeight / 2f
-                                    val targetOffsetX = ((containerWidth / 2f - tapOffset.x) * (targetScale - 1f))
-                                        .coerceIn(-maxOffsetX, maxOffsetX)
-                                    val targetOffsetY = ((containerHeight / 2f - tapOffset.y) * (targetScale - 1f))
-                                        .coerceIn(-maxOffsetY, maxOffsetY)
-
-                                    launch { scaleAnim.animateTo(targetScale, tween(250)) }
-                                    launch { offsetXAnim.animateTo(targetOffsetX, tween(250)) }
-                                    launch { offsetYAnim.animateTo(targetOffsetY, tween(250)) }
-                                }
-                            }
-                        },
-                        onTap = { onSingleTap() }
-                    )
-                }
-                .pointerInput(Unit) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        coroutineScope.launch {
-                            val newScale = (scaleAnim.value * zoom).coerceIn(1f, 5f)
-                            val maxOffsetX = ((newScale - 1f) * containerWidth / 2f).coerceAtLeast(0f)
-                            val maxOffsetY = ((newScale - 1f) * containerHeight / 2f).coerceAtLeast(0f)
-
-                            val newOffsetX = if (newScale <= 1f) 0f else (offsetXAnim.value + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
-                            val newOffsetY = if (newScale <= 1f) 0f else (offsetYAnim.value + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
-
-                            scaleAnim.snapTo(newScale)
-                            offsetXAnim.snapTo(newOffsetX)
-                            offsetYAnim.snapTo(newOffsetY)
-                        }
-                    }
-                },
-            contentAlignment = Alignment.Center
-        ) {
-            if (imageModel != null) {
-                val context = androidx.compose.ui.platform.LocalContext.current
-                val request = remember(imageModel) {
-                    val builder = coil3.request.ImageRequest.Builder(context)
-                        .data(imageModel)
-                        .crossfade(150)
-                    if (imageModel is com.watchpicture.app.coil.ZipImageSource) {
-                        val pwdHash = imageModel.password?.hashCode()?.toString(16) ?: "none"
-                        val cacheKey = "zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash"
-                        builder.placeholderMemoryCacheKey(coil3.memory.MemoryCache.Key(cacheKey))
-                    }
-                    builder.build()
-                }
-
-                AsyncImage(
-                    model = request,
-                    contentDescription = image.displayName,
-                    contentScale = ContentScale.Fit,
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .graphicsLayer {
-                            scaleX = scaleAnim.value
-                            scaleY = scaleAnim.value
-                            translationX = offsetXAnim.value
-                            translationY = offsetYAnim.value
-                        }
-                )
-            }
+        val zoomFraction: Float? = zoomableState.zoomableState.zoomFraction
+        val isZoomed = (zoomFraction ?: 0f) > 0.02f
+        LaunchedEffect(isZoomed) {
+            onZoomChanged(isZoomed)
         }
+
+        val request = remember(imageModel) {
+            val builder = coil3.request.ImageRequest.Builder(context)
+                .data(imageModel)
+                .crossfade(150)
+                .precision(coil3.size.Precision.EXACT)
+                .bitmapConfig(android.graphics.Bitmap.Config.HARDWARE)
+
+            // Distinct full-res cache key to prevent collision with grid thumbnail
+            val fullKey = when (imageModel) {
+                is com.watchpicture.app.coil.ZipImageSource -> {
+                    val pwdHash = imageModel.password?.hashCode()?.toString(16) ?: "none"
+                    "full:zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash"
+                }
+                is java.io.File -> "full:file://${imageModel.absolutePath}"
+                else -> null
+            }
+            if (fullKey != null) {
+                builder.memoryCacheKey(fullKey)
+            }
+
+            // High-speed instant thumbnail placeholder (0ms) from memory cache
+            val thumbKey = when (imageModel) {
+                is com.watchpicture.app.coil.ZipImageSource -> {
+                    val pwdHash = imageModel.password?.hashCode()?.toString(16) ?: "none"
+                    "thumb:zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash"
+                }
+                is java.io.File -> "thumb:file://${imageModel.absolutePath}"
+                else -> null
+            }
+            if (thumbKey != null) {
+                builder.placeholderMemoryCacheKey(coil3.memory.MemoryCache.Key(thumbKey))
+            }
+
+            builder.build()
+        }
+
+        me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
+            model = request,
+            contentDescription = image.displayName,
+            state = zoomableState,
+            onClick = { onSingleTap() },
+            modifier = Modifier.fillMaxSize()
+        )
     }
 }

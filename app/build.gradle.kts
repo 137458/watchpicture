@@ -106,11 +106,12 @@ dependencies {
     implementation("top.yukonga.miuix.kmp:miuix-blur-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-nav-android:$miuixVersion")
 
-    // Image loading: Coil 3
+    // Image loading: Coil 3 & Telephoto (Subsampling & Zoomable Image)
     implementation("io.coil-kt.coil3:coil-compose:3.0.4")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
     implementation("io.coil-kt.coil3:coil-svg:3.0.4")
     implementation("io.coil-kt.coil3:coil-gif:3.0.4")
+    implementation("me.saket.telephoto:zoomable-image-coil3:0.19.0")
     implementation("com.squareup.okio:okio:3.9.1")
 
     // Archive Engine: Zip4j & Apache Commons Compress (7z)

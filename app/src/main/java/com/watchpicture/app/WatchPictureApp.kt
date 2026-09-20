@@ -8,6 +8,7 @@ import com.watchpicture.app.archive.ZipArchiveManager
 import com.watchpicture.app.coil.ZipImageFetcher
 import com.watchpicture.app.coil.ZipImageKeyer
 import com.watchpicture.app.security.SessionPasswordStore
+import okio.Path.Companion.toOkioPath
 
 class WatchPictureApp : Application(), SingletonImageLoader.Factory {
 
@@ -21,6 +22,9 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
     }
     val archiveFileResolver: com.watchpicture.app.archive.ArchiveFileResolver by lazy {
         com.watchpicture.app.archive.ArchiveFileResolver(zipArchiveManager, sessionPasswordStore)
+    }
+    val archiveDiskCache: com.watchpicture.app.archive.ArchiveDiskCache by lazy {
+        com.watchpicture.app.archive.ArchiveDiskCache(java.io.File(cacheDir, "archive_cache"))
     }
 
     val externalArchiveFlow = kotlinx.coroutines.flow.MutableSharedFlow<android.net.Uri>(
@@ -70,7 +74,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
         return ImageLoader.Builder(context)
             .components {
                 add(ZipImageKeyer())
-                add(ZipImageFetcher.Factory(zipArchiveManager))
+                add(ZipImageFetcher.Factory(zipArchiveManager, archiveDiskCache))
                 if (android.os.Build.VERSION.SDK_INT >= 28) {
                     add(coil3.gif.AnimatedImageDecoder.Factory())
                 } else {
@@ -81,6 +85,12 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             .memoryCache {
                 coil3.memory.MemoryCache.Builder()
                     .maxSizePercent(context, 0.35)
+                    .build()
+            }
+            .diskCache {
+                coil3.disk.DiskCache.Builder()
+                    .directory(context.cacheDir.resolve("coil_disk_cache").toOkioPath())
+                    .maxSizeBytes(256L * 1024 * 1024)
                     .build()
             }
             .build()
