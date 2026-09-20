@@ -116,18 +116,19 @@ class ThumbnailDiskCache(
     }
 
     private fun saveDownsampled(input: InputStream, targetFile: File, targetSizePx: Int) {
-        // Read into memory or stream to decode with inSampleSize
-        val rawBytes = input.readBytes()
-        if (rawBytes.isEmpty()) return
+        val buffered = if (input.markSupported()) input else java.io.BufferedInputStream(input, 128 * 1024)
+        buffered.mark(128 * 1024)
 
         var bitmap: Bitmap? = null
         try {
             val options = BitmapFactory.Options().apply {
                 inJustDecodeBounds = true
             }
-            BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, options)
+            BitmapFactory.decodeStream(buffered, null, options)
 
             if (options.outWidth > 0 && options.outHeight > 0) {
+                runCatching { buffered.reset() }
+
                 val maxDim = max(options.outWidth, options.outHeight)
                 var sampleSize = 1
                 while ((maxDim / (sampleSize * 2)) >= targetSizePx) {
@@ -138,7 +139,7 @@ class ThumbnailDiskCache(
                     inSampleSize = sampleSize
                     inPreferredConfig = Bitmap.Config.RGB_565
                 }
-                bitmap = BitmapFactory.decodeByteArray(rawBytes, 0, rawBytes.size, decodeOptions)
+                bitmap = BitmapFactory.decodeStream(buffered, null, decodeOptions)
             }
         } catch (_: Throwable) {
             bitmap = null
@@ -159,7 +160,8 @@ class ThumbnailDiskCache(
                 }
             } else {
                 // Fallback direct copy if BitmapFactory fails (e.g. SVG or JVM unit test)
-                fos.write(rawBytes)
+                runCatching { buffered.reset() }
+                buffered.copyTo(fos, bufferSize = BUFFER_SIZE)
             }
             fos.flush()
         }

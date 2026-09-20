@@ -101,4 +101,19 @@ class ArchiveExtractionCoordinatorTest {
         assertEquals(3, results.size)
         assertTrue(results.all { it.exists() && it.length() > 0 })
     }
+
+    @Test
+    fun `prefetch drops background extraction when powerThermalManager is throttled`() = runBlocking {
+        val thermalManager = PowerThermalManager().apply {
+            setManualThrottleLevel(PowerThermalManager.ThrottleLevel.THROTTLED)
+        }
+        val coordinator = ArchiveExtractionCoordinator(zipManager, archiveDiskCache, thermalManager)
+
+        // Request prefetch when throttled
+        coordinator.prefetch(solid7z, listOf("00_page.jpg"), password = null)
+
+        // Must NOT have cached 00_page.jpg because prefetch was aborted due to thermal throttle
+        val cached = archiveDiskCache.get(solid7z, "00_page.jpg", password = null)
+        assertNull("Prefetch should be dropped when thermal manager is throttled", cached)
+    }
 }

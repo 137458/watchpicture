@@ -22,7 +22,8 @@ import java.util.concurrent.ConcurrentHashMap
  */
 class ArchiveExtractionCoordinator(
     private val zipArchiveManager: ZipArchiveManager,
-    private val archiveDiskCache: ArchiveDiskCache
+    private val archiveDiskCache: ArchiveDiskCache,
+    private val powerThermalManager: PowerThermalManager? = null
 ) {
     companion object {
         // Number of subsequent entries to greedily extract while the 7z stream is already open
@@ -44,7 +45,7 @@ class ArchiveExtractionCoordinator(
         file: File,
         entryName: String,
         password: String?
-    ): File = withContext(Dispatchers.IO) {
+    ): File = withContext(ArchiveDispatchers.decompressDispatcher) {
         // Fast path 1: Instant 0ms disk cache hit
         val cached = archiveDiskCache.get(file, entryName, password)
         if (cached != null && cached.exists() && cached.length() > 0L) {
@@ -79,6 +80,34 @@ class ArchiveExtractionCoordinator(
         targetEntryName: String,
         password: String?
     ): File {
+        val lookahead = if (powerThermalManager?.isThrottled == true) 0 else SOLID_LOOKAHEAD_WINDOW
+
+        // Fast path 1: Native C/C++ libarchive JNI with Os.mmap zero-copy
+        if (LibArchiveExtractor.isAvailable) {
+            val nativeSuccess = LibArchiveExtractor.extractWithOpportunisticCache(
+                file = file,
+                targetEntryName = targetEntryName,
+                password = password,
+                maxLookahead = lookahead
+            ) { name, extractedTempFile ->
+                try {
+                    archiveDiskCache.getOrPut(file, name, password) {
+                        java.io.FileInputStream(extractedTempFile)
+                    }
+                } finally {
+                    extractedTempFile.delete()
+                }
+            }
+
+            if (nativeSuccess) {
+                val cached = archiveDiskCache.get(file, targetEntryName, password)
+                if (cached != null && cached.exists() && cached.length() > 0L) {
+                    return cached
+                }
+            }
+        }
+
+        // Fast path 2 / Fallback: Apache Commons Compress (SevenZFile Java engine)
         val normalizedTarget = targetEntryName.replace('\\', '/')
         val nfcTarget = java.text.Normalizer.normalize(normalizedTarget, java.text.Normalizer.Form.NFC)
 
@@ -88,7 +117,7 @@ class ArchiveExtractionCoordinator(
         }
 
         var resultFile: File? = null
-        var lookaheadRemaining = SOLID_LOOKAHEAD_WINDOW
+        var lookaheadRemaining = lookahead
         var targetFound = false
 
         builder.get().use { sevenZ ->
@@ -139,13 +168,18 @@ class ArchiveExtractionCoordinator(
     }
 
     /**
-     * Asynchronously prefetches adjacent entries in background during idle time.
+     * Asynchronously prefetches adjacent entries in background on energy-efficient LITTLE cores.
      */
     suspend fun prefetch(
         file: File,
         targetEntryNames: List<String>,
         password: String?
-    ) = withContext(Dispatchers.IO) {
+    ) = withContext(ArchiveDispatchers.decompressDispatcher) {
+        if (powerThermalManager?.isThrottled == true) {
+            // Drop background prefetch immediately when phone is hot or in battery saver mode
+            return@withContext
+        }
+
         val uncached = targetEntryNames.filter { name ->
             archiveDiskCache.get(file, name, password) == null
         }

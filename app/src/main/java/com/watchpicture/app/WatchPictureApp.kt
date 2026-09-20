@@ -29,8 +29,11 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
     val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache by lazy {
         com.watchpicture.app.archive.ThumbnailDiskCache(java.io.File(cacheDir, "thumbnail_cache"))
     }
+    val powerThermalManager: com.watchpicture.app.archive.PowerThermalManager by lazy {
+        com.watchpicture.app.archive.PowerThermalManager(this)
+    }
     val archiveExtractionCoordinator: com.watchpicture.app.archive.ArchiveExtractionCoordinator by lazy {
-        com.watchpicture.app.archive.ArchiveExtractionCoordinator(zipArchiveManager, archiveDiskCache)
+        com.watchpicture.app.archive.ArchiveExtractionCoordinator(zipArchiveManager, archiveDiskCache, powerThermalManager)
     }
 
     val externalArchiveFlow = kotlinx.coroutines.flow.MutableSharedFlow<android.net.Uri>(
@@ -91,7 +94,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             }
             .memoryCache {
                 coil3.memory.MemoryCache.Builder()
-                    .maxSizePercent(context, 0.35)
+                    .maxSizePercent(context, 0.40)
                     .build()
             }
             .diskCache {

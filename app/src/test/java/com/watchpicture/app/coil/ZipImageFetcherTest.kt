@@ -15,6 +15,7 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -148,5 +149,47 @@ class ZipImageFetcherTest {
         val readBytes = sourceResult.source.source().readByteArray()
         assertArrayEquals("Streamed bytes from disk cache must match original", sampleBytes, readBytes)
         sourceResult.source.close()
+    }
+
+    @Test
+    fun `fetches thumbnail for plain zip without dumping to archive disk cache`() = runBlocking<Unit> {
+        val plainZip = tempFolder.newFile("plain_test.zip")
+        net.lingala.zip4j.ZipFile(plainZip).use { zip ->
+            val p = ZipParameters().apply { fileNameInZip = "thumb_entry.jpg" }
+            zip.addStream(ByteArrayInputStream(sampleBytes), p)
+        }
+
+        val manager = ZipArchiveManager()
+        val archiveCacheDir = tempFolder.newFolder("archive_cache_test")
+        val thumbCacheDir = tempFolder.newFolder("thumb_cache_test")
+        val archiveDiskCache = com.watchpicture.app.archive.ArchiveDiskCache(archiveCacheDir)
+        val thumbnailDiskCache = com.watchpicture.app.archive.ThumbnailDiskCache(thumbCacheDir)
+        val coordinator = com.watchpicture.app.archive.ArchiveExtractionCoordinator(manager, archiveDiskCache)
+
+        val thumbData = ZipImageSource(
+            zipFile = plainZip,
+            entryName = "thumb_entry.jpg",
+            isThumbnail = true,
+            targetSizePx = 360
+        )
+
+        val options = Options(
+            context = object : android.content.ContextWrapper(null) {},
+            fileSystem = FileSystem.SYSTEM
+        )
+
+        val fetcher = ZipImageFetcher(thumbData, options, manager, archiveDiskCache, thumbnailDiskCache, coordinator)
+        val result = fetcher.fetch()
+
+        assertTrue(result is SourceFetchResult)
+        assertEquals("image/webp", (result as SourceFetchResult).mimeType)
+
+        // Verify: thumbnail cache has the thumbnail
+        val thumbCached = thumbnailDiskCache.get(plainZip, "thumb_entry.jpg", 360, null)
+        assertNotNull("Thumbnail cache should contain downsampled file", thumbCached)
+
+        // Verify: ArchiveDiskCache must NOT have the full-resolution entry!
+        val fullCached = archiveDiskCache.get(plainZip, "thumb_entry.jpg", null)
+        assertNull("Plain ZIP thumbnail should NOT dump full-res image to ArchiveDiskCache", fullCached)
     }
 }

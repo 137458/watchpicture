@@ -55,4 +55,23 @@ class ThumbnailDiskCacheTest {
         val totalLen = remaining.sumOf { it.length() }
         assertTrue("Total size ($totalLen) should be <= 50", totalLen <= 50)
     }
+
+    @Test
+    fun `streams large input without in-memory buffering failure`() {
+        val cacheDir = tempFolder.newFolder("thumb_cache_stream")
+        val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+
+        val dummyZip = tempFolder.newFile("dummy_large.zip")
+        val entryName = "large_image.jpg"
+
+        // 256 KB non-seekable streaming data
+        val largeData = ByteArray(256 * 1024) { (it % 255).toByte() }
+        val thumbFile = cache.getOrPut(dummyZip, entryName, 360, password = null) {
+            largeData.inputStream()
+        }
+
+        assertNotNull(thumbFile)
+        assertTrue(thumbFile.exists())
+        assertEquals(largeData.size.toLong(), thumbFile.length())
+    }
 }

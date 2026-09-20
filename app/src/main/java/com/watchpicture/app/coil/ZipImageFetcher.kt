@@ -33,8 +33,8 @@ class ZipImageFetcher(
 ) : Fetcher {
 
     companion object {
-        // Limit max concurrent decompression/decoding threads to 2 to prevent CPU overheating
-        private val decompressDispatcher = Dispatchers.IO.limitedParallelism(2)
+        // Run decompression and decoding exclusively on energy-efficient LITTLE CPU cores
+        private val decompressDispatcher = com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher
     }
 
     override suspend fun fetch(): FetchResult = withContext(decompressDispatcher) {
@@ -49,7 +49,7 @@ class ZipImageFetcher(
         val extractCoord = coordinator
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.archiveExtractionCoordinator }.getOrNull()
 
-        // Branch 1: Thumbnail dedicated pipeline (never dumps full uncompressed raw bytes to flash)
+        // Branch 1: Thumbnail dedicated pipeline (never dumps full uncompressed raw bytes to flash for plain ZIPs)
         val thumbCache = thumbnailDiskCache
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.thumbnailDiskCache }.getOrNull()
 
@@ -64,13 +64,14 @@ class ZipImageFetcher(
                 val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
                 if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
                     java.io.FileInputStream(cachedFull)
-                } else if (extractCoord != null) {
-                    // Extract via coordinator to take advantage of single-pass solid caching
+                } else if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
+                    // Extract solid 7z via coordinator to take advantage of single-pass solid opportunistic caching
                     val extracted = kotlinx.coroutines.runBlocking {
                         extractCoord.extractHighPriority(data.zipFile, data.entryName, password)
                     }
                     java.io.FileInputStream(extracted)
                 } else {
+                    // Plain ZIP: stream directly into downsampler, 0 full-res disk dump!
                     zipArchiveManager.getEntryInputStream(
                         file = data.zipFile,
                         entryName = data.entryName,
