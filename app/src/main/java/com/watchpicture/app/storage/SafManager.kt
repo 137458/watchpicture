@@ -94,6 +94,9 @@ class SafManager(
                 }
             } else if (child.isFile) {
                 val lowerName = child.name.lowercase()
+                if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) {
+                    continue
+                }
                 val isZip = lowerName.endsWith(".zip")
                 val isCbz = lowerName.endsWith(".cbz")
 
@@ -176,6 +179,9 @@ class SafManager(
                 }
             } else if (doc.isFile) {
                 val lowerName = name.lowercase()
+                if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) {
+                    continue
+                }
                 val isZip = lowerName.endsWith(".zip")
                 val isCbz = lowerName.endsWith(".cbz")
 

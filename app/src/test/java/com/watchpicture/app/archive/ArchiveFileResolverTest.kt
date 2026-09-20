@@ -159,4 +159,42 @@ class ArchiveFileResolverTest {
         FileOutputStream(fakeMagicFile).use { it.write(byteArrayOf(0x50, 0x4B, 0x01, 0x02)) } // PK\x01\x02 is central directory, not file header
         assertFalse(resolver.isValidZipArchive(fakeMagicFile))
     }
+
+    @Test
+    fun `rejects apk files and disguised apk archives with android manifest`() {
+        // 1. Standard .apk file with embedded images
+        val apkFile = tempFolder.newFile("demo_app.apk")
+        ZipFile(apkFile).use { zip ->
+            val pManifest = ZipParameters().apply { fileNameInZip = "AndroidManifest.xml" }
+            zip.addStream(ByteArrayInputStream("<manifest/>".toByteArray()), pManifest)
+            val pIcon = ZipParameters().apply { fileNameInZip = "res/drawable/icon.png" }
+            zip.addStream(ByteArrayInputStream(testImageBytes), pIcon)
+        }
+
+        assertNull("Direct .apk file must not be resolved as picture pack", resolver.createZipPackFromFile(apkFile))
+
+        // 2. APK renamed to .zip (disguised package containing AndroidManifest.xml)
+        val disguisedZip = tempFolder.newFile("disguised_app.zip")
+        ZipFile(disguisedZip).use { zip ->
+            val pManifest = ZipParameters().apply { fileNameInZip = "AndroidManifest.xml" }
+            zip.addStream(ByteArrayInputStream("<manifest/>".toByteArray()), pManifest)
+            val pDex = ZipParameters().apply { fileNameInZip = "classes.dex" }
+            zip.addStream(ByteArrayInputStream(byteArrayOf(0x64, 0x65, 0x78, 0x0A)), pDex)
+            val pIcon = ZipParameters().apply { fileNameInZip = "assets/pic.jpg" }
+            zip.addStream(ByteArrayInputStream(testImageBytes), pIcon)
+        }
+
+        assertNull("Disguised APK containing AndroidManifest.xml must be rejected", resolver.createZipPackFromFile(disguisedZip))
+
+        // 3. Android library archive (.aar) or java archive (.jar)
+        val jarFile = tempFolder.newFile("library.jar")
+        ZipFile(jarFile).use { zip ->
+            val pMeta = ZipParameters().apply { fileNameInZip = "META-INF/MANIFEST.MF" }
+            zip.addStream(ByteArrayInputStream("Manifest-Version: 1.0".toByteArray()), pMeta)
+            val pIcon = ZipParameters().apply { fileNameInZip = "logo.png" }
+            zip.addStream(ByteArrayInputStream(testImageBytes), pIcon)
+        }
+
+        assertNull("Jar or AAR archives must not be resolved as picture pack", resolver.createZipPackFromFile(jarFile))
+    }
 }

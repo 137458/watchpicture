@@ -46,6 +46,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
+import com.watchpicture.app.model.PackItem
 import com.watchpicture.app.model.SortOption
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.component.PackCard
@@ -84,6 +85,7 @@ fun PackListScreen(
     val context = androidx.compose.ui.platform.LocalContext.current
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     var showSortDialog by remember { mutableStateOf(false) }
+    var packToDelete by remember { mutableStateOf<PackItem?>(null) }
 
     androidx.compose.runtime.LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { msg ->
@@ -112,8 +114,7 @@ fun PackListScreen(
             arrayOf(
                 "application/zip",
                 "application/x-zip-compressed",
-                "application/x-cbz",
-                "*/*"
+                "application/x-cbz"
             )
         )
     }
@@ -390,8 +391,68 @@ fun PackListScreen(
                                 sessionPassword = passwordStore.get(pack.id),
                                 onClick = {
                                     viewModel.onPackClicked(pack, onNavigate)
+                                },
+                                onLongClick = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                                    packToDelete = pack
                                 }
                             )
+                        }
+                    }
+                }
+            }
+        }
+
+        // Remove Pack Confirmation Dialog
+        val target = packToDelete
+        if (target != null) {
+            val directPath = target.directPath
+            val isCache = directPath != null && java.io.File(directPath).parentFile?.name == "opened_archives"
+            WindowDialog(
+                show = true,
+                title = "移除图包",
+                onDismissRequest = { packToDelete = null }
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(top = 8.dp)
+                ) {
+                    Text(
+                        text = if (isCache) {
+                            "确定要从应用中移除图包「${target.name}」吗？\n该图包为外部单文件导入，移除后将同时清理其缓存文件以释放存储空间。"
+                        } else {
+                            "确定要从图包列表中移除「${target.name}」吗？"
+                        },
+                        style = MiuixTheme.textStyles.body2,
+                        color = MiuixTheme.colorScheme.onSurfaceSecondary
+                    )
+
+                    Spacer(modifier = Modifier.height(18.dp))
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Button(
+                            onClick = { packToDelete = null },
+                            colors = ButtonDefaults.buttonColors(),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text(stringResource(R.string.cancel))
+                        }
+
+                        Button(
+                            onClick = {
+                                val name = target.name
+                                viewModel.removePack(target, deleteFile = true)
+                                packToDelete = null
+                                android.widget.Toast.makeText(context, "已移除「$name」", android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColorsPrimary(),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Text("移除")
                         }
                     }
                 }

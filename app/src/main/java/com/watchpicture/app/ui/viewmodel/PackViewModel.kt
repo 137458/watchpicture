@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.DirectoryPack
 import com.watchpicture.app.model.PackFilter
+import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.PackItem
 import com.watchpicture.app.model.PackSorter
 import com.watchpicture.app.model.SortOption
@@ -148,14 +149,26 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
      * and immediately navigates to thumbnail preview or prompts for decryption.
      */
     fun openSingleArchive(uri: Uri, onNavigate: (AppRoute) -> Unit) {
+        val pathOrName = uri.lastPathSegment.orEmpty()
+        if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(pathOrName)) {
+            _uiState.update {
+                it.copy(
+                    isLoading = false,
+                    errorMessage = "不支持打开 APK 等应用安装包或非图集文件"
+                )
+            }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             val pack = archiveFileResolver.resolve(app, uri)
             if (pack == null) {
+                val isApk = com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(pathOrName)
                 _uiState.update {
                     it.copy(
                         isLoading = false,
-                        errorMessage = "无法打开该压缩包：格式不受支持或已损坏"
+                        errorMessage = if (isApk) "不支持打开 APK 等应用安装包或非图集文件" else "无法打开该压缩包：格式不受支持或已损坏"
                     )
                 }
                 return@launch
@@ -198,7 +211,12 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                                 zipArchiveManager.verifyPassword(targetFile, lastPwd)
                             }
                             if (isValid) {
-                                passwordStore.set(pack.id, lastPwd)
+                                val aliases = listOfNotNull(
+                                    targetFile.absolutePath,
+                                    pack.directPath,
+                                    pack.uriString
+                                ).distinct()
+                                passwordStore.set(pack.id, lastPwd, aliases = aliases)
                                 onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
                                 return@launch
                             } else {
@@ -258,14 +276,45 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
             }
 
             if (isValid) {
-                // Cache password in memory session pool and update lastUsedPassword
-                passwordStore.set(targetPack.id, password)
-                _uiState.update {
-                    it.copy(
+                // Cache password in memory session pool with all known aliases
+                val aliases = listOfNotNull(
+                    targetFile.absolutePath,
+                    targetPack.directPath,
+                    targetPack.uriString
+                ).distinct()
+                passwordStore.set(targetPack.id, password, aliases = aliases)
+
+                // Update item count and cover after unlocking
+                val entries = zipArchiveManager.getImageEntries(targetFile, password)
+                val updatedCover = entries.firstOrNull()?.let { entry ->
+                    PackImage(
+                        packId = targetPack.id,
+                        entryPath = entry.name,
+                        displayName = entry.name.substringAfterLast('/'),
+                        isEncrypted = entry.isEncrypted,
+                        directFilePath = targetFile.absolutePath,
+                        fileUri = targetPack.uriString
+                    )
+                }
+                val updatedPack = targetPack.copy(
+                    itemCount = entries.size,
+                    coverImage = updatedCover ?: targetPack.coverImage
+                )
+
+                _uiState.update { state ->
+                    val updatedStandalone = state.standalonePacks.map {
+                        if (it.id == updatedPack.id) updatedPack else it
+                    }
+                    val updatedScanned = state.scannedPacks.map {
+                        if (it.id == updatedPack.id) updatedPack else it
+                    }
+                    state.copy(
                         showPasswordDialog = false,
                         targetZipPack = null,
                         isVerifyingPassword = false,
-                        passwordError = null
+                        passwordError = null,
+                        standalonePacks = updatedStandalone,
+                        scannedPacks = updatedScanned
                     )
                 }
                 onSuccess()
@@ -277,6 +326,38 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                     )
                 }
                 onFailureHaptic()
+            }
+        }
+    }
+
+    /**
+     * Removes a pack from standalone or scanned packs, cleans up cached files if applicable,
+     * and revokes any session passwords for this pack.
+     */
+    fun removePack(pack: PackItem, deleteFile: Boolean = false) {
+        viewModelScope.launch(Dispatchers.IO) {
+            // 1. If it's a cached file from ContentResolver, always delete cache file
+            val directPath = pack.directPath
+            if (directPath != null) {
+                val file = File(directPath)
+                if (file.exists()) {
+                    if (file.parentFile?.name == "opened_archives" || deleteFile) {
+                        try {
+                            file.delete()
+                        } catch (_: Exception) {}
+                    }
+                }
+            }
+
+            // 2. Clear password from session cache
+            passwordStore.remove(pack.id)
+
+            // 3. Update UI state
+            _uiState.update { state ->
+                state.copy(
+                    standalonePacks = state.standalonePacks.filter { it.id != pack.id },
+                    scannedPacks = state.scannedPacks.filter { it.id != pack.id }
+                )
             }
         }
     }

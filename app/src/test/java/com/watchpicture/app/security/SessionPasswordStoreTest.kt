@@ -76,4 +76,23 @@ class SessionPasswordStoreTest {
         store.clear()
         assertNull(store.lastUsedPassword)
     }
+
+    @Test
+    fun `supports alias mapping between uri and direct file path`() {
+        val uriKey = "content://com.android.externalstorage.documents/document/primary%3ADownload%2Fcomic.zip"
+        val directPathKey = "/storage/emulated/0/Download/comic.zip"
+
+        store.set(uriKey, "P@ssword999", aliases = listOf(directPathKey))
+
+        // Both keys can retrieve the same password
+        assertEquals("P@ssword999", store.get(uriKey))
+        assertEquals("P@ssword999", store.get(directPathKey))
+        assertTrue(store.hasPassword(uriKey))
+        assertTrue(store.hasPassword(directPathKey))
+
+        // Removing by one key revokes password across all associated aliases
+        store.remove(uriKey)
+        assertNull(store.get(uriKey))
+        assertNull(store.get(directPathKey))
+    }
 }

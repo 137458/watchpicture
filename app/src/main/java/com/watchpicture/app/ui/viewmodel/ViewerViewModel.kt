@@ -92,6 +92,9 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
         val uri = Uri.parse(packId)
         val directFile = safManager.resolveDirectFile(uri)
         if (directFile != null && directFile.exists()) {
+            passwordStore.get(packId)?.let { pwd ->
+                passwordStore.set(packId, pwd, aliases = listOf(directFile.absolutePath))
+            }
             return resolvePackImages(directFile.absolutePath)
         }
 

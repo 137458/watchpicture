@@ -71,4 +71,20 @@ class PackListMergeTest {
         assertEquals("Single", state.packs.first().name)
         assertTrue(state.displayedPacks.isNotEmpty())
     }
+
+    @Test
+    fun `pack removal reflects in merged and displayed packs`() {
+        val p1 = createZipPack("/storage/p1.zip", "Pack 1")
+        val p2 = createZipPack("/storage/p2.zip", "Pack 2")
+        val state = PackListUiState(
+            standalonePacks = listOf(p1, p2)
+        )
+        assertEquals(2, state.packs.size)
+
+        val updatedState = state.copy(
+            standalonePacks = state.standalonePacks.filter { it.id != p1.id }
+        )
+        assertEquals(1, updatedState.packs.size)
+        assertEquals("/storage/p2.zip", updatedState.packs.first().id)
+    }
 }

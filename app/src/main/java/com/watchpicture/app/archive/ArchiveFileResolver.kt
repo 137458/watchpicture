@@ -28,6 +28,19 @@ class ArchiveFileResolver(
 
     companion object {
         private const val BUFFER_SIZE = 64 * 1024 // 64KB high-speed stream buffer
+
+        private val FORBIDDEN_EXTENSIONS = setOf(
+            "apk", "xapk", "apks", "apkm", "aab", "jar", "aar", "dex", "ipa"
+        )
+        private val ALLOWED_EXTENSIONS = setOf("zip", "cbz")
+
+        /**
+         * Checks if the filename ends with an explicitly disallowed application or library extension.
+         */
+        fun isDisallowedExtension(fileName: String): Boolean {
+            val ext = fileName.substringAfterLast('.', "").lowercase()
+            return ext in FORBIDDEN_EXTENSIONS
+        }
     }
 
     /**
@@ -54,6 +67,30 @@ class ArchiveFileResolver(
     }
 
     /**
+     * Detects whether a ZIP file is an Android application package (.apk)
+     * or software library containing compiled code or manifests.
+     */
+    fun isAppOrPackageArchive(file: File): Boolean {
+        if (isDisallowedExtension(file.name)) return true
+        if (!isValidZipArchive(file)) return false
+
+        return try {
+            net.lingala.zip4j.ZipFile(file).use { zip ->
+                zip.fileHeaders.any { header ->
+                    val name = header.fileName.lowercase()
+                    name == "androidmanifest.xml" ||
+                            name == "classes.dex" ||
+                            name.startsWith("classes") && name.endsWith(".dex") ||
+                            name == "resources.arsc" ||
+                            (name.startsWith("meta-inf/") && (name.endsWith(".sf") || name.endsWith(".rsa") || name.endsWith(".dsa")))
+                }
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Constructs a ZipPack model from a resolved local file.
      */
     fun createZipPackFromFile(
@@ -64,6 +101,12 @@ class ArchiveFileResolver(
         if (!isValidZipArchive(file)) return null
 
         val lowerName = file.name.lowercase()
+        val ext = lowerName.substringAfterLast('.', "")
+        if (ext !in ALLOWED_EXTENSIONS) return null
+
+        // Detect and reject APK or code package disguised as a ZIP
+        if (isAppOrPackageArchive(file)) return null
+
         val isCbz = lowerName.endsWith(".cbz")
         val isEncrypted = zipArchiveManager.isEncrypted(file)
         val password = cachedPassword ?: passwordStore.get(file.absolutePath)
@@ -94,6 +137,22 @@ class ArchiveFileResolver(
             coverImage = cover,
             isCbz = isCbz
         )
+    }
+
+    /**
+     * Deletes a cached archive file from the internal opened_archives directory.
+     */
+    fun deleteArchiveCache(filePath: String): Boolean {
+        return try {
+            val file = File(filePath)
+            if (file.exists() && file.parentFile?.name == "opened_archives") {
+                file.delete()
+            } else {
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
     }
 
     /**

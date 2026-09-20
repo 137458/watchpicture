@@ -87,11 +87,17 @@ class ZipArchiveManager {
     fun verifyPassword(file: File, password: String): Boolean {
         return try {
             ZipFile(file, password.toCharArray()).use { zip ->
-                val encryptedHeader = zip.fileHeaders.firstOrNull { it.isEncrypted }
-                    ?: return true // No encrypted entries found
+                val testHeader = zip.fileHeaders
+                    .asSequence()
+                    .filter { !it.isDirectory }
+                    .filter { !isIgnoredFile(it.fileName) }
+                    .firstOrNull { it.isEncrypted }
+                    ?: zip.fileHeaders.firstOrNull { !it.isDirectory && it.isEncrypted }
+                    ?: zip.fileHeaders.firstOrNull { !it.isDirectory }
+                    ?: return true // No file entries to verify
 
                 val buffer = ByteArray(64)
-                zip.getInputStream(encryptedHeader).use { stream ->
+                zip.getInputStream(testHeader).use { stream ->
                     stream.read(buffer) >= 0
                 }
                 true

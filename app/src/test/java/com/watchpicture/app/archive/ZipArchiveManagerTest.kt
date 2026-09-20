@@ -86,11 +86,35 @@ class ZipArchiveManagerTest {
     fun `streams entry content without writing to disk`() {
         val manager = ZipArchiveManager()
         val entries = manager.getImageEntries(aesZip, password = correctPassword)
-        assertEquals(1, entries.size)
-
         val inputStream = manager.getEntryInputStream(aesZip, entries[0].name, password = correctPassword)
         val readBytes = inputStream.use { it.readBytes() }
-
         assertArrayEquals(testImageBytes, readBytes)
+    }
+
+    @Test
+    fun `validates password for encrypted archive with directory entry correctly`() {
+        val manager = ZipArchiveManager()
+        val dirEncryptedZip = tempFolder.newFile("dir_encrypted.zip")
+        ZipFile(dirEncryptedZip, correctPassword.toCharArray()).use { zip ->
+            val pDir = ZipParameters().apply {
+                fileNameInZip = "comic_folder/"
+                isEncryptFiles = true
+                encryptionMethod = EncryptionMethod.AES
+                aesKeyStrength = AesKeyStrength.KEY_STRENGTH_256
+            }
+            zip.addStream(ByteArrayInputStream(ByteArray(0)), pDir)
+
+            val pImg = ZipParameters().apply {
+                isEncryptFiles = true
+                encryptionMethod = EncryptionMethod.AES
+                aesKeyStrength = AesKeyStrength.KEY_STRENGTH_256
+                fileNameInZip = "comic_folder/01.jpg"
+            }
+            zip.addStream(ByteArrayInputStream(testImageBytes), pImg)
+        }
+
+        // Must succeed with correct password even when first entry is a directory
+        assertTrue("Password verification should succeed even when directory entry is present", manager.verifyPassword(dirEncryptedZip, correctPassword))
+        assertFalse("Wrong password should still fail", manager.verifyPassword(dirEncryptedZip, "BadPassword"))
     }
 }

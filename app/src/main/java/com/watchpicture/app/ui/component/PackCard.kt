@@ -1,8 +1,10 @@
 package com.watchpicture.app.ui.component
 
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -47,11 +49,13 @@ import java.util.Locale
  * Grid card component presenting a picture pack with cover preview,
  * format/page count badges, and encryption indicators.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun PackCard(
     pack: PackItem,
     sessionPassword: String?,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val isLocked = pack.isEncrypted && sessionPassword == null
@@ -59,7 +63,10 @@ fun PackCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
+            .combinedClickable(
+                onClick = onClick,
+                onLongClick = onLongClick
+            )
     ) {
         Column(
             modifier = Modifier

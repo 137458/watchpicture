@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
@@ -211,11 +212,7 @@ fun UpdateScreen(
                         }
                         .background(MiuixTheme.colorScheme.surfaceVariant),
                 ) {
-                    Image(
-                        painter = painterResource(id = R.mipmap.ic_launcher),
-                        contentDescription = stringResource(R.string.app_name),
-                        modifier = Modifier.size(56.dp)
-                    )
+                    SafeAppIcon(modifier = Modifier.size(56.dp))
                 }
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -471,3 +468,37 @@ fun UpdateScreen(
         )
     }
 }
+
+@Composable
+private fun SafeAppIcon(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val appIconBitmap = remember(context) {
+        try {
+            val drawable = context.packageManager.getApplicationIcon(context.packageName)
+            val width = drawable.intrinsicWidth.takeIf { it > 0 } ?: 128
+            val height = drawable.intrinsicHeight.takeIf { it > 0 } ?: 128
+            val bitmap = android.graphics.Bitmap.createBitmap(width, height, android.graphics.Bitmap.Config.ARGB_8888)
+            val canvas = android.graphics.Canvas(bitmap)
+            drawable.setBounds(0, 0, canvas.width, canvas.height)
+            drawable.draw(canvas)
+            bitmap.asImageBitmap()
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    if (appIconBitmap != null) {
+        Image(
+            bitmap = appIconBitmap,
+            contentDescription = stringResource(R.string.app_name),
+            modifier = modifier
+        )
+    } else {
+        Image(
+            painter = painterResource(id = R.drawable.ic_launcher_foreground),
+            contentDescription = stringResource(R.string.app_name),
+            modifier = modifier
+        )
+    }
+}
+
