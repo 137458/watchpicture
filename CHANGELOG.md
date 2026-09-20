@@ -3,6 +3,9 @@
 ## [未发布]
 
 ### 修复
+- 修复了 `ZipImageFetcher` 在缩略图生成分支中因嵌套 `runBlocking` 导致在有限调度线程池中引发协程互相等待死锁（Deadlock）的严重问题，改用异步挂起提取彻底切断死锁链。
+- 修复了 `LibArchiveExtractor` 在 Scoped Storage 分区存储沙箱环境下尝试在外部存储只读父目录创建临时文件抛出 `EACCES (Permission denied)` 的异常，重定向至内部安全缓存目录。
+- 修复了透明通道图片（PNG/WebP/GIF）在缩略图下采样和显示时因硬编码 `RGB_565` 导致透明背景变黑及色彩断层的问题，智能采用 `ARGB_8888` 保留 Alpha 通道与色彩精度。
 - 修复了缩略图网格加载普通 ZIP 压缩包时错误触发大图磁盘缓存全量落盘的缺陷，恢复普通 ZIP 纯流式采样直出，杜绝 10MB+ 原图频繁写盘带来的闪存磨损与写入延迟。
 - 修复了 `ThumbnailDiskCache` 在下采样解码前将全量原始字节读入内存大数组（`readBytes()`）导致的突发 GC 停顿问题，改用固定 64KB 缓冲流实现零堆分配流式采样。
 - 修复了大图界面因自定义数据源未被识别为本地物理文件导致 Telephoto 无法开启 Subsampling 瓦片切片、错误停留在模糊缩略图拉伸底图的缺陷。
@@ -38,6 +41,9 @@
 - 新增图包长按操作菜单与移除确认弹窗，支持从图包列表中移除项目并同步清理单文件导入的临时缓存文件。
 
 ### 优化
+- 优化了图包列表在 120Hz 高刷新率屏幕下的 Compose 重组流畅度，将 `PackListUiState.displayedPacks` 从每帧实时遍历过滤与自然排序重构为基于数据变更的缓存记忆化（Memoization），消除微小重组时的主线程卡顿。
+- 优化了悬浮底栏在多任务及低功耗状态下的传感器与 GPU 负载，仅在激活液态玻璃模式时启动陀螺仪倾斜度监听；在设备中度发热或省电模式下自动降级为基础模糊并切断硬件传感器唤醒。
+- 增强了系统低内存与 LMK (Low Memory Killer) 查杀防御，重写 `WatchPictureApp.onTrimMemory` 与 `onLowMemory`，在退火切后台及内存告急时主动清理 Coil 内存缓存并关闭未使用的文件句柄池。
 - 引入原生 C/C++ `libarchive` Native JNI 与单流顺序提取通道，彻底消除了 7z 固实压缩反复解压导致的 CPU 满载与耗时瓶颈。
 - 新增 `ArchiveHandlePool` 句柄缓存池，对无密码 ZIP 启用系统底层原生 `java.util.zip.ZipFile`（基于 native C++ zlib），消除了反复随机 Seek 解析 Central Directory 的磁盘开销。
 - 彻底解耦缩略图与大图通道，新增专属 `ThumbnailDiskCache` 与流式 `inSampleSize` 下采样，杜绝网格浏览时将动辄数十兆的原图写盘，闪存写入量骤减 95% 以上并大幅降低发热功耗。

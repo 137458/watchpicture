@@ -220,12 +220,19 @@ private fun ThumbnailItem(
     val context = androidx.compose.ui.platform.LocalContext.current
     val request = remember(model) {
         if (model != null) {
+            val entryName = when (model) {
+                is com.watchpicture.app.coil.ZipImageSource -> model.entryName
+                is java.io.File -> model.name
+                else -> ""
+            }.lowercase()
+            val hasAlpha = entryName.endsWith(".png") || entryName.endsWith(".webp") || entryName.endsWith(".gif")
+
             val builder = coil3.request.ImageRequest.Builder(context)
                 .data(model)
                 .size(360, 360)
                 .precision(coil3.size.Precision.INEXACT)
                 .crossfade(100)
-                .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+                .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
 
             val thumbKey = when (model) {
                 is com.watchpicture.app.coil.ZipImageSource -> {

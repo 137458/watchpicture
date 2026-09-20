@@ -99,7 +99,11 @@ fun MainScreen(
     val pagerState = rememberPagerState(pageCount = { navigationItems.size })
     val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
-    val isShaderSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isRuntimeShaderSupported()
+    val powerThermalManager = WatchPictureApp.instance.powerThermalManager
+    val throttleLevel by powerThermalManager.throttleLevel.collectAsState()
+    val isThrottled = throttleLevel == com.watchpicture.app.archive.PowerThermalManager.ThrottleLevel.THROTTLED
+
+    val isShaderSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isRuntimeShaderSupported() && !isThrottled
     val surfaceColor = MiuixTheme.colorScheme.surface
     val floatingBackdrop = if (isShaderSupported) {
         rememberLayerBackdrop {

@@ -54,22 +54,31 @@ class ZipImageFetcher(
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.thumbnailDiskCache }.getOrNull()
 
         if (data.isThumbnail && thumbCache != null) {
+            val existingThumb = thumbCache.get(data.zipFile, data.entryName, data.targetSizePx, password)
+            if (existingThumb != null) {
+                return@withContext SourceFetchResult(
+                    source = ImageSource(
+                        file = existingThumb.toOkioPath(),
+                        fileSystem = options.fileSystem
+                    ),
+                    mimeType = "image/webp",
+                    dataSource = DataSource.DISK
+                )
+            }
+
+            val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
+                ?: if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
+                    extractCoord.extractHighPriority(data.zipFile, data.entryName, password)
+                } else null
+
             val thumbFile = thumbCache.getOrPut(
                 zipFile = data.zipFile,
                 entryName = data.entryName,
                 targetSizePx = data.targetSizePx,
                 password = password
             ) {
-                // If full-res file is already cached on disk, read directly from disk (0ms decompression!)
-                val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
                 if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
                     java.io.FileInputStream(cachedFull)
-                } else if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
-                    // Extract solid 7z via coordinator to take advantage of single-pass solid opportunistic caching
-                    val extracted = kotlinx.coroutines.runBlocking {
-                        extractCoord.extractHighPriority(data.zipFile, data.entryName, password)
-                    }
-                    java.io.FileInputStream(extracted)
                 } else {
                     // Plain ZIP: stream directly into downsampler, 0 full-res disk dump!
                     zipArchiveManager.getEntryInputStream(

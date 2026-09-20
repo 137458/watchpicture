@@ -40,23 +40,49 @@ data class PackListUiState(
     val passwordError: String? = null,
     val isVerifyingPassword: Boolean = false
 ) {
+    @Volatile
+    private var cachedPacksKey: Pair<List<ZipPack>, List<PackItem>>? = null
+    @Volatile
+    private var cachedPacks: List<PackItem>? = null
+
     val packs: List<PackItem>
         get() {
-            val seen = mutableSetOf<String>()
-            val combined = mutableListOf<PackItem>()
+            val currentPacks = cachedPacks
+            val key = cachedPacksKey
+            if (currentPacks != null && key != null && key.first === standalonePacks && key.second === scannedPacks) {
+                return currentPacks
+            }
+            val seen = HashSet<String>(standalonePacks.size + scannedPacks.size)
+            val combined = ArrayList<PackItem>(standalonePacks.size + scannedPacks.size)
             for (p in standalonePacks) {
                 if (seen.add(p.id)) combined.add(p)
             }
             for (p in scannedPacks) {
                 if (seen.add(p.id)) combined.add(p)
             }
+            cachedPacksKey = Pair(standalonePacks, scannedPacks)
+            cachedPacks = combined
             return combined
         }
 
+    @Volatile
+    private var cachedFilterKey: Triple<String, SortOption, List<PackItem>>? = null
+    @Volatile
+    private var cachedDisplayed: List<PackItem>? = null
+
     val displayedPacks: List<PackItem>
         get() {
-            val filtered = PackFilter.filter(packs, searchQuery)
-            return PackSorter.sort(filtered, sortOption)
+            val p = packs
+            val currentDisplayed = cachedDisplayed
+            val key = cachedFilterKey
+            if (currentDisplayed != null && key != null && key.first == searchQuery && key.second == sortOption && key.third === p) {
+                return currentDisplayed
+            }
+            val filtered = PackFilter.filter(p, searchQuery)
+            val sorted = PackSorter.sort(filtered, sortOption)
+            cachedFilterKey = Triple(searchQuery, sortOption, p)
+            cachedDisplayed = sorted
+            return sorted
         }
 }
 

@@ -135,9 +135,12 @@ class ThumbnailDiskCache(
                     sampleSize *= 2
                 }
 
+                val mime = options.outMimeType?.lowercase() ?: ""
+                val hasAlpha = mime.contains("png") || mime.contains("webp") || mime.contains("gif")
+
                 val decodeOptions = BitmapFactory.Options().apply {
                     inSampleSize = sampleSize
-                    inPreferredConfig = Bitmap.Config.RGB_565
+                    inPreferredConfig = if (hasAlpha) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
                 }
                 bitmap = BitmapFactory.decodeStream(buffered, null, decodeOptions)
             }

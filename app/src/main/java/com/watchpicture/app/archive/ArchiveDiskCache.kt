@@ -20,7 +20,7 @@ import kotlin.concurrent.withLock
  * directory list/stat contention during high-concurrency thumbnail loading.
  */
 class ArchiveDiskCache(
-    private val directory: File,
+    val directory: File,
     private val maxSizeBytes: Long = DEFAULT_MAX_CACHE_SIZE
 ) {
 

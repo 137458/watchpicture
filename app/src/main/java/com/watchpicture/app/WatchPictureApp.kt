@@ -106,6 +106,46 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             .build()
     }
 
+    @Suppress("DEPRECATION")
+    override fun onTrimMemory(level: Int) {
+        super.onTrimMemory(level)
+        try {
+            val imageLoader = SingletonImageLoader.get(this)
+            when {
+                level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
+                level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
+                    // Extreme memory pressure: flush all memory caches, file handles, and trim disk caches
+                    imageLoader.memoryCache?.clear()
+                    zipArchiveManager.handlePool.closeAll()
+                    archiveDiskCache.trimToSize()
+                    thumbnailDiskCache.trimToSize()
+                }
+                level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
+                    // UI moved to background: halve Coil memory cache and close idle handles to survive LMK
+                    val memCache = imageLoader.memoryCache
+                    if (memCache != null) {
+                        memCache.trimToSize(memCache.maxSize / 2)
+                    }
+                    zipArchiveManager.handlePool.closeAll()
+                }
+                level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
+                    val memCache = imageLoader.memoryCache
+                    if (memCache != null) {
+                        memCache.trimToSize(memCache.maxSize / 2)
+                    }
+                }
+            }
+        } catch (_: Throwable) {}
+    }
+
+    override fun onLowMemory() {
+        super.onLowMemory()
+        try {
+            SingletonImageLoader.get(this).memoryCache?.clear()
+            zipArchiveManager.handlePool.closeAll()
+        } catch (_: Throwable) {}
+    }
+
     companion object {
         lateinit var instance: WatchPictureApp
             private set

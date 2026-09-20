@@ -329,8 +329,16 @@ fun FloatingBottomBar(
         }
     } else null
 
-    val baseHighlight = rememberGravityRotatedHighlight(iosIndicatorSpecular, extraDegrees = -45f)
-    val pillHighlight = rememberGravityRotatedHighlight(iosIndicatorSpecular, extraDegrees = 90f)
+    val baseHighlight = rememberGravityRotatedHighlight(
+        base = iosIndicatorSpecular,
+        extraDegrees = -45f,
+        enabled = isLiquidGlassMode
+    )
+    val pillHighlight = rememberGravityRotatedHighlight(
+        base = iosIndicatorSpecular,
+        extraDegrees = 90f,
+        enabled = isLiquidGlassMode
+    )
     val combinedBackdrop = if (isLiquidGlassMode && backdrop != null && tabsBackdrop != null) {
         rememberCombinedBackdrop(backdrop, tabsBackdrop)
     } else null

@@ -88,7 +88,8 @@ class ArchiveExtractionCoordinator(
                 file = file,
                 targetEntryName = targetEntryName,
                 password = password,
-                maxLookahead = lookahead
+                maxLookahead = lookahead,
+                tempDirectory = archiveDiskCache.directory
             ) { name, extractedTempFile ->
                 try {
                     archiveDiskCache.getOrPut(file, name, password) {

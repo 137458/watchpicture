@@ -36,10 +36,14 @@ fun calculateQuantizedGravityAngle(gravityX: Float, gravityY: Float): Float {
 
 /**
  * 陀螺仪 3° 量化重力角度 State。
+ * 仅在 [enabled] 为 true 时挂载硬件倾斜传感器监听，避免在降级/省电模式下无谓唤醒传感器中枢。
  * 严禁在 Composable 重组体中直接读取，仅在 Draw 阶段闭包中读取。
  */
 @Composable
-fun rememberQuantizedGravityAngle(): State<Float> {
+fun rememberQuantizedGravityAngle(enabled: Boolean = true): State<Float> {
+    if (!enabled) {
+        return remember { derivedStateOf { (-PI / 2).toFloat() } }
+    }
     val tiltState = rememberDeviceTilt()
     return remember(tiltState) {
         derivedStateOf {
@@ -55,13 +59,18 @@ fun rememberQuantizedGravityAngle(): State<Float> {
 
 /**
  * 根据陀螺仪重力量化角度动态旋转的高光。
+ * 当 [enabled] 为 false 时跳过传感器监听，直接输出基础高光，节省电池功耗。
  */
 @Composable
 fun rememberGravityRotatedHighlight(
     base: Highlight,
     extraDegrees: Float,
+    enabled: Boolean = true,
 ): State<Highlight> {
-    val gravityAngle = rememberQuantizedGravityAngle()
+    if (!enabled) {
+        return remember(base) { derivedStateOf { base } }
+    }
+    val gravityAngle = rememberQuantizedGravityAngle(enabled = true)
     return remember(gravityAngle, base, extraDegrees) {
         derivedStateOf {
             val baseStyle = base.style as? BloomStroke ?: return@derivedStateOf base

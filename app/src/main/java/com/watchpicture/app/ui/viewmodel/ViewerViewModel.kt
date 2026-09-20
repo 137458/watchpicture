@@ -58,7 +58,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
         }
     }
 
-    private fun resolvePackImages(packId: String): List<PackImage> {
+    private suspend fun resolvePackImages(packId: String): List<PackImage> {
         val file = File(packId)
         if (file.exists()) {
             if (file.isDirectory) {
@@ -120,9 +120,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
         }
 
         // Resolves single archive files (content://...) via ArchiveFileResolver
-        val resolvedPack = kotlinx.coroutines.runBlocking {
-            archiveFileResolver.resolve(app, uri)
-        }
+        val resolvedPack = archiveFileResolver.resolve(app, uri)
         if (resolvedPack != null && resolvedPack.directPath != null) {
             passwordStore.get(packId)?.let { pwd ->
                 passwordStore.set(

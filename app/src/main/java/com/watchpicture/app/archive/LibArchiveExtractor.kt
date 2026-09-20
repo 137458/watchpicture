@@ -44,6 +44,7 @@ object LibArchiveExtractor {
         targetEntryName: String,
         password: String?,
         maxLookahead: Int,
+        tempDirectory: File? = null,
         onEntryExtracted: (name: String, extractedFile: File) -> Unit
     ): Boolean {
         if (!isAvailable) return false
@@ -95,9 +96,12 @@ object LibArchiveExtractor {
                             java.text.Normalizer.normalize(entryNormalized, java.text.Normalizer.Form.NFC) == nfcTarget)
 
                     if (isTarget || (isImage && (!targetFound || lookaheadRemaining > 0))) {
-                        // Extract to a temp file
-                        val tempDir = file.parentFile ?: File(".")
-                        val tempFile = File.createTempFile("libarc_", ".tmp", tempDir)
+                        // Extract to a safe internal cache temp file to strictly comply with Scoped Storage
+                        val safeDir = tempDirectory
+                            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.cacheDir }.getOrNull()
+                            ?: File(System.getProperty("java.io.tmpdir") ?: ".")
+                        if (!safeDir.exists()) safeDir.mkdirs()
+                        val tempFile = File.createTempFile("libarc_", ".tmp", safeDir)
                         try {
                             FileOutputStream(tempFile).use { fos ->
                                 while (true) {

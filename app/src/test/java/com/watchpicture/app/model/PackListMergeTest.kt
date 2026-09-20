@@ -87,4 +87,22 @@ class PackListMergeTest {
         assertEquals(1, updatedState.packs.size)
         assertEquals("/storage/p2.zip", updatedState.packs.first().id)
     }
+
+    @Test
+    fun `displayedPacks and packs are memoized across repeated accesses`() {
+        val p1 = createZipPack("/storage/p1.zip", "Pack 1")
+        val state = PackListUiState(standalonePacks = listOf(p1))
+
+        val packs1 = state.packs
+        val packs2 = state.packs
+        org.junit.Assert.assertSame("packs should return identical memoized reference", packs1, packs2)
+
+        val disp1 = state.displayedPacks
+        val disp2 = state.displayedPacks
+        org.junit.Assert.assertSame("displayedPacks should return identical memoized reference for 120Hz recomposition", disp1, disp2)
+
+        val stateFiltered = state.copy(searchQuery = "nonexistent")
+        val dispFiltered = stateFiltered.displayedPacks
+        assertTrue("Filtered packs should be empty", dispFiltered.isEmpty())
+    }
 }
