@@ -99,7 +99,7 @@ class SafManager(
                 }
                 val isZip = lowerName.endsWith(".zip")
                 val isCbz = lowerName.endsWith(".cbz")
-                val is7z = lowerName.endsWith(".7z")
+                val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
 
                 if (isZip || isCbz || is7z) {
                     val isEncrypted = zipArchiveManager.isEncrypted(child)
@@ -186,7 +186,7 @@ class SafManager(
                 }
                 val isZip = lowerName.endsWith(".zip")
                 val isCbz = lowerName.endsWith(".cbz")
-                val is7z = lowerName.endsWith(".7z")
+                val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
 
                 if (isZip || isCbz || is7z) {
                     // Try to resolve direct file if possible

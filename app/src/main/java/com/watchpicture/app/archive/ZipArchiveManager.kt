@@ -19,7 +19,8 @@ class ZipArchiveManager(
     companion object {
         private val GBK_CHARSET = Charset.forName("GBK")
         private val SUPPORTED_IMAGE_EXTENSIONS = setOf(
-            "jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic", "heif"
+            "jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic", "heif",
+            "jfif", "pjpeg", "pjp", "tiff", "tif", "ico", "svg"
         )
         private val naturalOrderComparator = NaturalOrderComparator()
 
@@ -39,7 +40,8 @@ class ZipArchiveManager(
         }
 
         fun isSevenZFile(file: File): Boolean {
-            return file.name.endsWith(".7z", ignoreCase = true) ||
+            val lower = file.name.lowercase(Locale.ROOT)
+            return lower.endsWith(".7z") || lower.endsWith(".cb7") ||
                     SevenZArchiveManager.isValidSevenZArchive(file)
         }
     }
@@ -101,10 +103,31 @@ class ZipArchiveManager(
             }
         }
 
-        val entries = readEntries(null)
-        if (entries.isNotEmpty()) return entries
+        fun hasGarbageCharacters(str: String): Boolean {
+            // \uFFFD is replacement char; \u2500..\u259F are box/block drawing chars typical of CP437 misinterpreting GBK
+            return str.any { it == '\uFFFD' || (it in '\u2500'..'\u259F') || it == '■' }
+        }
+
+        fun countChinese(str: String): Int = str.count { it in '\u4e00'..'\u9fa5' }
+
+        val defaultEntries = readEntries(null)
+        val defaultHasGarbage = defaultEntries.any { hasGarbageCharacters(it.name) }
+        val defaultChineseCount = defaultEntries.sumOf { countChinese(it.name) }
+
         val gbkEntries = readEntries(GBK_CHARSET)
-        return if (gbkEntries.isNotEmpty()) gbkEntries else entries
+        val gbkHasGarbage = gbkEntries.any { hasGarbageCharacters(it.name) }
+        val gbkChineseCount = gbkEntries.sumOf { countChinese(it.name) }
+
+        // If default reading produced CP437 garbage or GBK produced significantly more valid Chinese characters
+        if (gbkEntries.isNotEmpty() && (defaultHasGarbage || gbkChineseCount > defaultChineseCount) && !gbkHasGarbage) {
+            return gbkEntries
+        }
+
+        if (defaultEntries.isNotEmpty() && !defaultHasGarbage) {
+            return defaultEntries
+        }
+
+        return if (gbkEntries.isNotEmpty()) gbkEntries else defaultEntries
     }
 
     /**
@@ -158,6 +181,7 @@ class ZipArchiveManager(
         }
 
         val normalized = entryName.replace('\\', '/')
+        val nfcNormalized = java.text.Normalizer.normalize(normalized, java.text.Normalizer.Form.NFC)
 
         fun tryOpen(charset: Charset?): InputStream? {
             val zip = if (password != null) {
@@ -171,9 +195,19 @@ class ZipArchiveManager(
 
             val header = zip.getFileHeader(entryName)
                 ?: zip.getFileHeader(normalized)
-                ?: zip.fileHeaders.firstOrNull { it.fileName.replace('\\', '/') == normalized }
+                ?: zip.fileHeaders.firstOrNull {
+                    val candidate = it.fileName.replace('\\', '/')
+                    candidate == normalized ||
+                            java.text.Normalizer.normalize(candidate, java.text.Normalizer.Form.NFC) == nfcNormalized
+                }
 
             return header?.let { zip.getInputStream(it) }
+        }
+
+        val hasChinese = entryName.any { it in '\u4e00'..'\u9fa5' }
+        if (hasChinese) {
+            val gbkStream = tryOpen(GBK_CHARSET)
+            if (gbkStream != null) return gbkStream
         }
 
         return tryOpen(null)

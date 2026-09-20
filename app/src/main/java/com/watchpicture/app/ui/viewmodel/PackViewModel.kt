@@ -194,6 +194,12 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                 if (!pack.isEncrypted) {
                     onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
                 } else {
+                    // Check if user has explicitly locked this pack; if so, prompt password directly without auto-unlock
+                    if (passwordStore.isExplicitlyLocked(pack.id)) {
+                        promptPasswordDialog(pack)
+                        return
+                    }
+
                     // Check if already authenticated in this session
                     if (passwordStore.hasPassword(pack.id)) {
                         onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
@@ -232,6 +238,20 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
         }
     }
 
+    fun lockPack(pack: ZipPack) {
+        val aliases = listOfNotNull(pack.id, pack.directPath, pack.uriString).distinct()
+        for (alias in aliases) {
+            passwordStore.markExplicitlyLocked(alias)
+        }
+        _uiState.update { state ->
+            val updatedPack = pack.copy(coverImage = null, itemCount = 0)
+            state.copy(
+                standalonePacks = state.standalonePacks.map { if (it.id == pack.id) updatedPack else it },
+                scannedPacks = state.scannedPacks.map { if (it.id == pack.id) updatedPack else it }
+            )
+        }
+    }
+
     private fun promptPasswordDialog(pack: ZipPack) {
         _uiState.update {
             it.copy(
@@ -256,6 +276,7 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
 
     fun verifyAndUnlockPassword(
         password: String,
+        saveToBook: Boolean = false,
         onSuccess: () -> Unit,
         onFailureHaptic: () -> Unit
     ) {
@@ -276,6 +297,11 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
             }
 
             if (isValid) {
+                if (saveToBook) {
+                    launch {
+                        app.passwordBookRepository.addPassword(password)
+                    }
+                }
                 // Cache password in memory session pool with all known aliases
                 val aliases = listOfNotNull(
                     targetFile.absolutePath,

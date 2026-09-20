@@ -106,15 +106,28 @@ class SevenZArchiveManager {
 
         return try {
             SevenZFile.builder().setFile(file).setPassword(password).get().use { sevenZ ->
-                val targetEntry = sevenZ.entries.firstOrNull { !it.isDirectory && it.hasStream() }
-                    ?: return true // No stream entries, password opened headers successfully
-
-                sevenZ.getInputStream(targetEntry).use { stream ->
-                    val buffer = ByteArray(64)
-                    stream.read(buffer) >= 0
+                val hasEncryptedEntries = sevenZ.entries.any { isEntryEncrypted(it) }
+                if (!hasEncryptedEntries) {
+                    return true
                 }
-                true
+
+                val targetEntry = sevenZ.entries.firstOrNull { !it.isDirectory && it.hasStream() && isEntryEncrypted(it) }
+                    ?: return true
+
+                try {
+                    sevenZ.getInputStream(targetEntry).use { stream ->
+                        val buffer = ByteArray(64)
+                        stream.read(buffer) >= 0
+                    }
+                    true
+                } catch (_: OutOfMemoryError) {
+                    System.gc()
+                    true
+                }
             }
+        } catch (_: OutOfMemoryError) {
+            System.gc()
+            false
         } catch (_: Exception) {
             false
         }
@@ -127,6 +140,7 @@ class SevenZArchiveManager {
      */
     fun getEntryInputStream(file: File, entryName: String, password: String? = null): InputStream {
         val normalized = entryName.replace('\\', '/')
+        val nfcNormalized = java.text.Normalizer.normalize(normalized, java.text.Normalizer.Form.NFC)
         val builder = SevenZFile.builder().setFile(file)
         if (!password.isNullOrEmpty()) {
             builder.setPassword(password)
@@ -135,9 +149,11 @@ class SevenZArchiveManager {
         val sevenZ = builder.get()
         return try {
             val entry = sevenZ.entries.firstOrNull {
+                val candidate = it.name.replace('\\', '/')
                 it.name == entryName ||
                         it.name == normalized ||
-                        it.name.replace('\\', '/') == normalized
+                        candidate == normalized ||
+                        java.text.Normalizer.normalize(candidate, java.text.Normalizer.Form.NFC) == nfcNormalized
             } ?: throw NoSuchElementException("Entry '$entryName' not found in 7z archive ${file.name}")
 
             val rawStream = sevenZ.getInputStream(entry)

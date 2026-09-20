@@ -12,12 +12,39 @@ class SessionPasswordStore {
     private val cache = ConcurrentHashMap<String, String>()
     private val aliasMap = ConcurrentHashMap<String, String>()
     private val keyAliases = ConcurrentHashMap<String, MutableSet<String>>()
+    private val explicitlyLockedPacks = ConcurrentHashMap.newKeySet<String>()
 
     @Volatile
     var lastUsedPassword: String? = null
         private set
 
+    fun isExplicitlyLocked(packId: String): Boolean {
+        if (explicitlyLockedPacks.contains(packId)) return true
+        val canonicalKey = aliasMap[packId]
+        if (canonicalKey != null && explicitlyLockedPacks.contains(canonicalKey)) return true
+        return false
+    }
+
+    fun markExplicitlyLocked(packId: String) {
+        explicitlyLockedPacks.add(packId)
+        val canonicalKey = aliasMap[packId] ?: packId
+        explicitlyLockedPacks.add(canonicalKey)
+        keyAliases[canonicalKey]?.forEach { explicitlyLockedPacks.add(it) }
+        keyAliases[packId]?.forEach { explicitlyLockedPacks.add(it) }
+        remove(packId)
+    }
+
+    fun unlockExplicitlyLocked(packId: String) {
+        explicitlyLockedPacks.remove(packId)
+        val canonicalKey = aliasMap[packId]
+        if (canonicalKey != null) {
+            explicitlyLockedPacks.remove(canonicalKey)
+        }
+        keyAliases[packId]?.forEach { explicitlyLockedPacks.remove(it) }
+    }
+
     fun get(packId: String): String? {
+        if (isExplicitlyLocked(packId)) return null
         cache[packId]?.let { return it }
         val canonicalKey = aliasMap[packId]
         if (canonicalKey != null) {
@@ -27,6 +54,10 @@ class SessionPasswordStore {
     }
 
     fun set(packId: String, password: String, aliases: List<String> = emptyList()) {
+        unlockExplicitlyLocked(packId)
+        for (alias in aliases) {
+            unlockExplicitlyLocked(alias)
+        }
         cache[packId] = password
         lastUsedPassword = password
 
@@ -60,6 +91,7 @@ class SessionPasswordStore {
         cache.clear()
         aliasMap.clear()
         keyAliases.clear()
+        explicitlyLockedPacks.clear()
         lastUsedPassword = null
     }
 

@@ -56,6 +56,7 @@ import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import coil3.compose.AsyncImage
+import coil3.request.crossfade
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.toImageModel
@@ -150,6 +151,30 @@ fun GalleryViewerScreen(
             // Reset zoom state on page change
             LaunchedEffect(pagerState.currentPage) {
                 isCurrentPageZoomed = false
+            }
+
+            // Lookahead prefetching adjacent pages into Coil memory cache
+            val context = androidx.compose.ui.platform.LocalContext.current
+            LaunchedEffect(pagerState.currentPage, images) {
+                val imageLoader = coil3.SingletonImageLoader.get(context)
+                val prefetchIndices = listOf(
+                    pagerState.currentPage + 1,
+                    pagerState.currentPage - 1,
+                    pagerState.currentPage + 2,
+                    pagerState.currentPage - 2
+                )
+                for (idx in prefetchIndices) {
+                    if (idx in images.indices) {
+                        val targetImg = images[idx]
+                        val model = targetImg.toImageModel(sessionPassword)
+                        if (model != null) {
+                            val prefetchReq = coil3.request.ImageRequest.Builder(context)
+                                .data(model)
+                                .build()
+                            imageLoader.enqueue(prefetchReq)
+                        }
+                    }
+                }
             }
 
             // Horizontal Pager with reverseLayout support for Manga RTL mode
@@ -405,8 +430,21 @@ private fun ZoomableImage(
             contentAlignment = Alignment.Center
         ) {
             if (imageModel != null) {
+                val context = androidx.compose.ui.platform.LocalContext.current
+                val request = remember(imageModel) {
+                    val builder = coil3.request.ImageRequest.Builder(context)
+                        .data(imageModel)
+                        .crossfade(150)
+                    if (imageModel is com.watchpicture.app.coil.ZipImageSource) {
+                        val pwdHash = imageModel.password?.hashCode()?.toString(16) ?: "none"
+                        val cacheKey = "zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash"
+                        builder.placeholderMemoryCacheKey(coil3.memory.MemoryCache.Key(cacheKey))
+                    }
+                    builder.build()
+                }
+
                 AsyncImage(
-                    model = imageModel,
+                    model = request,
                     contentDescription = image.displayName,
                     contentScale = ContentScale.Fit,
                     modifier = Modifier

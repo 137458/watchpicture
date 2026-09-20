@@ -1,6 +1,7 @@
 package com.watchpicture.app.coil
 
 import coil3.decode.DataSource
+import coil3.decode.ImageSource
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import com.watchpicture.app.archive.ZipArchiveManager
@@ -47,7 +48,7 @@ class ZipImageFetcherTest {
     }
 
     @Test
-    fun `fetches encrypted entry as seekable file source and cleans up on close`() = runBlocking {
+    fun `fetches encrypted entry as memory buffer without writing to disk`() = runBlocking {
         val manager = ZipArchiveManager()
         val data = ZipImageSource(
             zipFile = encryptedZip,
@@ -69,18 +70,13 @@ class ZipImageFetcherTest {
         assertTrue("Result must be SourceFetchResult", result is SourceFetchResult)
         val sourceResult = result as SourceFetchResult
         assertEquals("image/jpeg", sourceResult.mimeType)
-        assertEquals(DataSource.DISK, sourceResult.dataSource)
+        assertEquals("Must be in-memory data source for zero disk I/O", DataSource.MEMORY, sourceResult.dataSource)
 
-        // Must provide a concrete Path so BitmapFactoryDecoder can decode without stream exhaustion
-        val filePath = sourceResult.source.fileOrNull()
-        assertNotNull("ImageSource must have a non-null file path for seekable decoding", filePath)
-        val tempFile = File(filePath.toString())
-        assertTrue("Temporary file must exist during decoding", tempFile.exists())
+        // Zero temp files created in cacheDir
+        val filesInCache = cacheDir.listFiles() ?: emptyArray()
+        assertTrue("Cache dir must remain empty without temporary disk files", filesInCache.isEmpty())
 
-        // Validate content integrity from underlying file
-        assertArrayEquals("File content must match original bytes", sampleBytes, tempFile.readBytes())
-
-        // Validate peek without consuming (same mechanism used by BitmapFactoryDecoder)
+        // Validate peek without consuming
         val peekBytes = sourceResult.source.source().peek().readByteArray()
         assertArrayEquals("Peeked bytes must match original bytes", sampleBytes, peekBytes)
 
@@ -88,8 +84,37 @@ class ZipImageFetcherTest {
         val readBytes = sourceResult.source.source().readByteArray()
         assertArrayEquals("Consumed bytes must match original bytes", sampleBytes, readBytes)
 
-        // Close and verify automatic deletion
+        // Close cleanly
         sourceResult.source.close()
-        assertFalse("Temporary file must be deleted on close", tempFile.exists())
+    }
+
+    @Test
+    fun `resolves extended mime types correctly`() = runBlocking {
+        val manager = ZipArchiveManager()
+        val testCases = mapOf(
+            "photo.jfif" to "image/jpeg",
+            "photo.pjpeg" to "image/jpeg",
+            "photo.pjp" to "image/jpeg",
+            "vector.svg" to "image/svg+xml",
+            "scan.tiff" to "image/tiff",
+            "scan.tif" to "image/tiff",
+            "fav.ico" to "image/x-icon",
+            "photo.avif" to "image/avif"
+        )
+
+        for ((fileName, expectedMime) in testCases) {
+            val data = ZipImageSource(encryptedZip, fileName, password)
+            val options = Options(
+                context = object : android.content.ContextWrapper(null) {},
+                fileSystem = FileSystem.SYSTEM
+            )
+            val fetcher = ZipImageFetcher(data, options, manager)
+            // Use reflection or resolveMimeType to test MIME mapping
+            val method = ZipImageFetcher::class.java.getDeclaredMethod("resolveMimeType", String::class.java).apply {
+                isAccessible = true
+            }
+            val mime = method.invoke(fetcher, fileName)
+            assertEquals("MIME mismatch for $fileName", expectedMime, mime)
+        }
     }
 }

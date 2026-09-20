@@ -37,6 +37,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.request.crossfade
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.PackImage
@@ -182,11 +183,20 @@ fun ThumbnailGridScreen(
                             items = uiState.images,
                             key = { index, img -> "${img.packId}_${img.entryPath}_$index" }
                         ) { index, item ->
+                            val context = androidx.compose.ui.platform.LocalContext.current
                             ThumbnailItem(
                                 image = item,
                                 sessionPassword = sessionPassword,
                                 index = index + 1,
                                 onClick = {
+                                    val targetModel = item.toImageModel(sessionPassword)
+                                    if (targetModel != null) {
+                                        coil3.SingletonImageLoader.get(context).enqueue(
+                                            coil3.request.ImageRequest.Builder(context)
+                                                .data(targetModel)
+                                                .build()
+                                        )
+                                    }
                                     onNavigate(
                                         AppRoute.GalleryViewer(
                                             packId = packId,
@@ -214,6 +224,18 @@ private fun ThumbnailItem(
         image.toImageModel(sessionPassword)
     }
 
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val request = remember(model) {
+        if (model != null) {
+            coil3.request.ImageRequest.Builder(context)
+                .data(model)
+                .crossfade(100)
+                .build()
+        } else {
+            null
+        }
+    }
+
     Box(
         modifier = Modifier
             .aspectRatio(1f)
@@ -221,9 +243,9 @@ private fun ThumbnailItem(
             .background(MiuixTheme.colorScheme.surfaceContainerHigh)
             .clickable(onClick = onClick)
     ) {
-        if (model != null) {
+        if (request != null) {
             AsyncImage(
-                model = model,
+                model = request,
                 contentDescription = image.displayName,
                 contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxSize()

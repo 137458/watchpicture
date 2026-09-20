@@ -37,45 +37,35 @@ class ZipImageFetcher(
             password = password
         )
 
-        val cacheBase = options.context.cacheDir ?: File(System.getProperty("java.io.tmpdir") ?: ".")
-        val cacheDir = File(cacheBase, "coil_zip_cache").apply { mkdirs() }
-        val tempFile = File.createTempFile("zip_img_", ".tmp", cacheDir)
-
-        try {
-            tempFile.outputStream().use { output ->
-                inputStream.use { input ->
-                    input.copyTo(output)
-                }
-            }
-
-            val mimeType = resolveMimeType(data.entryName)
-
-            SourceFetchResult(
-                source = ImageSource(
-                    file = tempFile.toOkioPath(),
-                    fileSystem = options.fileSystem,
-                    closeable = AutoCloseable {
-                        tempFile.delete()
-                    }
-                ),
-                mimeType = mimeType,
-                dataSource = DataSource.DISK
-            )
-        } catch (e: Throwable) {
-            tempFile.delete()
-            throw e
+        val buffer = okio.Buffer()
+        inputStream.use { input ->
+            buffer.readFrom(input)
         }
+
+        val mimeType = resolveMimeType(data.entryName)
+
+        SourceFetchResult(
+            source = ImageSource(
+                source = buffer,
+                fileSystem = options.fileSystem
+            ),
+            mimeType = mimeType,
+            dataSource = DataSource.MEMORY
+        )
     }
 
     private fun resolveMimeType(fileName: String): String {
         return when (fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
-            "jpg", "jpeg" -> "image/jpeg"
+            "jpg", "jpeg", "jfif", "pjpeg", "pjp" -> "image/jpeg"
             "png" -> "image/png"
             "webp" -> "image/webp"
             "gif" -> "image/gif"
             "bmp" -> "image/bmp"
             "avif" -> "image/avif"
             "heic", "heif" -> "image/heif"
+            "svg" -> "image/svg+xml"
+            "tiff", "tif" -> "image/tiff"
+            "ico" -> "image/x-icon"
             else -> "image/jpeg"
         }
     }

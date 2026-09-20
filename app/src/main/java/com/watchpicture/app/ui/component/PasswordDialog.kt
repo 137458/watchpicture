@@ -46,6 +46,20 @@ import top.yukonga.miuix.kmp.basic.TextField
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.window.WindowDialog
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.width
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
+import top.yukonga.miuix.kmp.basic.Switch
+import com.watchpicture.app.WatchPictureApp
+import androidx.compose.runtime.collectAsState
+
 /**
  * Miuix-styled password authentication dialog for encrypted picture archives.
  * Features secret visibility toggle, quick clear button, error feedback, and haptic response.
@@ -57,11 +71,15 @@ fun PasswordDialog(
     errorMessage: String? = null,
     isVerifying: Boolean = false,
     onDismissRequest: () -> Unit,
-    onConfirm: (String) -> Unit
+    onConfirm: (password: String, saveToBook: Boolean) -> Unit
 ) {
     var password by remember(show) { mutableStateOf("") }
     var passwordVisible by remember(show) { mutableStateOf(false) }
     val context = LocalContext.current
+    val passwordBookRepo = WatchPictureApp.instance.passwordBookRepository
+    val savedPasswords by passwordBookRepo.passwordsFlow.collectAsState(initial = emptyList())
+    val autoSavePref by passwordBookRepo.autoSavePasswordFlow.collectAsState(initial = true)
+    var saveToBook by remember(show, autoSavePref) { mutableStateOf(autoSavePref) }
 
     // Trigger device vibration when error appears
     LaunchedEffect(errorMessage) {
@@ -90,7 +108,49 @@ fun PasswordDialog(
                 color = MiuixTheme.colorScheme.onSurfaceSecondary
             )
 
-            Spacer(modifier = Modifier.height(14.dp))
+            if (savedPasswords.isNotEmpty()) {
+                Text(
+                    text = "常用密码快捷填充：",
+                    style = MiuixTheme.textStyles.footnote1,
+                    color = MiuixTheme.colorScheme.onSurfaceSecondary
+                )
+                Spacer(modifier = Modifier.height(6.dp))
+                LazyRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    items(
+                        items = savedPasswords,
+                        key = { it }
+                    ) { pwd ->
+                        val isSelected = (password == pwd)
+                        val primaryColor = MiuixTheme.colorScheme.primary
+                        val onSurfaceColor = MiuixTheme.colorScheme.onSurface
+                        val bg = if (isSelected) primaryColor.copy(alpha = 0.15f)
+                        else MiuixTheme.colorScheme.surfaceContainerHigh
+
+                        Box(
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(bg)
+                                .clickable {
+                                    password = pwd
+                                }
+                                .padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Text(
+                                text = pwd,
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = if (isSelected) primaryColor else onSurfaceColor,
+                                fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
+                    }
+                }
+                Spacer(modifier = Modifier.height(10.dp))
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
 
             TextField(
                 value = password,
@@ -107,7 +167,7 @@ fun PasswordDialog(
                     onDone = {
                         val trimmed = password.trim()
                         if (trimmed.isNotEmpty() && !isVerifying) {
-                            onConfirm(trimmed)
+                            onConfirm(trimmed, saveToBook)
                         }
                     }
                 ),
@@ -116,35 +176,55 @@ fun PasswordDialog(
 
             Spacer(modifier = Modifier.height(6.dp))
 
-            // Action row: Clear button & Visibility toggle
+            // Action row: Clear button, Visibility toggle & Save checkbox
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.End,
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                if (password.isNotEmpty()) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .clickable { saveToBook = !saveToBook }
+                        .padding(vertical = 4.dp)
+                ) {
+                    Switch(
+                        checked = saveToBook,
+                        onCheckedChange = { saveToBook = it }
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = "存入密码本",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceSecondary
+                    )
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (password.isNotEmpty()) {
+                        IconButton(
+                            onClick = { password = "" },
+                            modifier = Modifier.size(36.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Clear,
+                                contentDescription = "清空密码",
+                                tint = MiuixTheme.colorScheme.onSurfaceSecondary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
                     IconButton(
-                        onClick = { password = "" },
+                        onClick = { passwordVisible = !passwordVisible },
                         modifier = Modifier.size(36.dp)
                     ) {
                         Icon(
-                            imageVector = Icons.Default.Clear,
-                            contentDescription = "清空密码",
+                            imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (passwordVisible) "隐藏密码" else "显示密码",
                             tint = MiuixTheme.colorScheme.onSurfaceSecondary,
                             modifier = Modifier.size(18.dp)
                         )
                     }
-                }
-                IconButton(
-                    onClick = { passwordVisible = !passwordVisible },
-                    modifier = Modifier.size(36.dp)
-                ) {
-                    Icon(
-                        imageVector = if (passwordVisible) Icons.Default.VisibilityOff else Icons.Default.Visibility,
-                        contentDescription = if (passwordVisible) "隐藏密码" else "显示密码",
-                        tint = MiuixTheme.colorScheme.onSurfaceSecondary,
-                        modifier = Modifier.size(18.dp)
-                    )
                 }
             }
 
@@ -178,7 +258,7 @@ fun PasswordDialog(
                     onClick = {
                         val trimmed = password.trim()
                         if (trimmed.isNotEmpty()) {
-                            onConfirm(trimmed)
+                            onConfirm(trimmed, saveToBook)
                         }
                     },
                     enabled = password.isNotBlank() && !isVerifying,

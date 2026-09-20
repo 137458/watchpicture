@@ -16,6 +16,9 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
     val preferencesRepository: com.watchpicture.app.storage.PreferencesRepository by lazy {
         com.watchpicture.app.storage.PreferencesRepository(this)
     }
+    val passwordBookRepository: com.watchpicture.app.storage.PasswordBookRepository by lazy {
+        com.watchpicture.app.storage.PasswordBookRepository(this)
+    }
     val archiveFileResolver: com.watchpicture.app.archive.ArchiveFileResolver by lazy {
         com.watchpicture.app.archive.ArchiveFileResolver(zipArchiveManager, sessionPasswordStore)
     }
@@ -68,6 +71,17 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             .components {
                 add(ZipImageKeyer())
                 add(ZipImageFetcher.Factory(zipArchiveManager))
+                if (android.os.Build.VERSION.SDK_INT >= 28) {
+                    add(coil3.gif.AnimatedImageDecoder.Factory())
+                } else {
+                    add(coil3.gif.GifDecoder.Factory())
+                }
+                add(coil3.svg.SvgDecoder.Factory())
+            }
+            .memoryCache {
+                coil3.memory.MemoryCache.Builder()
+                    .maxSizePercent(context, 0.35)
+                    .build()
             }
             .build()
     }

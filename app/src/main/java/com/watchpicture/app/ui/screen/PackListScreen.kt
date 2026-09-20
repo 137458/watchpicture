@@ -407,14 +407,16 @@ fun PackListScreen(
             }
         }
 
-        // Remove Pack Confirmation Dialog
+        // Pack Options / Actions Dialog (Long Press)
         val target = packToDelete
         if (target != null) {
             val directPath = target.directPath
             val isCache = directPath != null && java.io.File(directPath).parentFile?.name == "opened_archives"
+            val canLock = target is com.watchpicture.app.model.ZipPack && target.isEncrypted && passwordStore.hasPassword(target.id)
+
             WindowDialog(
                 show = true,
-                title = "移除图包",
+                title = "图包管理 · ${target.name}",
                 onDismissRequest = { packToDelete = null }
             ) {
                 Column(
@@ -424,15 +426,30 @@ fun PackListScreen(
                 ) {
                     Text(
                         text = if (isCache) {
-                            "确定要从应用中移除图包「${target.name}」吗？\n该图包为外部单文件导入，移除后将同时清理其缓存文件以释放存储空间。"
+                            "该图包为外部单文件导入，移除后将同时清理其缓存文件以释放存储空间。"
                         } else {
-                            "确定要从图包列表中移除「${target.name}」吗？"
+                            "请选择要对图包「${target.name}」执行的操作："
                         },
                         style = MiuixTheme.textStyles.body2,
                         color = MiuixTheme.colorScheme.onSurfaceSecondary
                     )
 
-                    Spacer(modifier = Modifier.height(18.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    if (canLock) {
+                        Button(
+                            onClick = {
+                                viewModel.lockPack(target)
+                                packToDelete = null
+                                android.widget.Toast.makeText(context, "已锁定「${target.name}」", android.widget.Toast.LENGTH_SHORT).show()
+                            },
+                            colors = ButtonDefaults.buttonColors(),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text("锁定图包 (清除密码缓存)")
+                        }
+                        Spacer(modifier = Modifier.height(10.dp))
+                    }
 
                     Row(
                         modifier = Modifier.fillMaxWidth(),
@@ -484,9 +501,10 @@ fun PackListScreen(
                 errorMessage = uiState.passwordError,
                 isVerifying = uiState.isVerifyingPassword,
                 onDismissRequest = { viewModel.dismissPasswordDialog() },
-                onConfirm = { password ->
+                onConfirm = { password, saveToBook ->
                     viewModel.verifyAndUnlockPassword(
                         password = password,
+                        saveToBook = saveToBook,
                         onSuccess = {
                             onNavigate(
                                 AppRoute.ThumbnailGrid(

@@ -159,6 +159,6 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
     }
 
     fun lockPack(packId: String) {
-        clearSessionPassword(packId)
+        passwordStore.markExplicitlyLocked(packId)
     }
 }

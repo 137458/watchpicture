@@ -32,7 +32,7 @@ class ArchiveFileResolver(
         private val FORBIDDEN_EXTENSIONS = setOf(
             "apk", "xapk", "apks", "apkm", "aab", "jar", "aar", "dex", "ipa"
         )
-        private val ALLOWED_EXTENSIONS = setOf("zip", "cbz", "7z")
+        private val ALLOWED_EXTENSIONS = setOf("zip", "cbz", "7z", "cb7")
 
         /**
          * Checks if the filename ends with an explicitly disallowed application or library extension.
@@ -119,7 +119,7 @@ class ArchiveFileResolver(
         if (isAppOrPackageArchive(file)) return null
 
         val isCbz = lowerName.endsWith(".cbz")
-        val is7z = lowerName.endsWith(".7z") || isValidSevenZArchive(file)
+        val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7") || isValidSevenZArchive(file)
         val isEncrypted = zipArchiveManager.isEncrypted(file)
         val password = cachedPassword ?: passwordStore.get(file.absolutePath)
         val entries = zipArchiveManager.getImageEntries(file, password)
@@ -191,8 +191,9 @@ class ArchiveFileResolver(
      */
     private fun cacheFromContentProvider(context: Context, uri: Uri): File? {
         val resolver = context.contentResolver
-        val displayName = queryDisplayName(context, uri) ?: "archive_${System.currentTimeMillis()}.zip"
-        val safeName = displayName.replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val rawName = queryDisplayName(context, uri) ?: "archive_${System.currentTimeMillis()}.zip"
+        val decodedName = try { Uri.decode(rawName) } catch (_: Exception) { rawName } ?: rawName
+        val safeName = decodedName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
         val cacheDir = File(context.cacheDir, "opened_archives").apply { mkdirs() }
 
         // Generate stable cache file name based on Uri hash and filename

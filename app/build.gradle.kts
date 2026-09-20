@@ -109,6 +109,8 @@ dependencies {
     // Image loading: Coil 3
     implementation("io.coil-kt.coil3:coil-compose:3.0.4")
     implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
+    implementation("io.coil-kt.coil3:coil-svg:3.0.4")
+    implementation("io.coil-kt.coil3:coil-gif:3.0.4")
     implementation("com.squareup.okio:okio:3.9.1")
 
     // Archive Engine: Zip4j & Apache Commons Compress (7z)
