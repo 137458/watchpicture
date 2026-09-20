@@ -6,7 +6,10 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.DirectoryPack
+import com.watchpicture.app.model.PackFilter
 import com.watchpicture.app.model.PackItem
+import com.watchpicture.app.model.PackSorter
+import com.watchpicture.app.model.SortOption
 import com.watchpicture.app.model.ZipPack
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.storage.SafManager
@@ -14,6 +17,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -24,27 +28,80 @@ data class PackListUiState(
     val rootUri: Uri? = null,
     val packs: List<PackItem> = emptyList(),
     val errorMessage: String? = null,
+    // Search & Sort state
+    val searchQuery: String = "",
+    val isSearchActive: Boolean = false,
+    val sortOption: SortOption = SortOption.NAME_ASC,
     // Password dialog state
     val showPasswordDialog: Boolean = false,
     val targetZipPack: ZipPack? = null,
     val passwordError: String? = null,
     val isVerifyingPassword: Boolean = false
-)
+) {
+    val displayedPacks: List<PackItem>
+        get() {
+            val filtered = PackFilter.filter(packs, searchQuery)
+            return PackSorter.sort(filtered, sortOption)
+        }
+}
 
 class PackViewModel(application: Application) : AndroidViewModel(application) {
 
     private val app = application as WatchPictureApp
     private val zipArchiveManager = app.zipArchiveManager
     private val passwordStore = app.sessionPasswordStore
+    private val preferencesRepository = app.preferencesRepository
     private val safManager = SafManager(zipArchiveManager, passwordStore)
 
     private val _uiState = MutableStateFlow(PackListUiState())
     val uiState: StateFlow<PackListUiState> = _uiState.asStateFlow()
 
+    init {
+        // Restore preferences on startup
+        viewModelScope.launch {
+            val savedSortOption = preferencesRepository.sortOptionFlow.first()
+            _uiState.update { it.copy(sortOption = savedSortOption) }
+
+            val savedUriString = preferencesRepository.lastRootUriFlow.first()
+            if (savedUriString != null) {
+                try {
+                    val uri = Uri.parse(savedUriString)
+                    _uiState.update { it.copy(rootUri = uri) }
+                    loadPacks(uri)
+                } catch (_: Exception) {
+                    // Ignore corrupted uri
+                }
+            }
+        }
+    }
+
     fun onRootFolderSelected(uri: Uri) {
         safManager.takePersistablePermission(app, uri)
         _uiState.update { it.copy(rootUri = uri) }
+        viewModelScope.launch {
+            preferencesRepository.saveLastRootUri(uri.toString())
+        }
         loadPacks(uri)
+    }
+
+    fun onSearchQueryChanged(query: String) {
+        _uiState.update { it.copy(searchQuery = query) }
+    }
+
+    fun setSearchActive(active: Boolean) {
+        _uiState.update {
+            it.copy(
+                isSearchActive = active,
+                searchQuery = if (!active) "" else it.searchQuery
+            )
+        }
+    }
+
+    fun onSortOptionSelected(option: SortOption) {
+        _uiState.update { it.copy(sortOption = option) }
+        viewModelScope.launch {
+            preferencesRepository.saveSortOption(option)
+        }
     }
 
     fun refresh() {
@@ -81,19 +138,44 @@ class PackViewModel(application: Application) : AndroidViewModel(application) {
                     // Check if already authenticated in this session
                     if (passwordStore.hasPassword(pack.id)) {
                         onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
-                    } else {
-                        // Open password dialog
-                        _uiState.update {
-                            it.copy(
-                                showPasswordDialog = true,
-                                targetZipPack = pack,
-                                passwordError = null,
-                                isVerifyingPassword = false
-                            )
+                        return
+                    }
+
+                    // Attempt auto-unlock using lastUsedPassword
+                    val lastPwd = passwordStore.lastUsedPassword
+                    val targetFile = pack.directPath?.let { File(it) }
+                        ?: safManager.resolveDirectFile(Uri.parse(pack.uriString))
+
+                    if (lastPwd != null && targetFile != null && targetFile.exists()) {
+                        viewModelScope.launch {
+                            val isValid = withContext(Dispatchers.IO) {
+                                zipArchiveManager.verifyPassword(targetFile, lastPwd)
+                            }
+                            if (isValid) {
+                                passwordStore.set(pack.id, lastPwd)
+                                onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
+                                return@launch
+                            } else {
+                                // Fallback to prompt dialog
+                                promptPasswordDialog(pack)
+                            }
                         }
+                    } else {
+                        promptPasswordDialog(pack)
                     }
                 }
             }
+        }
+    }
+
+    private fun promptPasswordDialog(pack: ZipPack) {
+        _uiState.update {
+            it.copy(
+                showPasswordDialog = true,
+                targetZipPack = pack,
+                passwordError = null,
+                isVerifyingPassword = false
+            )
         }
     }
 
@@ -130,7 +212,7 @@ class PackViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             if (isValid) {
-                // Cache password in memory session pool
+                // Cache password in memory session pool and update lastUsedPassword
                 passwordStore.set(targetPack.id, password)
                 _uiState.update {
                     it.copy(

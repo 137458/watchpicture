@@ -63,4 +63,17 @@ class SessionPasswordStoreTest {
         store.set("pack_1", "updated")
         assertEquals("updated", store.get("pack_1"))
     }
+
+    @Test
+    fun `tracks and clears last used password`() {
+        assertNull(store.lastUsedPassword)
+        store.set("pack_1", "pwd_A")
+        assertEquals("pwd_A", store.lastUsedPassword)
+
+        store.set("pack_2", "pwd_B")
+        assertEquals("pwd_B", store.lastUsedPassword)
+
+        store.clear()
+        assertNull(store.lastUsedPassword)
+    }
 }

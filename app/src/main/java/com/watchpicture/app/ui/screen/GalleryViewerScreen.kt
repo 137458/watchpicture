@@ -1,21 +1,23 @@
 package com.watchpicture.app.ui.screen
 
 import android.app.Activity
-import android.net.Uri
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -26,12 +28,13 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -56,6 +59,7 @@ import coil3.compose.AsyncImage
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.toImageModel
+import com.watchpicture.app.storage.ReadingMode
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Icon
@@ -64,16 +68,16 @@ import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.theme.MiuixTheme
-import java.io.File
 import kotlin.math.roundToInt
 
 /**
  * Fullscreen picture viewer providing:
- * - HorizontalPager page flipping
- * - Double-tap zoom (1x <-> 2.5x)
- * - Pinch-to-zoom and pan gestures
+ * - HorizontalPager page flipping with dynamic conflict avoidance during zoom
+ * - Smooth Animatable double-tap zoom & pinch-to-zoom with strict boundary clamping
+ * - Reading direction switching: LTR (standard) and RTL (Japanese Manga)
  * - Single-tap toggle for immersive full-screen mode
  * - Floating bottom controller with MiuixSlider for sub-second rapid jumping
+ * - Session lock action to immediately clear memory password
  */
 @Composable
 fun GalleryViewerScreen(
@@ -83,10 +87,12 @@ fun GalleryViewerScreen(
     onBack: () -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsState()
+    val readingMode by viewModel.readingMode.collectAsState(initial = ReadingMode.LTR)
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     val sessionPassword = remember(packId) { passwordStore.get(packId) }
     val coroutineScope = rememberCoroutineScope()
     var isImmersive by remember { mutableStateOf(false) }
+    var isCurrentPageZoomed by remember { mutableStateOf(false) }
 
     // Toggle system bars for immersive viewing
     val view = LocalView.current
@@ -141,18 +147,29 @@ fun GalleryViewerScreen(
                 pageCount = { images.size }
             )
 
-            // Horizontal Pager
+            // Reset zoom state on page change
+            LaunchedEffect(pagerState.currentPage) {
+                isCurrentPageZoomed = false
+            }
+
+            // Horizontal Pager with reverseLayout support for Manga RTL mode
             HorizontalPager(
                 state = pagerState,
                 beyondViewportPageCount = 1,
-                userScrollEnabled = true,
+                userScrollEnabled = !isCurrentPageZoomed,
+                reverseLayout = (readingMode == ReadingMode.RTL),
                 modifier = Modifier.fillMaxSize()
             ) { pageIndex ->
                 val image = images[pageIndex]
                 ZoomableImage(
                     image = image,
                     sessionPassword = sessionPassword,
-                    onSingleTap = { isImmersive = !isImmersive }
+                    onSingleTap = { isImmersive = !isImmersive },
+                    onZoomChanged = { isZoomed ->
+                        if (pageIndex == pagerState.currentPage) {
+                            isCurrentPageZoomed = isZoomed
+                        }
+                    }
                 )
             }
 
@@ -192,6 +209,49 @@ fun GalleryViewerScreen(
                     )
 
                     Spacer(modifier = Modifier.width(8.dp))
+
+                    // Reading Direction Toggle Button
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(Color(0x55FFFFFF))
+                            .clickable { viewModel.toggleReadingMode(readingMode) }
+                            .padding(horizontal = 8.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.SwapHoriz,
+                            contentDescription = "切换阅读方向",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (readingMode == ReadingMode.RTL) "日漫RTL" else "标准LTR",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White
+                        )
+                    }
+
+                    // Lock pack button if password authenticated
+                    if (sessionPassword != null) {
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = {
+                                viewModel.lockPack(packId)
+                                onBack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "锁定图包",
+                                tint = Color.White
+                            )
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
 
                     Text(
                         text = "${pagerState.currentPage + 1} / ${images.size}",
@@ -266,68 +326,99 @@ fun GalleryViewerScreen(
 }
 
 /**
- * Individual image container supporting double-tap zoom, pinch-to-zoom, and pan gestures.
+ * Individual image container supporting smooth double-tap zoom animation,
+ * pinch-to-zoom, strict pan boundary limits, and Pager gesture conflict resolution.
  */
 @Composable
 private fun ZoomableImage(
     image: PackImage,
     sessionPassword: String?,
-    onSingleTap: () -> Unit
+    onSingleTap: () -> Unit,
+    onZoomChanged: (Boolean) -> Unit
 ) {
-    var scale by remember { mutableFloatStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    val coroutineScope = rememberCoroutineScope()
+    val scaleAnim = remember { Animatable(1f) }
+    val offsetXAnim = remember { Animatable(0f) }
+    val offsetYAnim = remember { Animatable(0f) }
+
+    LaunchedEffect(scaleAnim.value) {
+        onZoomChanged(scaleAnim.value > 1.05f)
+    }
 
     val imageModel: Any? = remember(image, sessionPassword) {
         image.toImageModel(sessionPassword)
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onDoubleTap = {
-                        if (scale > 1.05f) {
-                            scale = 1f
-                            offset = Offset.Zero
-                        } else {
-                            scale = 2.5f
-                        }
-                    },
-                    onTap = { onSingleTap() }
-                )
-            }
-            .pointerInput(scale) {
-                if (scale > 1f) {
-                    detectTransformGestures { _, pan, zoom, _ ->
-                        scale = (scale * zoom).coerceIn(1f, 5f)
-                        if (scale == 1f) {
-                            offset = Offset.Zero
-                        } else {
-                            offset = Offset(
-                                x = offset.x + pan.x,
-                                y = offset.y + pan.y
-                            )
-                        }
-                    }
-                }
-            },
+    BoxWithConstraints(
+        modifier = Modifier.fillMaxSize(),
         contentAlignment = Alignment.Center
     ) {
-        if (imageModel != null) {
-            AsyncImage(
-                model = imageModel,
-                contentDescription = image.displayName,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
+        val containerWidth = constraints.maxWidth.toFloat()
+        val containerHeight = constraints.maxHeight.toFloat()
+
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = { tapOffset ->
+                            coroutineScope.launch {
+                                if (scaleAnim.value > 1.05f) {
+                                    // Smoothly animate back to normal
+                                    launch { scaleAnim.animateTo(1f, tween(200)) }
+                                    launch { offsetXAnim.animateTo(0f, tween(200)) }
+                                    launch { offsetYAnim.animateTo(0f, tween(200)) }
+                                } else {
+                                    val targetScale = 2.5f
+                                    val maxOffsetX = (targetScale - 1f) * containerWidth / 2f
+                                    val maxOffsetY = (targetScale - 1f) * containerHeight / 2f
+                                    val targetOffsetX = ((containerWidth / 2f - tapOffset.x) * (targetScale - 1f))
+                                        .coerceIn(-maxOffsetX, maxOffsetX)
+                                    val targetOffsetY = ((containerHeight / 2f - tapOffset.y) * (targetScale - 1f))
+                                        .coerceIn(-maxOffsetY, maxOffsetY)
+
+                                    launch { scaleAnim.animateTo(targetScale, tween(250)) }
+                                    launch { offsetXAnim.animateTo(targetOffsetX, tween(250)) }
+                                    launch { offsetYAnim.animateTo(targetOffsetY, tween(250)) }
+                                }
+                            }
+                        },
+                        onTap = { onSingleTap() }
+                    )
+                }
+                .pointerInput(Unit) {
+                    detectTransformGestures { _, pan, zoom, _ ->
+                        coroutineScope.launch {
+                            val newScale = (scaleAnim.value * zoom).coerceIn(1f, 5f)
+                            val maxOffsetX = ((newScale - 1f) * containerWidth / 2f).coerceAtLeast(0f)
+                            val maxOffsetY = ((newScale - 1f) * containerHeight / 2f).coerceAtLeast(0f)
+
+                            val newOffsetX = if (newScale <= 1f) 0f else (offsetXAnim.value + pan.x).coerceIn(-maxOffsetX, maxOffsetX)
+                            val newOffsetY = if (newScale <= 1f) 0f else (offsetYAnim.value + pan.y).coerceIn(-maxOffsetY, maxOffsetY)
+
+                            scaleAnim.snapTo(newScale)
+                            offsetXAnim.snapTo(newOffsetX)
+                            offsetYAnim.snapTo(newOffsetY)
+                        }
                     }
-            )
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (imageModel != null) {
+                AsyncImage(
+                    model = imageModel,
+                    contentDescription = image.displayName,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .graphicsLayer {
+                            scaleX = scaleAnim.value
+                            scaleY = scaleAnim.value
+                            translationX = offsetXAnim.value
+                            translationY = offsetYAnim.value
+                        }
+                )
+            }
         }
     }
 }

@@ -20,6 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Image
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -87,6 +88,19 @@ fun ThumbnailGridScreen(
                     }
                 },
                 actions = {
+                    if (sessionPassword != null) {
+                        IconButton(
+                            onClick = {
+                                viewModel.lockPack(packId)
+                                onBack()
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = "锁定图包"
+                            )
+                        }
+                    }
                     if (uiState.images.isNotEmpty()) {
                         IconButton(
                             onClick = {

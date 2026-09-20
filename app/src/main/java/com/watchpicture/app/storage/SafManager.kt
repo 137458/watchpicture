@@ -65,20 +65,20 @@ class SafManager(
             }
 
             if (child.isDirectory) {
-                // Check if directory contains images
-                val imageFiles = child.listFiles { file ->
-                    !file.isDirectory && ZipArchiveManager.isImageFile(file.name)
-                }?.sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) } ?: emptyList()
+                // Check if directory contains images (recursively detects nested subdirectories)
+                val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectImages(child)
 
                 if (imageFiles.isNotEmpty()) {
                     val first = imageFiles.first()
+                    val relPath = first.relativeTo(child).path.replace('\\', '/')
                     val cover = PackImage(
                         packId = child.absolutePath,
-                        entryPath = first.name,
+                        entryPath = relPath,
                         displayName = first.name,
                         isEncrypted = false,
                         directFilePath = first.absolutePath
                     )
+                    val totalSize = imageFiles.sumOf { it.length() }.coerceAtLeast(child.length())
                     packs.add(
                         DirectoryPack(
                             id = child.absolutePath,
@@ -86,7 +86,7 @@ class SafManager(
                             uriString = Uri.fromFile(child).toString(),
                             directPath = child.absolutePath,
                             itemCount = imageFiles.size,
-                            fileSize = child.length(),
+                            fileSize = totalSize,
                             lastModified = child.lastModified(),
                             coverImage = cover
                         )
@@ -242,9 +242,19 @@ class SafManager(
                 } else null
             }
 
-            if (docId != null && docId.startsWith("primary:")) {
-                val relativePath = docId.removePrefix("primary:")
-                return File(Environment.getExternalStorageDirectory(), relativePath)
+            if (docId != null) {
+                if (docId.startsWith("primary:")) {
+                    val relativePath = docId.removePrefix("primary:")
+                    return File(Environment.getExternalStorageDirectory(), relativePath)
+                } else if (docId.contains(':')) {
+                    val parts = docId.split(':', limit = 2)
+                    val volumeId = parts[0]
+                    val relativePath = parts.getOrNull(1) ?: ""
+                    val storageFile = File("/storage/$volumeId", relativePath)
+                    if (storageFile.exists()) {
+                        return storageFile
+                    }
+                }
             }
         } catch (_: Exception) {
             // Ignore resolution errors and return null

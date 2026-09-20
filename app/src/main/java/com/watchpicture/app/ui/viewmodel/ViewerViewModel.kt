@@ -59,14 +59,13 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         val file = File(packId)
         if (file.exists()) {
             if (file.isDirectory) {
-                val imageFiles = file.listFiles { f ->
-                    !f.isDirectory && ZipArchiveManager.isImageFile(f.name)
-                }?.sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) } ?: emptyList()
+                val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectImages(file)
 
                 return imageFiles.map { img ->
+                    val relPath = img.relativeTo(file).path.replace('\\', '/')
                     PackImage(
                         packId = packId,
-                        entryPath = img.name,
+                        entryPath = relPath,
                         displayName = img.name,
                         isEncrypted = false,
                         directFilePath = img.absolutePath
@@ -115,10 +114,28 @@ class ViewerViewModel(application: Application) : AndroidViewModel(application) 
         return emptyList()
     }
 
+    val preferencesRepository = app.preferencesRepository
+    val readingMode = preferencesRepository.readingModeFlow
+
+    fun toggleReadingMode(current: com.watchpicture.app.storage.ReadingMode) {
+        viewModelScope.launch {
+            val next = if (current == com.watchpicture.app.storage.ReadingMode.LTR) {
+                com.watchpicture.app.storage.ReadingMode.RTL
+            } else {
+                com.watchpicture.app.storage.ReadingMode.LTR
+            }
+            preferencesRepository.saveReadingMode(next)
+        }
+    }
+
     /**
      * Clears password from memory for this pack when user explicitly locks or leaves.
      */
     fun clearSessionPassword(packId: String) {
         passwordStore.remove(packId)
+    }
+
+    fun lockPack(packId: String) {
+        clearSessionPassword(packId)
     }
 }

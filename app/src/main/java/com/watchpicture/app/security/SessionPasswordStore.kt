@@ -10,6 +10,9 @@ import java.util.concurrent.ConcurrentHashMap
 class SessionPasswordStore {
 
     private val cache = ConcurrentHashMap<String, String>()
+    @Volatile
+    var lastUsedPassword: String? = null
+        private set
 
     fun get(packId: String): String? {
         return cache[packId]
@@ -17,6 +20,7 @@ class SessionPasswordStore {
 
     fun set(packId: String, password: String) {
         cache[packId] = password
+        lastUsedPassword = password
     }
 
     fun remove(packId: String) {
@@ -25,6 +29,7 @@ class SessionPasswordStore {
 
     fun clear() {
         cache.clear()
+        lastUsedPassword = null
     }
 
     fun hasPassword(packId: String): Boolean {

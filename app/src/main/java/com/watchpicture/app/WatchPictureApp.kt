@@ -13,6 +13,9 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
 
     val zipArchiveManager: ZipArchiveManager by lazy { ZipArchiveManager() }
     val sessionPasswordStore: SessionPasswordStore by lazy { SessionPasswordStore() }
+    val preferencesRepository: com.watchpicture.app.storage.PreferencesRepository by lazy {
+        com.watchpicture.app.storage.PreferencesRepository(this)
+    }
 
     override fun onCreate() {
         super.onCreate()

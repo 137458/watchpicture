@@ -14,6 +14,10 @@ All notable changes to this project will be documented in this file.
 - 图包列表主页 (`PackListScreen`)：集成 `MiuixTopAppBar` 大标题折叠吸顶、`MiuixCard` 触感卡片、加密角标与格式/页数 Badge。
 - 图包缩略图预览 (`ThumbnailGridScreen`)：自适应网格快速加载，支持点击跳入全屏画廊。
 - 全屏大图画廊 (`GalleryViewerScreen`)：基于 `HorizontalPager` 实现丝滑翻页，支持双击缩放、双指 Pinch-to-zoom、单指平移、单击沉浸式切换及 `MiuixSlider` 毫秒级跳页。
+- 图包排序与即时搜索过滤：新增 `PackSorter` 与 `PackFilter`，支持按名称、修改时间、文件大小、图片张数升降序排序与模糊关键词检索。
+- 深度嵌套目录识别：新增 `DeepFolderImageResolver`，支持递归检索图包子目录图片并按自然排序统一展平。
+- 根路径状态持久化：通过 `PreferencesRepository`（Jetpack DataStore）保存用户已授权的根目录，冷启动免去重复授权选择。
+- 会话密码主动重置：在缩略图预览与大图画廊中支持主动加锁注销内存临时密码。
 
 ### 修复
 - 目录图包模型解析：修复普通文件夹内图片被误当做 ZIP 压缩包传入 ZipArchiveManager 的缺陷，统一通过 `PackImage.toImageModel()` 分发。
