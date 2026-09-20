@@ -19,9 +19,25 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
 
+        handleIntent(intent)
+
         setContent {
             CompositionLocalProvider(LocalNavigationEventDispatcherOwner provides this) {
                 App()
+            }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleIntent(intent)
+    }
+
+    private fun handleIntent(intent: android.content.Intent?) {
+        if (intent?.action == android.content.Intent.ACTION_VIEW) {
+            intent.data?.let { uri ->
+                WatchPictureApp.instance.dispatchExternalArchive(uri)
             }
         }
     }

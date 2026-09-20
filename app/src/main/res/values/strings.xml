@@ -11,6 +11,9 @@
     <string name="confirm">确认</string>
     <string name="cancel">取消</string>
     <string name="loading">加载中…</string>
+    <string name="open_archive">打开压缩包</string>
+    <string name="open_archive_summary">直接选取并浏览单个 ZIP/CBZ 图集</string>
+    <string name="invalid_archive_error">无法打开该压缩包：格式不受支持或文件已损坏</string>
 
     <!-- Bottom Bar Tabs -->
     <string name="tab_packs">图包</string>

@@ -26,7 +26,8 @@ import java.io.File
 data class PackListUiState(
     val isLoading: Boolean = false,
     val rootUri: Uri? = null,
-    val packs: List<PackItem> = emptyList(),
+    val scannedPacks: List<PackItem> = emptyList(),
+    val standalonePacks: List<ZipPack> = emptyList(),
     val errorMessage: String? = null,
     // Search & Sort state
     val searchQuery: String = "",
@@ -38,6 +39,19 @@ data class PackListUiState(
     val passwordError: String? = null,
     val isVerifyingPassword: Boolean = false
 ) {
+    val packs: List<PackItem>
+        get() {
+            val seen = mutableSetOf<String>()
+            val combined = mutableListOf<PackItem>()
+            for (p in standalonePacks) {
+                if (seen.add(p.id)) combined.add(p)
+            }
+            for (p in scannedPacks) {
+                if (seen.add(p.id)) combined.add(p)
+            }
+            return combined
+        }
+
     val displayedPacks: List<PackItem>
         get() {
             val filtered = PackFilter.filter(packs, searchQuery)
@@ -52,6 +66,7 @@ class PackViewModel(application: Application) : AndroidViewModel(application) {
     private val passwordStore = app.sessionPasswordStore
     private val preferencesRepository = app.preferencesRepository
     private val safManager = SafManager(zipArchiveManager, passwordStore)
+    private val archiveFileResolver = app.archiveFileResolver
 
     private val _uiState = MutableStateFlow(PackListUiState())
     val uiState: StateFlow<PackListUiState> = _uiState.asStateFlow()
@@ -114,7 +129,7 @@ class PackViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             try {
                 val packs = safManager.scanPacks(app, treeUri)
-                _uiState.update { it.copy(isLoading = false, packs = packs) }
+                _uiState.update { it.copy(isLoading = false, scannedPacks = packs) }
             } catch (e: Exception) {
                 _uiState.update {
                     it.copy(
@@ -123,6 +138,35 @@ class PackViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
             }
+        }
+    }
+
+    /**
+     * Resolves a single archive (ZIP / CBZ) from Uri, stores it in standalone packs,
+     * and immediately navigates to thumbnail preview or prompts for decryption.
+     */
+    fun openSingleArchive(uri: Uri, onNavigate: (AppRoute) -> Unit) {
+        viewModelScope.launch {
+            _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val pack = archiveFileResolver.resolve(app, uri)
+            if (pack == null) {
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = "无法打开该压缩包：格式不受支持或已损坏"
+                    )
+                }
+                return@launch
+            }
+
+            // Stash into standalonePacks (putting newly opened archive at the front)
+            _uiState.update { state ->
+                val updatedStandalone = listOf(pack) + state.standalonePacks.filter { it.id != pack.id }
+                state.copy(isLoading = false, standalonePacks = updatedStandalone)
+            }
+
+            // Immediately trigger open & unlock flow
+            onPackClicked(pack, onNavigate)
         }
     }
 

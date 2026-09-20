@@ -23,6 +23,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.Sort
+import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.FolderOpen
@@ -80,8 +81,15 @@ fun PackListScreen(
     val uiState by viewModel.uiState.collectAsState()
     val scrollBehavior = MiuixScrollBehavior()
     val haptic = LocalHapticFeedback.current
+    val context = androidx.compose.ui.platform.LocalContext.current
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     var showSortDialog by remember { mutableStateOf(false) }
+
+    androidx.compose.runtime.LaunchedEffect(uiState.errorMessage) {
+        uiState.errorMessage?.let { msg ->
+            android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
 
     val folderLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree()
@@ -89,6 +97,25 @@ fun PackListScreen(
         if (uri != null) {
             viewModel.onRootFolderSelected(uri)
         }
+    }
+
+    val archiveLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri: Uri? ->
+        if (uri != null) {
+            viewModel.openSingleArchive(uri, onNavigate)
+        }
+    }
+
+    val openArchiveSelector = {
+        archiveLauncher.launch(
+            arrayOf(
+                "application/zip",
+                "application/x-zip-compressed",
+                "application/x-cbz",
+                "*/*"
+            )
+        )
     }
 
     Scaffold(
@@ -161,6 +188,14 @@ fun PackListScreen(
                             )
                         }
                         IconButton(
+                            onClick = openArchiveSelector
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Archive,
+                                contentDescription = stringResource(R.string.open_archive)
+                            )
+                        }
+                        IconButton(
                             onClick = { folderLauncher.launch(null) }
                         ) {
                             Icon(
@@ -200,8 +235,8 @@ fun PackListScreen(
                     }
                 }
 
-                uiState.rootUri == null -> {
-                    // Empty state: No root folder selected yet
+                uiState.packs.isEmpty() && uiState.rootUri == null -> {
+                    // Empty state: No root folder selected yet and no standalone archive opened
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -233,11 +268,22 @@ fun PackListScreen(
                                 textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(24.dp))
-                            Button(
-                                onClick = { folderLauncher.launch(null) },
-                                colors = ButtonDefaults.buttonColorsPrimary()
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(stringResource(R.string.select_folder))
+                                Button(
+                                    onClick = { folderLauncher.launch(null) },
+                                    colors = ButtonDefaults.buttonColorsPrimary()
+                                ) {
+                                    Text(stringResource(R.string.select_folder))
+                                }
+                                Button(
+                                    onClick = openArchiveSelector,
+                                    colors = ButtonDefaults.buttonColors()
+                                ) {
+                                    Text(stringResource(R.string.open_archive))
+                                }
                             }
                         }
                     }
@@ -269,11 +315,22 @@ fun PackListScreen(
                                 textAlign = TextAlign.Center
                             )
                             Spacer(modifier = Modifier.height(20.dp))
-                            Button(
-                                onClick = { folderLauncher.launch(null) },
-                                colors = ButtonDefaults.buttonColors()
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Text(stringResource(R.string.change_folder))
+                                Button(
+                                    onClick = { folderLauncher.launch(null) },
+                                    colors = ButtonDefaults.buttonColors()
+                                ) {
+                                    Text(stringResource(R.string.change_folder))
+                                }
+                                Button(
+                                    onClick = openArchiveSelector,
+                                    colors = ButtonDefaults.buttonColorsPrimary()
+                                ) {
+                                    Text(stringResource(R.string.open_archive))
+                                }
                             }
                         }
                     }

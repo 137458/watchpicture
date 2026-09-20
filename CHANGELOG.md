@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 ## [未发布]
 
 ### 新增
+- 单文件图集压缩包选取与即时打开：在顶部操作栏与空状态引导卡片中引入基于 SAF OpenDocument 的文件选择器，支持直接点选 `.zip` 与 `.cbz` 单文件压缩包，无缝衔接密码鉴权与缩略图预览。
+- 系统外部关联打开支持：在 AndroidManifest.xml 中注册常见压缩包 MIME 类型（application/zip、application/x-zip-compressed、application/x-cbz 等）与文件后缀关联打开 Intent-filter，并将 MainActivity 配置为 singleTask，支持冷启动与热启动（onNewIntent）外部唤醒调度。
+- 零拷贝直读与高性能流式解析器（ArchiveFileResolver）：优先通过底层路径映射实现零拷贝直读，后备采用 64KB 高速缓冲流式缓存与轻量缓存复用，结合 4 字节 ZIP 魔数极速初筛。
+- 主页图包列表暂存与合并展示：单选或外部打开的单文件压缩包自动抽象为 ZipPack 实体暂存入主页图包列表中，支持去重合并、动态置顶与返回复访。
 - Miuix 悬浮底栏（FloatingBottomBar）：集成「图包」与「设置」双 Tab 导航，支持液态玻璃折射、双重离屏采样渲染（CombinedBackdrop）、阻尼弹性拖拽手势与低功耗陀螺仪感应随动高光，并支持多层次三态兼容降级。
 - 偏好设置界面（SettingsScreen）：遵循 Miuix 卡片与偏好设计规范，支持画廊翻页方向选择、默认排序配置、内存临时解密密码一键清除及版本更新中心入口。
 - 版本检测与更新体系（UpdateScreen / UpdateDialog / UpdateManager）：对接 GitHub Releases，实现自动与手动检查更新、SemVer 规范版本比对、Compose Markdown 变更日志渲染、断点续传下载、实时速率计算、FileProvider 调起系统包安装及浏览器直链下载降级。

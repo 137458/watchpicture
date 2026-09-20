@@ -79,6 +79,13 @@ fun MainScreen(
         }
     }
 
+    // 监听外部关联打开图集压缩包事件 (冷启动与热启动)
+    LaunchedEffect(Unit) {
+        WatchPictureApp.instance.externalArchiveFlow.collect { uri ->
+            packViewModel.openSingleArchive(uri, onNavigate)
+        }
+    }
+
     val tabPacksTitle = stringResource(R.string.tab_packs)
     val tabSettingsTitle = stringResource(R.string.tab_settings)
 

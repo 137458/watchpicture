@@ -16,6 +16,19 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
     val preferencesRepository: com.watchpicture.app.storage.PreferencesRepository by lazy {
         com.watchpicture.app.storage.PreferencesRepository(this)
     }
+    val archiveFileResolver: com.watchpicture.app.archive.ArchiveFileResolver by lazy {
+        com.watchpicture.app.archive.ArchiveFileResolver(zipArchiveManager, sessionPasswordStore)
+    }
+
+    val externalArchiveFlow = kotlinx.coroutines.flow.MutableSharedFlow<android.net.Uri>(
+        replay = 1,
+        extraBufferCapacity = 1,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
+    )
+
+    fun dispatchExternalArchive(uri: android.net.Uri) {
+        externalArchiveFlow.tryEmit(uri)
+    }
 
     override fun onCreate() {
         super.onCreate()
