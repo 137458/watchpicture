@@ -38,6 +38,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import coil3.request.crossfade
+import coil3.request.bitmapConfig
+import kotlinx.coroutines.launch
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.PackImage
@@ -189,6 +191,21 @@ fun ThumbnailGridScreen(
                                 sessionPassword = sessionPassword,
                                 index = index + 1,
                                 onClick = {
+                                    val targetModel = item.toImageModel(sessionPassword)
+                                    if (targetModel is com.watchpicture.app.coil.ZipImageSource) {
+                                        val app = context.applicationContext as? com.watchpicture.app.WatchPictureApp
+                                        val diskCache = app?.archiveDiskCache
+                                        val zipManager = app?.zipArchiveManager
+                                        if (diskCache != null && zipManager != null) {
+                                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+                                                runCatching {
+                                                    diskCache.getOrPut(targetModel.zipFile, targetModel.entryName, targetModel.password) {
+                                                        zipManager.getEntryInputStream(targetModel.zipFile, targetModel.entryName, targetModel.password)
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
                                     onNavigate(
                                         AppRoute.GalleryViewer(
                                             packId = packId,
@@ -222,6 +239,7 @@ private fun ThumbnailItem(
             val builder = coil3.request.ImageRequest.Builder(context)
                 .data(model)
                 .crossfade(100)
+                .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
 
             val thumbKey = when (model) {
                 is com.watchpicture.app.coil.ZipImageSource -> {

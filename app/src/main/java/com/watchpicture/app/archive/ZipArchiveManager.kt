@@ -111,9 +111,20 @@ class ZipArchiveManager(
         fun countChinese(str: String): Int = str.count { it in '\u4e00'..'\u9fa5' }
 
         val defaultEntries = readEntries(null)
+        if (defaultEntries.isEmpty()) {
+            return readEntries(GBK_CHARSET)
+        }
+
         val defaultHasGarbage = defaultEntries.any { hasGarbageCharacters(it.name) }
         val defaultChineseCount = defaultEntries.sumOf { countChinese(it.name) }
+        val hasNonAscii = defaultEntries.any { it.name.any { ch -> ch.code > 127 } }
 
+        // Fast-path: pure ASCII or clean UTF-8 Chinese entries skip redundant GBK second pass
+        if (!defaultHasGarbage && (!hasNonAscii || defaultChineseCount > 0)) {
+            return defaultEntries
+        }
+
+        // Lazy fallback: only read GBK if default parsing produced garbage or suspicious high-ASCII bytes
         val gbkEntries = readEntries(GBK_CHARSET)
         val gbkHasGarbage = gbkEntries.any { hasGarbageCharacters(it.name) }
         val gbkChineseCount = gbkEntries.sumOf { countChinese(it.name) }
@@ -123,11 +134,7 @@ class ZipArchiveManager(
             return gbkEntries
         }
 
-        if (defaultEntries.isNotEmpty() && !defaultHasGarbage) {
-            return defaultEntries
-        }
-
-        return if (gbkEntries.isNotEmpty()) gbkEntries else defaultEntries
+        return defaultEntries
     }
 
     /**

@@ -15,6 +15,9 @@ import com.watchpicture.app.model.PackItem
 import com.watchpicture.app.model.ZipPack
 import com.watchpicture.app.security.SessionPasswordStore
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withContext
 import java.io.File
 
@@ -53,89 +56,90 @@ class SafManager(
     }
 
     /**
-     * Scans pack items using high-speed direct java.io.File system access.
+     * Scans pack items using high-speed concurrent java.io.File system access.
      */
-    private fun scanFromDirectFile(rootDir: File): List<PackItem> {
-        val children = rootDir.listFiles() ?: return emptyList()
-        val packs = mutableListOf<PackItem>()
-
-        for (child in children) {
-            if (child.name.startsWith(".") || child.name.equals("__MACOSX", ignoreCase = true)) {
-                continue
-            }
-
-            if (child.isDirectory) {
-                // Check if directory contains images (recursively detects nested subdirectories)
-                val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectImages(child)
-
-                if (imageFiles.isNotEmpty()) {
-                    val first = imageFiles.first()
-                    val relPath = first.relativeTo(child).path.replace('\\', '/')
-                    val cover = PackImage(
-                        packId = child.absolutePath,
-                        entryPath = relPath,
-                        displayName = first.name,
-                        isEncrypted = false,
-                        directFilePath = first.absolutePath
-                    )
-                    val totalSize = imageFiles.sumOf { it.length() }.coerceAtLeast(child.length())
-                    packs.add(
-                        DirectoryPack(
-                            id = child.absolutePath,
-                            name = child.name,
-                            uriString = Uri.fromFile(child).toString(),
-                            directPath = child.absolutePath,
-                            itemCount = imageFiles.size,
-                            fileSize = totalSize,
-                            lastModified = child.lastModified(),
-                            coverImage = cover
-                        )
-                    )
-                }
-            } else if (child.isFile) {
-                val lowerName = child.name.lowercase()
-                if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) {
-                    continue
-                }
-                val isZip = lowerName.endsWith(".zip")
-                val isCbz = lowerName.endsWith(".cbz")
-                val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
-
-                if (isZip || isCbz || is7z) {
-                    val isEncrypted = zipArchiveManager.isEncrypted(child)
-                    val cachedPassword = passwordStore.get(child.absolutePath)
-                    val entries = zipArchiveManager.getImageEntries(child, cachedPassword)
-
-                    val cover = entries.firstOrNull()?.let { entry ->
-                        PackImage(
-                            packId = child.absolutePath,
-                            entryPath = entry.name,
-                            displayName = entry.name.substringAfterLast('/'),
-                            isEncrypted = entry.isEncrypted,
-                            directFilePath = child.absolutePath
-                        )
-                    }
-
-                    packs.add(
-                        ZipPack(
-                            id = child.absolutePath,
-                            name = child.nameWithoutExtension,
-                            uriString = Uri.fromFile(child).toString(),
-                            directPath = child.absolutePath,
-                            itemCount = entries.size,
-                            isEncrypted = isEncrypted,
-                            fileSize = child.length(),
-                            lastModified = child.lastModified(),
-                            coverImage = cover,
-                            isCbz = isCbz,
-                            is7z = is7z
-                        )
-                    )
-                }
+    private suspend fun scanFromDirectFile(rootDir: File): List<PackItem> = coroutineScope {
+        val children = rootDir.listFiles() ?: return@coroutineScope emptyList()
+        val deferredPacks = children.map { child ->
+            async(Dispatchers.IO) {
+                processDirectChild(child)
             }
         }
+        deferredPacks.awaitAll()
+            .filterNotNull()
+            .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+    }
 
-        return packs.sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+    private fun processDirectChild(child: File): PackItem? {
+        if (child.name.startsWith(".") || child.name.equals("__MACOSX", ignoreCase = true)) {
+            return null
+        }
+
+        if (child.isDirectory) {
+            val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectImages(child)
+            if (imageFiles.isNotEmpty()) {
+                val first = imageFiles.first()
+                val relPath = first.relativeTo(child).path.replace('\\', '/')
+                val cover = PackImage(
+                    packId = child.absolutePath,
+                    entryPath = relPath,
+                    displayName = first.name,
+                    isEncrypted = false,
+                    directFilePath = first.absolutePath
+                )
+                val totalSize = imageFiles.sumOf { it.length() }.coerceAtLeast(child.length())
+                return DirectoryPack(
+                    id = child.absolutePath,
+                    name = child.name,
+                    uriString = Uri.fromFile(child).toString(),
+                    directPath = child.absolutePath,
+                    itemCount = imageFiles.size,
+                    fileSize = totalSize,
+                    lastModified = child.lastModified(),
+                    coverImage = cover
+                )
+            }
+        } else if (child.isFile) {
+            val lowerName = child.name.lowercase()
+            if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) {
+                return null
+            }
+            val isZip = lowerName.endsWith(".zip")
+            val isCbz = lowerName.endsWith(".cbz")
+            val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
+
+            if (isZip || isCbz || is7z) {
+                val cachedPassword = passwordStore.get(child.absolutePath)
+                val entries = zipArchiveManager.getImageEntries(child, cachedPassword)
+                val isEncrypted = entries.any { it.isEncrypted } ||
+                        (entries.isEmpty() && zipArchiveManager.isEncrypted(child))
+
+                val cover = entries.firstOrNull()?.let { entry ->
+                    PackImage(
+                        packId = child.absolutePath,
+                        entryPath = entry.name,
+                        displayName = entry.name.substringAfterLast('/'),
+                        isEncrypted = entry.isEncrypted,
+                        directFilePath = child.absolutePath
+                    )
+                }
+
+                return ZipPack(
+                    id = child.absolutePath,
+                    name = child.nameWithoutExtension,
+                    uriString = Uri.fromFile(child).toString(),
+                    directPath = child.absolutePath,
+                    itemCount = entries.size,
+                    isEncrypted = isEncrypted,
+                    fileSize = child.length(),
+                    lastModified = child.lastModified(),
+                    coverImage = cover,
+                    isCbz = isCbz,
+                    is7z = is7z
+                )
+            }
+        }
+        return null
     }
 
     /**

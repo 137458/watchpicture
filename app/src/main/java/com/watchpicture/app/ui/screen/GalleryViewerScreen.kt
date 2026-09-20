@@ -154,27 +154,34 @@ fun GalleryViewerScreen(
                 isCurrentPageZoomed = false
             }
 
-            // Controlled serial prefetching of adjacent pages with debounce to prevent CPU contention
+            // Directional background prefetching of adjacent archive entries into ArchiveDiskCache
             val context = androidx.compose.ui.platform.LocalContext.current
-            LaunchedEffect(pagerState.currentPage, images) {
-                // Debounce 300ms so fast scrolling doesn't churn background decoders
-                kotlinx.coroutines.delay(300)
-                val imageLoader = coil3.SingletonImageLoader.get(context)
-                val prefetchIndices = listOf(
-                    pagerState.currentPage + 1,
-                    pagerState.currentPage - 1
-                )
-                // Use limited parallelism (1 thread) so current page gets 100% CPU priority
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO.limitedParallelism(1)) {
+            val app = context.applicationContext as? com.watchpicture.app.WatchPictureApp
+            val diskCache = app?.archiveDiskCache
+            val zipManager = app?.zipArchiveManager
+
+            LaunchedEffect(pagerState.currentPage, readingMode, images) {
+                // Short debounce so fast flings skip intermediate pages
+                kotlinx.coroutines.delay(150)
+                val isRtl = (readingMode == ReadingMode.RTL)
+                val curr = pagerState.currentPage
+                val prefetchIndices = if (isRtl) {
+                    listOf(curr - 1, curr - 2, curr + 1)
+                } else {
+                    listOf(curr + 1, curr + 2, curr - 1)
+                }
+
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
                     for (idx in prefetchIndices) {
                         if (idx in images.indices) {
                             val targetImg = images[idx]
                             val model = targetImg.toImageModel(sessionPassword)
-                            if (model != null) {
-                                val prefetchReq = coil3.request.ImageRequest.Builder(context)
-                                    .data(model)
-                                    .build()
-                                imageLoader.enqueue(prefetchReq)
+                            if (model is com.watchpicture.app.coil.ZipImageSource && diskCache != null && zipManager != null) {
+                                runCatching {
+                                    diskCache.getOrPut(model.zipFile, model.entryName, model.password) {
+                                        zipManager.getEntryInputStream(model.zipFile, model.entryName, model.password)
+                                    }
+                                }
                             }
                         }
                     }
@@ -184,7 +191,7 @@ fun GalleryViewerScreen(
             // Horizontal Pager with reverseLayout support for Manga RTL mode
             HorizontalPager(
                 state = pagerState,
-                beyondViewportPageCount = 0,
+                beyondViewportPageCount = 1,
                 userScrollEnabled = !isCurrentPageZoomed,
                 reverseLayout = (readingMode == ReadingMode.RTL),
                 modifier = Modifier.fillMaxSize()

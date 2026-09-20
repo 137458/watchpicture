@@ -110,4 +110,49 @@ class ArchiveDiskCacheTest {
         assertTrue("Plain file must still exist after clearing encrypted cache", plainFile.exists())
         assertFalse("Encrypted file must be wiped", encryptedFile.exists())
     }
+
+    @Test
+    fun `throws IOException when stream produces zero bytes without creating corrupted file`() {
+        val cache = ArchiveDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+        try {
+            cache.getOrPut(dummyZip, "empty.jpg", password = null) {
+                ByteArrayInputStream(ByteArray(0))
+            }
+            fail("Must throw IOException on empty stream")
+        } catch (e: java.io.IOException) {
+            assertTrue(e.message?.contains("0 bytes") == true || e.message?.contains("empty") == true)
+        }
+
+        // Cache dir must not contain empty.jpg or zero-byte corrupted files
+        val files = cacheDir.listFiles() ?: emptyArray()
+        assertEquals("Cache dir must remain empty of corrupted files", 0, files.size)
+    }
+
+    @Test
+    fun `tracks size and supports striped concurrent access without lock leaks`() {
+        val cache = ArchiveDiskCache(cacheDir, maxSizeBytes = 500 * 1024)
+        val threadCount = 8
+        val itemsPerThread = 20
+        val payload = ByteArray(1024) { 42 } // 1KB each
+
+        val threads = (0 until threadCount).map { tIdx ->
+            Thread {
+                for (i in 0 until itemsPerThread) {
+                    val entryName = "entry_${tIdx}_$i.jpg"
+                    cache.getOrPut(dummyZip, entryName, password = null) {
+                        ByteArrayInputStream(payload)
+                    }
+                }
+            }
+        }
+
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+
+        // All entries processed without deadlock or lock crash
+        val files = cacheDir.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") } ?: emptyList()
+        assertTrue("Files should be cached", files.isNotEmpty())
+        val totalSize = files.sumOf { it.length() }
+        assertTrue("Total size must stay within limit of 500KB", totalSize <= 500 * 1024)
+    }
 }
