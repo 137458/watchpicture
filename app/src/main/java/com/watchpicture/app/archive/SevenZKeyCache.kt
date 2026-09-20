@@ -18,7 +18,7 @@ import kotlin.concurrent.withLock
  */
 object SevenZKeyCache {
 
-    private const val MAX_CACHE_SIZE = 32
+    private const val MAX_CACHE_SIZE = 256
 
     data class Stats(
         val hitCount: Long,

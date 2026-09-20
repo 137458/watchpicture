@@ -235,8 +235,9 @@ class ThumbnailDiskCache(
             } else {
                 fos.write(bytes)
             }
+            fos.flush()
         }
-        return bitmap
+        return if (keepBitmapInMemory && bitmap != null && !bitmap.isRecycled) bitmap else null
     }
 
     private fun saveDownsampled(
@@ -245,62 +246,9 @@ class ThumbnailDiskCache(
         targetSizePx: Int,
         keepBitmapInMemory: Boolean
     ): Bitmap? {
-        val buffered = if (input.markSupported()) input else java.io.BufferedInputStream(input, 128 * 1024)
-        buffered.mark(128 * 1024)
-
-        var bitmap: Bitmap? = null
-        try {
-            val options = BitmapFactory.Options().apply {
-                inJustDecodeBounds = true
-            }
-            BitmapFactory.decodeStream(buffered, null, options)
-
-            if (options.outWidth > 0 && options.outHeight > 0) {
-                runCatching { buffered.reset() }
-
-                val maxDim = max(options.outWidth, options.outHeight)
-                var sampleSize = 1
-                while ((maxDim / (sampleSize * 2)) >= targetSizePx) {
-                    sampleSize *= 2
-                }
-
-                val mime = options.outMimeType?.lowercase() ?: ""
-                val hasAlpha = mime.contains("png") || mime.contains("webp") || mime.contains("gif")
-
-                val decodeOptions = BitmapFactory.Options().apply {
-                    inSampleSize = sampleSize
-                    inPreferredConfig = if (hasAlpha) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
-                }
-                bitmap = BitmapFactory.decodeStream(buffered, null, decodeOptions)
-            }
-        } catch (_: Throwable) {
-            bitmap = null
-        }
-
-        FileOutputStream(targetFile).use { fos ->
-            if (bitmap != null) {
-                try {
-                    // Compress as compact WebP/JPEG thumbnail
-                    val format = if (android.os.Build.VERSION.SDK_INT >= 30) {
-                        Bitmap.CompressFormat.WEBP_LOSSY
-                    } else {
-                        Bitmap.CompressFormat.JPEG
-                    }
-                    bitmap.compress(format, 80, fos)
-                } finally {
-                    if (!keepBitmapInMemory) {
-                        bitmap.recycle()
-                    }
-                }
-            } else {
-                // Fallback direct copy if BitmapFactory fails (e.g. SVG or JVM unit test)
-                runCatching { buffered.reset() }
-                buffered.copyTo(fos, bufferSize = BUFFER_SIZE)
-            }
-            fos.flush()
-        }
-
-        return if (keepBitmapInMemory && bitmap != null && !bitmap.isRecycled) bitmap else null
+        val bytes = input.readBytes()
+        if (bytes.isEmpty()) return null
+        return saveDownsampledFromBytes(bytes, targetFile, targetSizePx, keepBitmapInMemory)
     }
 
     fun trimToSize() {

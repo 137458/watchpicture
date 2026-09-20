@@ -35,13 +35,28 @@ class ArchiveExtractionCoordinator(
 
     private val archiveLocks = ConcurrentHashMap<String, Mutex>()
     private val activeSweepJob = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?>(null)
+    @Volatile
+    private var isSweepPaused: Boolean = false
 
     /**
-     * Pauses and cancels any currently executing background thumbnail sweep.
-     * Called when a high-priority viewport request occurs, immediately releasing
-     * CPU cores and session mutexes for instant foreground page rendering.
+     * Cooperatively pauses background thumbnail sweep to yield locks to interactive foreground viewport.
      */
     fun pauseBackgroundSweep() {
+        isSweepPaused = true
+    }
+
+    /**
+     * Resumes background thumbnail sweep after foreground request is serviced.
+     */
+    fun resumeBackgroundSweep() {
+        isSweepPaused = false
+    }
+
+    /**
+     * Cancels any currently executing background thumbnail sweep.
+     */
+    fun cancelBackgroundSweep() {
+        isSweepPaused = false
         activeSweepJob.getAndSet(null)?.cancel()
     }
 
@@ -290,32 +305,35 @@ class ArchiveExtractionCoordinator(
 
         // Yield background sweep to immediately free the session lock and CPU cores for foreground viewport rendering
         pauseBackgroundSweep()
+        try {
+            val mutex = getLockFor(file)
+            mutex.withLock {
+                val recheckThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
+                if (recheckThumb != null && recheckThumb.exists() && recheckThumb.length() > 0L) {
+                    return@withLock ThumbnailResult(recheckThumb, null)
+                }
 
-        val mutex = getLockFor(file)
-        mutex.withLock {
-            val recheckThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
-            if (recheckThumb != null && recheckThumb.exists() && recheckThumb.length() > 0L) {
-                return@withLock ThumbnailResult(recheckThumb, null)
-            }
+                if (ZipArchiveManager.isSevenZFile(file)) {
+                    val thumbResult = sevenZSessionManager.extractThumbnailResult(
+                        file = file,
+                        targetEntryName = entryName,
+                        targetSizePx = targetSizePx,
+                        password = password,
+                        thumbnailDiskCache = thumbnailDiskCache,
+                        lookahead = 0,
+                        keepBitmapInMemory = keepBitmapInMemory
+                    )
+                    if (thumbResult != null && thumbResult.file.exists() && thumbResult.file.length() > 0L) {
+                        return@withLock thumbResult
+                    }
+                }
 
-            if (ZipArchiveManager.isSevenZFile(file)) {
-                val thumbResult = sevenZSessionManager.extractThumbnailResult(
-                    file = file,
-                    targetEntryName = entryName,
-                    targetSizePx = targetSizePx,
-                    password = password,
-                    thumbnailDiskCache = thumbnailDiskCache,
-                    lookahead = 0,
-                    keepBitmapInMemory = keepBitmapInMemory
-                )
-                if (thumbResult != null && thumbResult.file.exists() && thumbResult.file.length() > 0L) {
-                    return@withLock thumbResult
+                thumbnailDiskCache.getOrPutResult(file, entryName, targetSizePx, password, keepBitmapInMemory) {
+                    zipArchiveManager.getEntryInputStream(file, entryName, password)
                 }
             }
-
-            thumbnailDiskCache.getOrPutResult(file, entryName, targetSizePx, password, keepBitmapInMemory) {
-                zipArchiveManager.getEntryInputStream(file, entryName, password)
-            }
+        } finally {
+            resumeBackgroundSweep()
         }
     }
 
@@ -360,6 +378,13 @@ class ArchiveExtractionCoordinator(
             for (target in sortedUncached) {
                 if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
                 if (powerThermalManager?.isThrottled == true) break
+
+                // Cooperative yield while foreground requests are in flight
+                while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
+                    kotlinx.coroutines.delay(80)
+                }
+                if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
+
                 val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
                 if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
                     count++

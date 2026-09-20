@@ -1,5 +1,6 @@
 package com.watchpicture.app.archive
 
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
@@ -110,5 +111,24 @@ class ThumbnailDiskCacheTest {
         }
 
         assertEquals(result1.file.absolutePath, result2.file.absolutePath)
+    }
+
+    @Test
+    fun `handles 512KB non-seekable streaming payload without truncation or corruption`() {
+        val cacheDir = tempFolder.newFolder("thumb_large_512")
+        val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+
+        val dummyZip = tempFolder.newFile("dummy_512.zip")
+        val entryName = "dslr_raw_512.jpg"
+        val payload = ByteArray(512 * 1024) { (it % 251).toByte() }
+
+        val res = cache.getOrPutResult(dummyZip, entryName, 360, password = null, keepBitmapInMemory = false) {
+            payload.inputStream()
+        }
+
+        assertNotNull(res.file)
+        assertTrue(res.file.exists())
+        assertEquals(payload.size.toLong(), res.file.length())
+        assertArrayEquals(payload, res.file.readBytes())
     }
 }

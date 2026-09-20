@@ -101,7 +101,7 @@ static Byte ReadByte(IByteInPtr pp)
 }
 
 static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, ILookInStreamPtr inStream,
-    Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain)
+    Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain, BoolInt allowPadding)
 {
   CPpmd7 *ppmd;
   SRes res;
@@ -153,7 +153,7 @@ static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, I
     }
     if (s.extra)
       res = (s.res != SZ_OK ? s.res : SZ_ERROR_DATA);
-    else if (s.processed + (size_t)(s.cur - s.begin) != inSize)
+    else if (allowPadding ? (inSize - (s.processed + (size_t)(s.cur - s.begin)) >= 16) : (s.processed + (size_t)(s.cur - s.begin) != inSize))
       res = SZ_ERROR_DATA;
     Ppmd7_Free(ppmd, allocMain);
   }
@@ -165,7 +165,7 @@ static SRes SzDecodePpmd(const Byte *props, unsigned propsSize, UInt64 inSize, I
 
 
 static SRes SzDecodeLzma(const Byte *props, unsigned propsSize, UInt64 inSize, ILookInStreamPtr inStream,
-    Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain)
+    Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain, BoolInt allowPadding)
 {
   CLzmaDec state;
   SRes res = SZ_OK;
@@ -197,12 +197,12 @@ static SRes SzDecodeLzma(const Byte *props, unsigned propsSize, UInt64 inSize, I
 
       if (status == LZMA_STATUS_FINISHED_WITH_MARK)
       {
-        if (outSize != state.dicPos || inSize != 0)
+        if (outSize != state.dicPos || (allowPadding ? inSize >= 16 : inSize != 0))
           res = SZ_ERROR_DATA;
         break;
       }
 
-      if (outSize == state.dicPos && inSize == 0 && status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK)
+      if (outSize == state.dicPos && (allowPadding ? inSize < 16 : inSize == 0) && status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK)
         break;
 
       if (inProcessed == 0 && dicPos == state.dicPos)
@@ -225,7 +225,7 @@ static SRes SzDecodeLzma(const Byte *props, unsigned propsSize, UInt64 inSize, I
 #ifndef Z7_NO_METHOD_LZMA2
 
 static SRes SzDecodeLzma2(const Byte *props, unsigned propsSize, UInt64 inSize, ILookInStreamPtr inStream,
-    Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain)
+    Byte *outBuffer, SizeT outSize, ISzAllocPtr allocMain, BoolInt allowPadding)
 {
   CLzma2Dec state;
   SRes res = SZ_OK;
@@ -259,10 +259,13 @@ static SRes SzDecodeLzma2(const Byte *props, unsigned propsSize, UInt64 inSize, 
 
       if (status == LZMA_STATUS_FINISHED_WITH_MARK)
       {
-        if (outSize != state.decoder.dicPos || inSize != 0)
+        if (outSize != state.decoder.dicPos || (allowPadding ? inSize >= 16 : inSize != 0))
           res = SZ_ERROR_DATA;
         break;
       }
+
+      if (outSize == state.decoder.dicPos && (allowPadding ? inSize < 16 : inSize == 0) && status == LZMA_STATUS_MAYBE_FINISHED_WITHOUT_MARK)
+        break;
 
       if (inProcessed == 0 && dicPos == state.decoder.dicPos)
       {
@@ -742,18 +745,18 @@ static SRes SzFolder_Decode2(
         }
         else if (mainCoder->MethodID == k_LZMA)
         {
-          decodeRes = SzDecodeLzma(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain);
+          decodeRes = SzDecodeLzma(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain, True);
         }
       #ifndef Z7_NO_METHOD_LZMA2
         else if (mainCoder->MethodID == k_LZMA2)
         {
-          decodeRes = SzDecodeLzma2(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain);
+          decodeRes = SzDecodeLzma2(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain, True);
         }
       #endif
       #ifdef Z7_PPMD_SUPPORT
         else if (mainCoder->MethodID == k_PPMD)
         {
-          decodeRes = SzDecodePpmd(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain);
+          decodeRes = SzDecodePpmd(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain, True);
         }
       #endif
         else
@@ -858,18 +861,18 @@ static SRes SzFolder_Decode2(
       }
       else if (coder->MethodID == k_LZMA)
       {
-        RINOK(SzDecodeLzma(propsData + coder->PropsOffset, coder->PropsSize, inSize, inStream, outBufCur, outSizeCur, allocMain))
+        RINOK(SzDecodeLzma(propsData + coder->PropsOffset, coder->PropsSize, inSize, inStream, outBufCur, outSizeCur, allocMain, False))
       }
     #ifndef Z7_NO_METHOD_LZMA2
       else if (coder->MethodID == k_LZMA2)
       {
-        RINOK(SzDecodeLzma2(propsData + coder->PropsOffset, coder->PropsSize, inSize, inStream, outBufCur, outSizeCur, allocMain))
+        RINOK(SzDecodeLzma2(propsData + coder->PropsOffset, coder->PropsSize, inSize, inStream, outBufCur, outSizeCur, allocMain, False))
       }
     #endif
     #ifdef Z7_PPMD_SUPPORT
       else if (coder->MethodID == k_PPMD)
       {
-        RINOK(SzDecodePpmd(propsData + coder->PropsOffset, coder->PropsSize, inSize, inStream, outBufCur, outSizeCur, allocMain))
+        RINOK(SzDecodePpmd(propsData + coder->PropsOffset, coder->PropsSize, inSize, inStream, outBufCur, outSizeCur, allocMain, False))
       }
     #endif
       else

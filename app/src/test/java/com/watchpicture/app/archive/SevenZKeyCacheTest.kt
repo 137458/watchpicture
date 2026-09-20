@@ -71,4 +71,14 @@ class SevenZKeyCacheTest {
         SevenZKeyCache.clear()
         assertEquals(0, SevenZKeyCache.size)
     }
+
+    @Test
+    fun `cache capacity accommodates at least 64 entries without premature eviction`() {
+        for (i in 0 until 64) {
+            val pwd = "Pwd$i".toByteArray(Charsets.UTF_16LE)
+            val salt = byteArrayOf(i.toByte(), 1, 2)
+            SevenZKeyCache.getOrDerive(pwd, salt, 4)
+        }
+        assertEquals(64, SevenZKeyCache.size)
+    }
 }

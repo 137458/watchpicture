@@ -29,13 +29,14 @@ class SevenZSessionManager(
     ) {
         val lock = Mutex()
         var nativeSession: Native7zArchiveSession? = null
+        var nativeFailed: Boolean = false
         var sevenZ: SevenZFile? = null
         var entries: List<SevenZArchiveEntry> = emptyList()
         var currentEntryIndex: Int = -1
         var lastAccessTime: Long = System.currentTimeMillis()
 
         fun openIfNeeded() {
-            if (nativeSession == null && sevenZ == null) {
+            if (!nativeFailed && nativeSession == null && sevenZ == null) {
                 if (Native7z.isAvailable) {
                     try {
                         val ns = Native7zArchiveSession.open(file.absolutePath, password)
@@ -52,21 +53,36 @@ class SevenZSessionManager(
                 } else {
                     com.watchpicture.app.util.AppLog.w("7zSession", "Native7z.isAvailable is false for ${file.name}")
                 }
+            }
 
-                val builder = SevenZFile.builder().setFile(file)
-                if (!password.isNullOrEmpty()) {
-                    builder.setPassword(password)
-                }
-                val instance = builder.get()
-                sevenZ = instance
-                entries = instance.entries.toList()
-                currentEntryIndex = -1
-                com.watchpicture.app.util.AppLog.d("7zSession", "Java SevenZFile opened for ${file.name} with ${entries.size} entries")
+            if (sevenZ == null) {
+                openJavaSevenZ()
+            }
+        }
+
+        fun openJavaSevenZ() {
+            val builder = SevenZFile.builder().setFile(file)
+            if (!password.isNullOrEmpty()) {
+                builder.setPassword(password)
+            }
+            val instance = builder.get()
+            sevenZ = instance
+            entries = instance.entries.toList()
+            currentEntryIndex = -1
+            com.watchpicture.app.util.AppLog.d("7zSession", "Java SevenZFile opened for ${file.name} with ${entries.size} entries")
+        }
+
+        fun markNativeFailed() {
+            nativeFailed = true
+            runCatching { nativeSession?.close() }
+            nativeSession = null
+            if (sevenZ == null) {
+                openJavaSevenZ()
             }
         }
 
         fun reset() {
-            if (nativeSession != null) {
+            if (nativeSession != null && !nativeFailed) {
                 // Native session has random access via solid block cache, no stream rewind needed!
                 return
             }
@@ -125,32 +141,39 @@ class SevenZSessionManager(
             session.openIfNeeded()
 
             val native = session.nativeSession
-            if (native != null) {
-                val targetEntry = native.findEntry(targetEntryName) ?: return@withLock false
-                val bytes = native.extractToBytes(targetEntry.index) ?: return@withLock false
-                java.io.ByteArrayInputStream(bytes).use { stream ->
-                    onEntryExtracted(targetEntry.path, stream)
-                }
+            if (native != null && !session.nativeFailed) {
+                val targetEntry = native.findEntry(targetEntryName)
+                if (targetEntry != null) {
+                    val bytes = native.extractToBytes(targetEntry.index)
+                    if (bytes != null) {
+                        java.io.ByteArrayInputStream(bytes).use { stream ->
+                            onEntryExtracted(targetEntry.path, stream)
+                        }
 
-                if (lookahead > 0) {
-                    val nextEntries = native.entries
-                        .asSequence()
-                        .filter { it.index > targetEntry.index && !it.isDirectory }
-                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                        .filter { ZipArchiveManager.isImageFile(it.path) }
-                        .take(lookahead)
-                        .toList()
+                        if (lookahead > 0) {
+                            val nextEntries = native.entries
+                                .asSequence()
+                                .filter { it.index > targetEntry.index && !it.isDirectory }
+                                .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .take(lookahead)
+                                .toList()
 
-                    for (next in nextEntries) {
-                        val nextBytes = native.extractToBytes(next.index)
-                        if (nextBytes != null) {
-                            java.io.ByteArrayInputStream(nextBytes).use { stream ->
-                                onEntryExtracted(next.path, stream)
+                            for (next in nextEntries) {
+                                val nextBytes = native.extractToBytes(next.index)
+                                if (nextBytes != null) {
+                                    java.io.ByteArrayInputStream(nextBytes).use { stream ->
+                                        onEntryExtracted(next.path, stream)
+                                    }
+                                }
                             }
                         }
+                        return@withLock true
+                    } else {
+                        com.watchpicture.app.util.AppLog.w("7zSession", "Native extractSequential failed for $targetEntryName, smoothly falling back to Java session")
+                        session.markNativeFailed()
                     }
                 }
-                return@withLock true
             }
 
             val sz = session.sevenZ ?: return@withLock false
@@ -301,46 +324,52 @@ class SevenZSessionManager(
             session.openIfNeeded()
 
             val native = session.nativeSession
-            if (native != null) {
-                val targetEntry = native.findEntry(targetEntryName) ?: return@withLock null
-                val bytes = native.extractToBytes(targetEntry.index) ?: return@withLock null
+            if (native != null && !session.nativeFailed) {
+                val targetEntry = native.findEntry(targetEntryName)
+                if (targetEntry != null) {
+                    val bytes = native.extractToBytes(targetEntry.index)
+                    if (bytes != null) {
+                        val result = thumbnailDiskCache.getOrPutResultFromBytes(
+                            zipFile = file,
+                            entryName = targetEntryName,
+                            targetSizePx = targetSizePx,
+                            password = password,
+                            keepBitmapInMemory = keepBitmapInMemory,
+                            bytes = bytes
+                        )
 
-                val result = thumbnailDiskCache.getOrPutResultFromBytes(
-                    zipFile = file,
-                    entryName = targetEntryName,
-                    targetSizePx = targetSizePx,
-                    password = password,
-                    keepBitmapInMemory = keepBitmapInMemory,
-                    bytes = bytes
-                )
+                        if (lookahead > 0) {
+                            val nextEntries = native.entries
+                                .asSequence()
+                                .filter { it.index > targetEntry.index && !it.isDirectory }
+                                .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .take(lookahead)
+                                .toList()
 
-                if (lookahead > 0) {
-                    val nextEntries = native.entries
-                        .asSequence()
-                        .filter { it.index > targetEntry.index && !it.isDirectory }
-                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                        .filter { ZipArchiveManager.isImageFile(it.path) }
-                        .take(lookahead)
-                        .toList()
-
-                    for (next in nextEntries) {
-                        if (thumbnailDiskCache.get(file, next.path, targetSizePx, password) == null) {
-                            val nextBytes = native.extractToBytes(next.index)
-                            if (nextBytes != null) {
-                                thumbnailDiskCache.getOrPutResultFromBytes(
-                                    zipFile = file,
-                                    entryName = next.path,
-                                    targetSizePx = targetSizePx,
-                                    password = password,
-                                    keepBitmapInMemory = false,
-                                    bytes = nextBytes
-                                )
+                            for (next in nextEntries) {
+                                if (thumbnailDiskCache.get(file, next.path, targetSizePx, password) == null) {
+                                    val nextBytes = native.extractToBytes(next.index)
+                                    if (nextBytes != null) {
+                                        thumbnailDiskCache.getOrPutResultFromBytes(
+                                            zipFile = file,
+                                            entryName = next.path,
+                                            targetSizePx = targetSizePx,
+                                            password = password,
+                                            keepBitmapInMemory = false,
+                                            bytes = nextBytes
+                                        )
+                                    }
+                                }
                             }
                         }
+
+                        return@withLock result
+                    } else {
+                        com.watchpicture.app.util.AppLog.w("7zSession", "Native extractThumbnailResult failed for $targetEntryName, smoothly falling back to Java session")
+                        session.markNativeFailed()
                     }
                 }
-
-                return@withLock result
             }
 
             val sz = session.sevenZ ?: return@withLock null
@@ -394,20 +423,15 @@ class SevenZSessionManager(
                             }
                         }
                     } else if (session.currentEntryIndex < targetIdx) {
-                        if (!isDir) {
-                            if (ZipArchiveManager.isImageFile(entryName) &&
-                                thumbnailDiskCache.get(file, entryName, targetSizePx, password) == null
-                            ) {
-                                // Opportunistically save intermediate thumbnails to eliminate backward resets
-                                currentSz.getInputStream(entry).use { stream ->
-                                    thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
-                                }
-                            } else {
-                                currentSz.getInputStream(entry).use { stream ->
-                                    while (stream.read(discardBuffer) != -1) {
-                                        // fast discard
-                                    }
-                                }
+                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                            currentSz.getInputStream(entry).use { stream ->
+                                thumbnailDiskCache.getOrPutResult(
+                                    zipFile = file,
+                                    entryName = entryName,
+                                    targetSizePx = targetSizePx,
+                                    password = password,
+                                    keepBitmapInMemory = false
+                                ) { stream }
                             }
                         }
                     } else if (session.currentEntryIndex > targetIdx && lookaheadRemaining > 0) {
@@ -453,24 +477,26 @@ class SevenZSessionManager(
         return session.lock.withLock {
             session.lastAccessTime = System.currentTimeMillis()
             session.openIfNeeded()
-            val native = session.nativeSession ?: return@withLock false
-            val targetEntry = native.findEntry(targetEntryName) ?: return@withLock false
-
-            val ok = native.extractToFile(targetEntry.index, destination)
-            if (!ok) return@withLock false
-
-            if (lookahead > 0) {
-                val nextEntries = native.entries
-                    .asSequence()
-                    .filter { it.index > targetEntry.index && !it.isDirectory }
-                    .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                    .filter { ZipArchiveManager.isImageFile(it.path) }
-                    .take(lookahead)
-                    .toList()
-
-                // Opportunistic background extraction can be done if desired
+            val native = session.nativeSession
+            if (native != null && !session.nativeFailed) {
+                val targetEntry = native.findEntry(targetEntryName)
+                if (targetEntry != null) {
+                    val ok = native.extractToFile(targetEntry.index, destination)
+                    if (ok && destination.exists() && destination.length() > 0L) {
+                        return@withLock true
+                    } else {
+                        session.markNativeFailed()
+                    }
+                }
             }
-            true
+
+            // Smooth Java extraction fallback if Native fails or unavailable
+            extractSequential(file, targetEntryName, password, lookahead, allowRewind = true) { _, stream ->
+                java.io.FileOutputStream(destination).use { fos ->
+                    stream.copyTo(fos)
+                }
+            }
+            destination.exists() && destination.length() > 0L
         }
     }
 

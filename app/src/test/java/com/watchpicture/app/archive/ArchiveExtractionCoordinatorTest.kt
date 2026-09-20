@@ -161,4 +161,25 @@ class ArchiveExtractionCoordinatorTest {
             assertTrue(thumb?.exists() == true && thumb.length() > 0)
         }
     }
+
+    @Test
+    fun `pauseBackgroundSweep and resumeBackgroundSweep pause sweep cooperatively without cancelling session`() = runBlocking {
+        val coordinator = ArchiveExtractionCoordinator(zipManager, archiveDiskCache)
+        coordinator.pauseBackgroundSweep()
+        // Concurrent foreground extraction while paused
+        val thumbDir = tempFolder.newFolder("thumb_pause_cache")
+        val thumbCache = ThumbnailDiskCache(thumbDir)
+
+        val thumb = coordinator.extractThumbnailDirect(
+            file = solid7z,
+            entryName = "00_page.jpg",
+            targetSizePx = 100,
+            password = null,
+            thumbnailDiskCache = thumbCache
+        )
+        assertNotNull(thumb)
+        assertTrue(thumb.exists() && thumb.length() > 0)
+
+        coordinator.resumeBackgroundSweep()
+    }
 }
