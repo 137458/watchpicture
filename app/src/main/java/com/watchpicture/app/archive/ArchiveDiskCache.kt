@@ -171,6 +171,63 @@ class ArchiveDiskCache(
     }
 
     /**
+     * Retrieves an already cached file or writes directly to [tempTargetFile] via suspending [writer]
+     * without intermediate file copying. Atomically renames to target file upon successful completion.
+     */
+    suspend fun putDirectSuspend(
+        zipFile: File,
+        entryName: String,
+        password: String?,
+        writer: suspend (tempTargetFile: File) -> Unit
+    ): File {
+        val isEncrypted = !password.isNullOrEmpty()
+        val cacheKey = computeKey(zipFile, entryName, password)
+        val filePrefix = if (isEncrypted) "enc_" else "raw_"
+        val ext = entryName.substringAfterLast('.', "dat").lowercase()
+        val targetFile = File(directory, "$filePrefix$cacheKey.$ext")
+
+        if (targetFile.exists() && targetFile.length() > 0) {
+            targetFile.setLastModified(System.currentTimeMillis())
+            return targetFile
+        }
+
+        val tempFile = File(directory, "${targetFile.name}.${System.nanoTime()}.tmp")
+        try {
+            writer(tempFile)
+
+            if (!tempFile.exists() || tempFile.length() <= 0L) {
+                if (tempFile.exists()) tempFile.delete()
+                throw IOException("Failed to extract '$entryName': writer produced 0 bytes")
+            }
+
+            val stripeLock = getLockFor(cacheKey)
+            stripeLock.withLock {
+                if (targetFile.exists()) {
+                    targetFile.delete()
+                }
+                val renamed = tempFile.renameTo(targetFile)
+                if (!renamed) {
+                    tempFile.copyTo(targetFile, overwrite = true)
+                    tempFile.delete()
+                }
+
+                val addedSize = targetFile.length()
+                getOrInitSize()
+                val updatedSize = currentSizeBytes.addAndGet(addedSize)
+                if (updatedSize > maxSizeBytes) {
+                    trimToSize()
+                }
+            }
+        } catch (e: Throwable) {
+            if (tempFile.exists()) {
+                tempFile.delete()
+            }
+            throw e
+        }
+        return targetFile
+    }
+
+    /**
      * Evicts oldest accessed files until total size is within [maxSizeBytes].
      */
     fun trimToSize() {

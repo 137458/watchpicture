@@ -1117,6 +1117,8 @@ static SRes SzReadHeader2(CSzArEx *p, CSzData *sd, ILookInStreamPtr inStream,
     
     SzAr_Init(&tempAr);
     tempAr.RangeLimit = p->db.RangeLimit;
+    tempAr.passwordBytes = p->db.passwordBytes;
+    tempAr.passwordLen = p->db.passwordLen;
 
     res = SzReadAndDecodePackedStreams(inStream, sd, tempBufs, NUM_ADDITIONAL_STREAMS_MAX,
         p->startPosAfterHeader, &tempAr, allocTemp);
@@ -1547,6 +1549,8 @@ static SRes SzArEx_Open2(
         
         SzAr_Init(&tempAr);
         tempAr.RangeLimit = p->db.RangeLimit;
+        tempAr.passwordBytes = p->db.passwordBytes;
+        tempAr.passwordLen = p->db.passwordLen;
 
         res = SzReadAndDecodePackedStreams(inStream, &sd, &tempBuf, 1, p->startPosAfterHeader, &tempAr, allocTemp);
         SzAr_Free(&tempAr, allocTemp);

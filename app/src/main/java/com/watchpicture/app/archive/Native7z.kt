@@ -161,10 +161,20 @@ class Native7zArchiveSession private constructor(
             if (!Native7z.isAvailable) return null
             return try {
                 val handle = Native7z.nativeOpen(path, password)
-                if (handle == 0L) return null
-                val rawEntries = Native7z.nativeGetEntries(handle) ?: emptyArray()
+                if (handle == 0L) {
+                    com.watchpicture.app.util.AppLog.w("Native7z", "nativeOpen returned 0L for $path")
+                    return null
+                }
+                val rawEntries = Native7z.nativeGetEntries(handle)
+                if (rawEntries == null) {
+                    com.watchpicture.app.util.AppLog.w("Native7z", "nativeGetEntries returned null for $path")
+                    Native7z.nativeClose(handle)
+                    return null
+                }
+                com.watchpicture.app.util.AppLog.d("Native7z", "Opened $path with ${rawEntries.size} entries")
                 Native7zArchiveSession(handle, rawEntries.toList())
             } catch (e: Throwable) {
+                com.watchpicture.app.util.AppLog.e("Native7z", "nativeOpen failed for $path: ${e.message}", e)
                 null
             }
         }
@@ -173,10 +183,19 @@ class Native7zArchiveSession private constructor(
             if (!Native7z.isAvailable) return null
             return try {
                 val handle = Native7z.nativeOpenFd(fd, password)
-                if (handle == 0L) return null
-                val rawEntries = Native7z.nativeGetEntries(handle) ?: emptyArray()
+                if (handle == 0L) {
+                    com.watchpicture.app.util.AppLog.w("Native7z", "nativeOpenFd returned 0L for fd $fd")
+                    return null
+                }
+                val rawEntries = Native7z.nativeGetEntries(handle)
+                if (rawEntries == null) {
+                    com.watchpicture.app.util.AppLog.w("Native7z", "nativeGetEntries returned null for fd $fd")
+                    Native7z.nativeClose(handle)
+                    return null
+                }
                 Native7zArchiveSession(handle, rawEntries.toList())
             } catch (e: Throwable) {
+                com.watchpicture.app.util.AppLog.e("Native7z", "nativeOpenFd failed for fd $fd: ${e.message}", e)
                 null
             }
         }

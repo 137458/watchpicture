@@ -130,6 +130,115 @@ class ThumbnailDiskCache(
         }
     }
 
+    /**
+     * Directly decodes and stores a downsampled WebP thumbnail into [ThumbnailDiskCache]
+     * from in-memory byte array using native BitmapFactory decodeByteArray.
+     */
+    fun getOrPutResultFromBytes(
+        zipFile: File,
+        entryName: String,
+        targetSizePx: Int,
+        password: String?,
+        keepBitmapInMemory: Boolean = false,
+        bytes: ByteArray
+    ): ThumbnailResult {
+        val cacheKey = computeKey(zipFile, entryName, targetSizePx, password)
+        val targetFile = File(directory, "thumb_$cacheKey.webp")
+
+        if (targetFile.exists() && targetFile.length() > 0) {
+            return ThumbnailResult(targetFile, null)
+        }
+
+        val stripeLock = getLockFor(cacheKey)
+        stripeLock.withLock {
+            if (targetFile.exists() && targetFile.length() > 0) {
+                return ThumbnailResult(targetFile, null)
+            }
+
+            val tempFile = File(directory, "${targetFile.name}.${System.nanoTime()}.tmp")
+            var memoryBitmap: Bitmap? = null
+            try {
+                memoryBitmap = saveDownsampledFromBytes(bytes, tempFile, targetSizePx, keepBitmapInMemory)
+
+                if (tempFile.exists() && tempFile.length() > 0L) {
+                    if (targetFile.exists()) targetFile.delete()
+                    val renamed = tempFile.renameTo(targetFile)
+                    if (!renamed) {
+                        tempFile.copyTo(targetFile, overwrite = true)
+                        tempFile.delete()
+                    }
+                    val added = targetFile.length()
+                    val newTotal = currentSizeBytes.addAndGet(added)
+                    if (newTotal > maxSizeBytes) {
+                        trimToSize()
+                    }
+                } else {
+                    if (tempFile.exists()) tempFile.delete()
+                }
+            } catch (e: Throwable) {
+                if (tempFile.exists()) tempFile.delete()
+                memoryBitmap?.recycle()
+                throw e
+            }
+
+            return ThumbnailResult(targetFile, memoryBitmap)
+        }
+    }
+
+    private fun saveDownsampledFromBytes(
+        bytes: ByteArray,
+        targetFile: File,
+        targetSizePx: Int,
+        keepBitmapInMemory: Boolean
+    ): Bitmap? {
+        var bitmap: Bitmap? = null
+        try {
+            val options = BitmapFactory.Options().apply {
+                inJustDecodeBounds = true
+            }
+            BitmapFactory.decodeByteArray(bytes, 0, bytes.size, options)
+
+            if (options.outWidth > 0 && options.outHeight > 0) {
+                val maxDim = max(options.outWidth, options.outHeight)
+                var sampleSize = 1
+                while ((maxDim / (sampleSize * 2)) >= targetSizePx) {
+                    sampleSize *= 2
+                }
+
+                val mime = options.outMimeType?.lowercase() ?: ""
+                val hasAlpha = mime.contains("png") || mime.contains("webp") || mime.contains("gif")
+
+                val decodeOptions = BitmapFactory.Options().apply {
+                    inSampleSize = sampleSize
+                    inPreferredConfig = if (hasAlpha) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
+                }
+                bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
+            }
+        } catch (_: Throwable) {
+            bitmap = null
+        }
+
+        FileOutputStream(targetFile).use { fos ->
+            if (bitmap != null) {
+                try {
+                    val format = if (android.os.Build.VERSION.SDK_INT >= 30) {
+                        Bitmap.CompressFormat.WEBP_LOSSY
+                    } else {
+                        Bitmap.CompressFormat.JPEG
+                    }
+                    bitmap.compress(format, 80, fos)
+                } finally {
+                    if (!keepBitmapInMemory) {
+                        bitmap.recycle()
+                    }
+                }
+            } else {
+                fos.write(bytes)
+            }
+        }
+        return bitmap
+    }
+
     private fun saveDownsampled(
         input: InputStream,
         targetFile: File,

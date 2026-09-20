@@ -111,9 +111,40 @@ class ArchiveExtractionCoordinator(
 
         // Fast path 1: Official Native 7-Zip ANSI-C LZMA SDK with C-level solid block cache & zero-copy direct file dump
         if (Native7z.isAvailable) {
-            val nativeExtracted = extractSevenZNative(file, targetEntryName, lookahead, password)
-            if (nativeExtracted != null && nativeExtracted.exists() && nativeExtracted.length() > 0L) {
-                return nativeExtracted
+            val cached = archiveDiskCache.get(file, targetEntryName, password)
+            if (cached != null && cached.exists() && cached.length() > 0L) {
+                return cached
+            }
+
+            val extractedFile = runCatching {
+                archiveDiskCache.putDirectSuspend(file, targetEntryName, password) { tempTargetFile ->
+                    val success = sevenZSessionManager.extractToFile(
+                        file = file,
+                        targetEntryName = targetEntryName,
+                        password = password,
+                        destination = tempTargetFile,
+                        lookahead = 0
+                    )
+                    if (!success) {
+                        throw java.io.IOException("Native7z extractToFile returned false for $targetEntryName")
+                    }
+                }
+            }.getOrNull()
+
+            if (extractedFile != null && extractedFile.exists() && extractedFile.length() > 0L) {
+                if (lookahead > 0) {
+                    val nextEntries = sevenZSessionManager.getNextImageEntries(file, targetEntryName, password, lookahead)
+                    for (nextEntry in nextEntries) {
+                        if (archiveDiskCache.get(file, nextEntry, password) == null) {
+                            runCatching {
+                                archiveDiskCache.putDirectSuspend(file, nextEntry, password) { tempTargetFile ->
+                                    sevenZSessionManager.extractToFile(file, nextEntry, password, tempTargetFile, 0)
+                                }
+                            }
+                        }
+                    }
+                }
+                return extractedFile
             }
         }
 
@@ -216,47 +247,6 @@ class ArchiveExtractionCoordinator(
             ?: throw NoSuchElementException("Entry '$targetEntryName' not found in 7z archive ${file.name}")
     }
 
-    private fun extractSevenZNative(
-        file: File,
-        targetEntryName: String,
-        lookahead: Int,
-        password: String? = null
-    ): File? {
-        val session = Native7zArchiveSession.open(file.absolutePath, password) ?: return null
-        return session.use { s ->
-            val normalizedTarget = targetEntryName.replace('\\', '/').trimStart('/')
-            val targetEntry = s.findEntry(normalizedTarget) ?: return null
-            val targetFile = archiveDiskCache.putDirect(file, targetEntry.path, password) { tempTargetFile ->
-                val ok = s.extractToFile(targetEntry.index, tempTargetFile)
-                if (!ok) throw java.io.IOException("Native 7z extraction failed for ${targetEntry.path}")
-            }
-
-            // Opportunistically pre-extract subsequent images in the same solid block
-            if (lookahead > 0) {
-                val nextEntries = s.entries
-                    .asSequence()
-                    .filter { it.index > targetEntry.index && !it.isDirectory }
-                    .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                    .filter { ZipArchiveManager.isImageFile(it.path) }
-                    .take(lookahead)
-                    .toList()
-
-                for (next in nextEntries) {
-                    val alreadyCached = archiveDiskCache.get(file, next.path, password)
-                    if (alreadyCached == null || !alreadyCached.exists() || alreadyCached.length() == 0L) {
-                        runCatching {
-                            archiveDiskCache.putDirect(file, next.path, password) { tempTargetFile ->
-                                s.extractToFile(next.index, tempTargetFile)
-                            }
-                        }
-                    }
-                }
-            }
-
-            targetFile
-        }
-    }
-
     /**
      * Extracts a thumbnail entry directly into [ThumbnailDiskCache] without dumping the full uncompressed
      * file to [ArchiveDiskCache], reducing flash write amplification by 99%+.
@@ -315,7 +305,7 @@ class ArchiveExtractionCoordinator(
                     targetSizePx = targetSizePx,
                     password = password,
                     thumbnailDiskCache = thumbnailDiskCache,
-                    lookahead = if (powerThermalManager?.isThrottled == true) 0 else 2,
+                    lookahead = 0,
                     keepBitmapInMemory = keepBitmapInMemory
                 )
                 if (thumbResult != null && thumbResult.file.exists() && thumbResult.file.length() > 0L) {

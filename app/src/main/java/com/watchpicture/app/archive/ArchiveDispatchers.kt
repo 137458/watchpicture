@@ -22,8 +22,8 @@ object ArchiveDispatchers {
     private val foregroundThreadFactory = ThreadFactory { runnable ->
         Thread({
             try {
-                // Interactive foreground priority allows EAS to use fast performance / middle cores
-                Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
+                // Interactive foreground priority allows EAS to schedule onto Cortex-X prime / Cortex-A7xx cores
+                Process.setThreadPriority(Process.THREAD_PRIORITY_FOREGROUND)
             } catch (_: Throwable) {
                 // Ignore in non-Android JVM environments
             }

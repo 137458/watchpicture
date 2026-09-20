@@ -21,7 +21,7 @@ extern "C" {
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN, LOG_TAG, __VA_ARGS__)
 #define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
 
-#define kInputBufSize ((size_t)1 << 18) // 256 KB stream buffer
+#define kInputBufSize ((size_t)2 << 20) // 2 MB stream buffer for high-speed sequential read
 
 static const ISzAlloc g_Alloc = { SzAlloc, SzFree };
 
@@ -104,6 +104,7 @@ static void throwUnsupportedException(JNIEnv *env, const char *message) {
 static jlong initArchiveStream(JNIEnv *env, Native7zArchive *archive) {
     archive->lookStream.buf = (Byte *)ISzAlloc_Alloc(&g_Alloc, kInputBufSize);
     if (!archive->lookStream.buf) {
+        LOGE("initArchiveStream: Failed to alloc input buffer of %zu bytes", kInputBufSize);
         delete archive;
         throwIOException(env, "Out of memory allocating 7z input buffer");
         return 0;
@@ -116,6 +117,7 @@ static jlong initArchiveStream(JNIEnv *env, Native7zArchive *archive) {
 
     SRes res = SzArEx_Open(&archive->db, &archive->lookStream.vt, &g_Alloc, &g_Alloc);
     if (res != SZ_OK) {
+        LOGE("initArchiveStream: SzArEx_Open failed with error code %d", res);
         delete archive;
         if (res == SZ_ERROR_UNSUPPORTED) {
             throwUnsupportedException(env, "7z archive contains unsupported compression method or encryption");
@@ -131,6 +133,7 @@ static jlong initArchiveStream(JNIEnv *env, Native7zArchive *archive) {
         return 0;
     }
 
+    LOGD("initArchiveStream: SzArEx_Open success, numFiles=%u", archive->db.NumFiles);
     return reinterpret_cast<jlong>(archive);
 }
 
@@ -157,32 +160,39 @@ Java_com_watchpicture_app_archive_Native7z_nativeOpen(
     jstring password
 ) {
     if (!path) {
+        LOGE("nativeOpen: path is null");
         throwIOException(env, "Path cannot be null");
         return 0;
     }
 
     const char *cPath = env->GetStringUTFChars(path, nullptr);
     if (!cPath) {
+        LOGE("nativeOpen: Failed to get path string");
         throwIOException(env, "Failed to get path string");
         return 0;
     }
 
+    LOGD("nativeOpen: opening '%s'", cPath);
     auto *archive = new Native7zArchive();
     WRes wres = InFile_Open(&archive->archiveStream.file, cPath);
-    env->ReleaseStringUTFChars(path, cPath);
-
     if (wres != 0) {
+        LOGE("nativeOpen: InFile_Open failed for '%s', wres=%d, errno=%d (%s)", cPath, wres, errno, strerror(errno));
         delete archive;
-        char buf[64];
+        char buf[128];
         snprintf(buf, sizeof(buf), "Cannot open archive file (wres %d)", wres);
+        env->ReleaseStringUTFChars(path, cPath);
         throwIOException(env, buf);
         return 0;
     }
+    env->ReleaseStringUTFChars(path, cPath);
 
     std::vector<uint8_t> pwdBytes;
     extractPasswordBytes(env, password, pwdBytes);
     if (!pwdBytes.empty()) {
+        LOGD("nativeOpen: setPassword with %zu bytes", pwdBytes.size());
         archive->setPassword(pwdBytes.data(), pwdBytes.size());
+    } else {
+        LOGD("nativeOpen: no password provided");
     }
 
     return initArchiveStream(env, archive);
@@ -251,8 +261,10 @@ Java_com_watchpicture_app_archive_Native7z_nativeGetEntries(
     }
 
     UInt32 numFiles = archive->db.NumFiles;
+    LOGD("nativeGetEntries: numFiles=%u", numFiles);
     jobjectArray array = env->NewObjectArray((jsize)numFiles, entryClass, nullptr);
     if (!array) {
+        LOGE("nativeGetEntries: Failed to allocate object array for %u entries", numFiles);
         return nullptr;
     }
 
@@ -332,6 +344,8 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToFile(
         LOGE("SzArEx_Extract failed for index %d with error %d", fileIndex, res);
         return JNI_FALSE;
     }
+
+    LOGD("nativeExtractToFile: Extracted %zu bytes at offset %zu for index %d", outSizeProcessed, offset, fileIndex);
 
     int outFd = open(cOutPath, O_CREAT | O_WRONLY | O_TRUNC, 0666);
     env->ReleaseStringUTFChars(outPath, cOutPath);

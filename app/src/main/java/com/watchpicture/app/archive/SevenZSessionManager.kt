@@ -43,10 +43,14 @@ class SevenZSessionManager(
                             nativeSession = ns
                             com.watchpicture.app.util.AppLog.d("7zSession", "Native7z session opened for ${file.name} with ${ns.entries.size} entries")
                             return
+                        } else {
+                            com.watchpicture.app.util.AppLog.w("7zSession", "Native7zArchiveSession.open returned null or empty for ${file.name}")
                         }
                     } catch (t: Throwable) {
                         com.watchpicture.app.util.AppLog.w("7zSession", "Native7z open failed, fallback to Java SevenZFile: ${t.message}")
                     }
+                } else {
+                    com.watchpicture.app.util.AppLog.w("7zSession", "Native7z.isAvailable is false for ${file.name}")
                 }
 
                 val builder = SevenZFile.builder().setFile(file)
@@ -57,6 +61,7 @@ class SevenZSessionManager(
                 sevenZ = instance
                 entries = instance.entries.toList()
                 currentEntryIndex = -1
+                com.watchpicture.app.util.AppLog.d("7zSession", "Java SevenZFile opened for ${file.name} with ${entries.size} entries")
             }
         }
 
@@ -300,15 +305,14 @@ class SevenZSessionManager(
                 val targetEntry = native.findEntry(targetEntryName) ?: return@withLock null
                 val bytes = native.extractToBytes(targetEntry.index) ?: return@withLock null
 
-                val result = thumbnailDiskCache.getOrPutResult(
+                val result = thumbnailDiskCache.getOrPutResultFromBytes(
                     zipFile = file,
                     entryName = targetEntryName,
                     targetSizePx = targetSizePx,
                     password = password,
-                    keepBitmapInMemory = keepBitmapInMemory
-                ) {
-                    java.io.ByteArrayInputStream(bytes)
-                }
+                    keepBitmapInMemory = keepBitmapInMemory,
+                    bytes = bytes
+                )
 
                 if (lookahead > 0) {
                     val nextEntries = native.entries
@@ -323,9 +327,14 @@ class SevenZSessionManager(
                         if (thumbnailDiskCache.get(file, next.path, targetSizePx, password) == null) {
                             val nextBytes = native.extractToBytes(next.index)
                             if (nextBytes != null) {
-                                thumbnailDiskCache.getOrPut(file, next.path, targetSizePx, password) {
-                                    java.io.ByteArrayInputStream(nextBytes)
-                                }
+                                thumbnailDiskCache.getOrPutResultFromBytes(
+                                    zipFile = file,
+                                    entryName = next.path,
+                                    targetSizePx = targetSizePx,
+                                    password = password,
+                                    keepBitmapInMemory = false,
+                                    bytes = nextBytes
+                                )
                             }
                         }
                     }
@@ -463,6 +472,46 @@ class SevenZSessionManager(
             }
             true
         }
+    }
+
+    /**
+     * Retrieves the next [count] image entries following [currentEntryName] in archive physical order.
+     */
+    fun getNextImageEntries(
+        file: File,
+        currentEntryName: String,
+        password: String?,
+        count: Int
+    ): List<String> {
+        val session = getSession(file, password)
+        session.openIfNeeded()
+        val native = session.nativeSession
+        if (native != null) {
+            val target = native.findEntry(currentEntryName) ?: return emptyList()
+            return native.entries
+                .asSequence()
+                .filter { it.index > target.index && !it.isDirectory }
+                .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                .filter { ZipArchiveManager.isImageFile(it.path) }
+                .take(count)
+                .map { it.path }
+                .toList()
+        }
+        val currentSz = session.entries
+        val normalized = currentEntryName.replace('\\', '/')
+        val idx = currentSz.indexOfFirst {
+            it.name.replace('\\', '/') == normalized
+        }
+        if (idx < 0) return emptyList()
+        return currentSz
+            .asSequence()
+            .drop(idx + 1)
+            .filter { !it.isDirectory }
+            .filter { !ZipArchiveManager.isIgnoredFile(it.name) }
+            .filter { ZipArchiveManager.isImageFile(it.name) }
+            .take(count)
+            .map { it.name }
+            .toList()
     }
 
     /**
