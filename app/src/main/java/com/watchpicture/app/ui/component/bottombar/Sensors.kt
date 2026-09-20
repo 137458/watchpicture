@@ -43,8 +43,12 @@ fun rememberQuantizedGravityAngle(): State<Float> {
     val tiltState = rememberDeviceTilt()
     return remember(tiltState) {
         derivedStateOf {
-            val tilt = tiltState.value
-            calculateQuantizedGravityAngle(tilt.gravityX, tilt.gravityY)
+            try {
+                val tilt = tiltState.value
+                calculateQuantizedGravityAngle(tilt.gravityX, tilt.gravityY)
+            } catch (_: Throwable) {
+                (-PI / 2).toFloat()
+            }
         }
     }
 }

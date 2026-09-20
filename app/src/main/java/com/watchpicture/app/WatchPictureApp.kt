@@ -33,6 +33,11 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
+        Thread.setDefaultUncaughtExceptionHandler { t, e ->
+            android.util.Log.e("WatchPictureCrash", "Uncaught exception in thread ${t.name}: ${e.message}", e)
+            defaultHandler?.uncaughtException(t, e)
+        }
         SingletonImageLoader.setSafe { newImageLoader(this) }
     }
 

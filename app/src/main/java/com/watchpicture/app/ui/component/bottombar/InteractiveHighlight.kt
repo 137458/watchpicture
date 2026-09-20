@@ -39,10 +39,15 @@ class InteractiveHighlight(
     val offset: Offset get() = positionAnimation.value - startPosition
 
     @Language("AGSL")
-    private val spotShader: RuntimeShader? =
+    private val spotShader: RuntimeShader? = run {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isRuntimeShaderSupported()) {
-            RuntimeShader(SPOT_SHADER)
+            try {
+                RuntimeShader(SPOT_SHADER)
+            } catch (_: Throwable) {
+                null
+            }
         } else null
+    }
 
     val modifier: Modifier = Modifier.drawWithContent {
         val progress = pressProgressAnimation.value
@@ -59,18 +64,26 @@ class InteractiveHighlight(
             )
             val spotColor = Color.White.copy(alpha = 0.12f * progress)
 
+            var shaderRendered = false
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && spotShader != null) {
-                spotShader.apply {
-                    setFloatUniform("size", size.width, size.height)
-                    setColorUniform("color", spotColor.toArgb())
-                    setFloatUniform("radius", radius)
-                    setFloatUniform("position", center.x, center.y)
+                try {
+                    spotShader.apply {
+                        setFloatUniform("size", size.width, size.height)
+                        setColorUniform("color", spotColor.toArgb())
+                        setFloatUniform("radius", radius)
+                        setFloatUniform("position", center.x, center.y)
+                    }
+                    drawRect(
+                        brush = ShaderBrush(spotShader),
+                        blendMode = BlendMode.Plus,
+                    )
+                    shaderRendered = true
+                } catch (_: Throwable) {
+                    shaderRendered = false
                 }
-                drawRect(
-                    brush = ShaderBrush(spotShader),
-                    blendMode = BlendMode.Plus,
-                )
-            } else {
+            }
+
+            if (!shaderRendered) {
                 // 平滑降级至 RadialGradient
                 drawRect(
                     brush = Brush.radialGradient(
