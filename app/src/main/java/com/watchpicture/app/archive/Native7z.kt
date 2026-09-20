@@ -45,11 +45,11 @@ object Native7z {
 
     @JvmStatic
     @Throws(IOException::class)
-    external fun nativeOpen(path: String): Long
+    external fun nativeOpen(path: String, password: String? = null): Long
 
     @JvmStatic
     @Throws(IOException::class)
-    external fun nativeOpenFd(fd: Int): Long
+    external fun nativeOpenFd(fd: Int, password: String? = null): Long
 
     @JvmStatic
     external fun nativeGetNumFiles(handle: Long): Int
@@ -128,10 +128,10 @@ class Native7zArchiveSession private constructor(
     }
 
     companion object {
-        fun open(path: String): Native7zArchiveSession? {
+        fun open(path: String, password: String? = null): Native7zArchiveSession? {
             if (!Native7z.isAvailable) return null
             return try {
-                val handle = Native7z.nativeOpen(path)
+                val handle = Native7z.nativeOpen(path, password)
                 if (handle == 0L) return null
                 val rawEntries = Native7z.nativeGetEntries(handle) ?: emptyArray()
                 Native7zArchiveSession(handle, rawEntries.toList())
@@ -140,10 +140,10 @@ class Native7zArchiveSession private constructor(
             }
         }
 
-        fun openFd(fd: Int): Native7zArchiveSession? {
+        fun openFd(fd: Int, password: String? = null): Native7zArchiveSession? {
             if (!Native7z.isAvailable) return null
             return try {
-                val handle = Native7z.nativeOpenFd(fd)
+                val handle = Native7z.nativeOpenFd(fd, password)
                 if (handle == 0L) return null
                 val rawEntries = Native7z.nativeGetEntries(handle) ?: emptyArray()
                 Native7zArchiveSession(handle, rawEntries.toList())

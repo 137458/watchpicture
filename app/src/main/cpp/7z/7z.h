@@ -93,6 +93,14 @@ typedef struct
   Byte *CodersData;
 
   UInt64 RangeLimit;
+
+  const Byte *passwordBytes;
+  size_t passwordLen;
+  Byte cachedSalt[16];
+  size_t cachedSaltLen;
+  int cachedNumCyclesPower;
+  Byte cachedKey[32];
+  BoolInt isKeyValid;
 } CSzAr;
 
 UInt64 SzAr_GetFolderUnpackSize(const CSzAr *p, UInt32 folderIndex);

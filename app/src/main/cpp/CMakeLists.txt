@@ -26,6 +26,7 @@ set(7Z_C_SOURCES
     7z/7zDec.c
     7z/7zFile.c
     7z/7zStream.c
+    7z/aes256_cbc.c
     7z/Bcj2.c
     7z/Bra.c
     7z/Bra86.c

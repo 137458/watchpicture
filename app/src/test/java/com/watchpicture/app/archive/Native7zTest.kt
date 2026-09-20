@@ -41,7 +41,9 @@ class Native7zTest {
     @Test
     fun `open and openFd return null safely when native library is not available`() {
         assertNull(Native7zArchiveSession.open(plain7z.absolutePath))
+        assertNull(Native7zArchiveSession.open(plain7z.absolutePath, "secret"))
         assertNull(Native7zArchiveSession.openFd(-1))
+        assertNull(Native7zArchiveSession.openFd(-1, "secret"))
     }
 
     @Test
@@ -54,5 +56,19 @@ class Native7zTest {
         val stream = manager.getEntryInputStream(plain7z, "photo.jpg")
         val content = stream.use { it.readBytes() }
         assertTrue(content.contentEquals(testBytes))
+    }
+
+    @Test
+    fun `extractSequentialEntries works reliably with fallback`() {
+        val manager = SevenZArchiveManager()
+        var extracted = false
+        manager.extractSequentialEntries(plain7z, listOf("photo.jpg"), password = null) { name, stream ->
+            if (name == "photo.jpg") {
+                val content = stream.readBytes()
+                assertTrue(content.contentEquals(testBytes))
+                extracted = true
+            }
+        }
+        assertTrue("Entry must be extracted via sequential stream", extracted)
     }
 }

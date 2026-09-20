@@ -20,12 +20,16 @@
 #include "Ppmd7.h"
 #endif
 
+#include "aes256_cbc.h"
+#include "../sha256_kdf.h"
+
 #define k_Copy 0
 #ifndef Z7_NO_METHOD_LZMA2
 #define k_LZMA2 0x21
 #endif
 #define k_LZMA  0x30101
 #define k_BCJ2  0x303011B
+#define k_AES   0x06F10701
 
 #if !defined(Z7_NO_METHODS_FILTERS)
 #define Z7_USE_BRANCH_FILTER
@@ -326,8 +330,263 @@ static BoolInt IS_SUPPORTED_CODER(const CSzCoderInfo *c)
 
 #define IS_BCJ2(c) ((c)->MethodID == k_BCJ2 && (c)->NumStreams == 4)
 
+#define kAesStreamBufSize (1 << 16) // 64 KB, 16-byte aligned
+
+typedef struct
+{
+  ILookInStream vt;
+  ILookInStreamPtr realStream;
+  aes256_cbc_ctx aesCtx;
+  UInt64 inSize;          // Total packed (encrypted) size
+  UInt64 inProcessed;     // Bytes read from realStream so far
+  size_t bufPos;          // Current offset in buf
+  size_t bufSize;         // Number of decrypted bytes available in buf
+  Byte buf[kAesStreamBufSize];
+} CAesLookInStream;
+
+static SRes AesLookInStream_Look(ILookInStreamPtr pp, const void **buf, size_t *size)
+{
+  CAesLookInStream *p = (CAesLookInStream *)(void *)pp;
+  size_t avail = p->bufSize - p->bufPos;
+  if (avail == 0)
+  {
+    p->bufPos = 0;
+    p->bufSize = 0;
+    if (p->inProcessed < p->inSize)
+    {
+      size_t toRead = kAesStreamBufSize;
+      UInt64 rem = p->inSize - p->inProcessed;
+      if (toRead > rem)
+        toRead = (size_t)rem;
+
+      if (toRead >= 16)
+        toRead = (toRead / 16) * 16;
+
+      if (toRead > 0)
+      {
+        RINOK(LookInStream_Read2(p->realStream, p->buf, toRead, SZ_ERROR_INPUT_EOF));
+        aes256_cbc_decrypt(&p->aesCtx, p->buf, p->buf, toRead);
+        p->bufSize = toRead;
+        p->inProcessed += toRead;
+        avail = toRead;
+      }
+    }
+  }
+
+  if (*size > avail)
+    *size = avail;
+  *buf = p->buf + p->bufPos;
+  return SZ_OK;
+}
+
+static SRes AesLookInStream_Skip(ILookInStreamPtr pp, size_t offset)
+{
+  CAesLookInStream *p = (CAesLookInStream *)(void *)pp;
+  if (p->bufPos + offset > p->bufSize)
+    return SZ_ERROR_FAIL;
+  p->bufPos += offset;
+  return SZ_OK;
+}
+
+static SRes AesLookInStream_Read(ILookInStreamPtr pp, void *buf, size_t *size)
+{
+  return LookInStream_LookRead(pp, buf, size);
+}
+
+static SRes AesLookInStream_Seek(ILookInStreamPtr pp, Int64 *pos, ESzSeek origin)
+{
+  CAesLookInStream *p = (CAesLookInStream *)(void *)pp;
+  if (origin == SZ_SEEK_CUR && *pos == 0)
+  {
+    *pos = (Int64)(p->inProcessed - (p->bufSize - p->bufPos));
+    return SZ_OK;
+  }
+  return SZ_ERROR_UNSUPPORTED;
+}
+
+static void AesLookInStream_Init(CAesLookInStream *p, ILookInStreamPtr realStream, UInt64 inSize, const Byte key[32], const Byte iv[16])
+{
+  p->vt.Look = AesLookInStream_Look;
+  p->vt.Skip = AesLookInStream_Skip;
+  p->vt.Read = AesLookInStream_Read;
+  p->vt.Seek = AesLookInStream_Seek;
+  p->realStream = realStream;
+  p->inSize = inSize;
+  p->inProcessed = 0;
+  p->bufPos = 0;
+  p->bufSize = 0;
+  aes256_cbc_init(&p->aesCtx, key, iv);
+}
+
+static int FindAesCoder(const CSzFolder *f)
+{
+  UInt32 i;
+  for (i = 0; i < f->NumCoders; i++)
+  {
+    if (f->Coders[i].MethodID == k_AES)
+      return (int)i;
+  }
+  return -1;
+}
+
+static SRes GetAesKeyAndIv(
+    CSzAr *ar,
+    const CSzCoderInfo *coder,
+    const Byte *propsData,
+    Byte key[32],
+    Byte iv[16]
+) {
+  if (coder->PropsSize < 1)
+    return SZ_ERROR_UNSUPPORTED;
+
+  const Byte *props = propsData + coder->PropsOffset;
+  Byte b0 = props[0];
+  unsigned numCyclesPower = b0 & 0x3F;
+  unsigned saltSize = 0;
+  unsigned ivSize = 0;
+
+  if (coder->PropsSize > 1)
+  {
+    Byte b1 = props[1];
+    saltSize = ((b0 >> 7) & 1) + (b1 >> 4);
+    ivSize = ((b0 >> 6) & 1) + (b1 & 0x0F);
+    if (coder->PropsSize < 2 + saltSize + ivSize)
+      return SZ_ERROR_UNSUPPORTED;
+  }
+  else
+  {
+    saltSize = (b0 >> 7) & 1;
+    ivSize = (b0 >> 6) & 1;
+    if (coder->PropsSize < 1 + saltSize + ivSize)
+      return SZ_ERROR_UNSUPPORTED;
+  }
+
+  const Byte *salt = props + (coder->PropsSize > 1 ? 2 : 1);
+  const Byte *ivData = salt + saltSize;
+
+  memset(iv, 0, 16);
+  if (ivSize > 16) ivSize = 16;
+  if (ivSize > 0)
+    memcpy(iv, ivData, ivSize);
+
+  if (!ar || !ar->passwordBytes || ar->passwordLen == 0)
+  {
+    return SZ_ERROR_UNSUPPORTED;
+  }
+
+  // Check key cache
+  if (ar->isKeyValid &&
+      ar->cachedSaltLen == saltSize &&
+      ar->cachedNumCyclesPower == (int)numCyclesPower &&
+      (saltSize == 0 || memcmp(ar->cachedSalt, salt, saltSize) == 0))
+  {
+    memcpy(key, ar->cachedKey, 32);
+    return SZ_OK;
+  }
+
+  sha256_7z_derive_key(
+      ar->passwordBytes,
+      ar->passwordLen,
+      salt,
+      saltSize,
+      (int)numCyclesPower,
+      key
+  );
+
+  if (saltSize <= 16)
+  {
+    if (saltSize > 0)
+      memcpy(ar->cachedSalt, salt, saltSize);
+    ar->cachedSaltLen = saltSize;
+    ar->cachedNumCyclesPower = (int)numCyclesPower;
+    memcpy(ar->cachedKey, key, 32);
+    ar->isKeyValid = True;
+  }
+
+  return SZ_OK;
+}
+
 static SRes CheckSupportedFolder(const CSzFolder *f)
 {
+  int aesIndex = FindAesCoder(f);
+  if (aesIndex >= 0)
+  {
+    const CSzCoderInfo *aesCoder = &f->Coders[aesIndex];
+    if (aesCoder->NumStreams != 1)
+      return SZ_ERROR_UNSUPPORTED;
+
+    if (f->NumCoders == 1)
+    {
+      if (f->NumPackStreams != 1 || f->PackStreams[0] != 0 || f->NumBonds != 0)
+        return SZ_ERROR_UNSUPPORTED;
+      return SZ_OK;
+    }
+
+    if (f->NumCoders == 2)
+    {
+      int mainIndex = (aesIndex == 0) ? 1 : 0;
+      const CSzCoderInfo *mainCoder = &f->Coders[mainIndex];
+      if (!IS_SUPPORTED_CODER(mainCoder))
+        return SZ_ERROR_UNSUPPORTED;
+      if (f->NumPackStreams != 1 || f->NumBonds != 1)
+        return SZ_ERROR_UNSUPPORTED;
+      if (f->PackStreams[0] != (UInt32)aesIndex)
+        return SZ_ERROR_UNSUPPORTED;
+      if (f->Bonds[0].InIndex != (UInt32)mainIndex || f->Bonds[0].OutIndex != (UInt32)aesIndex)
+        return SZ_ERROR_UNSUPPORTED;
+      return SZ_OK;
+    }
+
+    #if defined(Z7_USE_BRANCH_FILTER)
+    if (f->NumCoders == 3)
+    {
+      int mainIndex = -1;
+      int filterIndex = -1;
+      UInt32 i;
+      for (i = 0; i < 3; i++)
+      {
+        if ((int)i == aesIndex) continue;
+        if (IS_MAIN_METHOD((UInt32)f->Coders[i].MethodID))
+          mainIndex = (int)i;
+        else
+          filterIndex = (int)i;
+      }
+      if (mainIndex < 0 || filterIndex < 0)
+        return SZ_ERROR_UNSUPPORTED;
+      if (f->Coders[mainIndex].NumStreams != 1 || f->Coders[filterIndex].NumStreams != 1)
+        return SZ_ERROR_UNSUPPORTED;
+      if (f->NumPackStreams != 1 || f->NumBonds != 2)
+        return SZ_ERROR_UNSUPPORTED;
+      if (f->PackStreams[0] != (UInt32)aesIndex)
+        return SZ_ERROR_UNSUPPORTED;
+      switch ((UInt32)f->Coders[filterIndex].MethodID)
+      {
+      #if !defined(Z7_NO_METHODS_FILTERS)
+        case k_Delta:
+        case k_BCJ:
+        case k_PPC:
+        case k_IA64:
+        case k_SPARC:
+        case k_ARM:
+        case k_RISCV:
+      #endif
+      #ifdef Z7_USE_FILTER_ARM64
+        case k_ARM64:
+      #endif
+      #ifdef Z7_USE_FILTER_ARMT
+        case k_ARMT:
+      #endif
+          break;
+        default:
+          return SZ_ERROR_UNSUPPORTED;
+      }
+      return SZ_OK;
+    }
+    #endif
+
+    return SZ_ERROR_UNSUPPORTED;
+  }
+
   if (f->NumCoders < 1 || f->NumCoders > 4)
     return SZ_ERROR_UNSUPPORTED;
   if (!IS_SUPPORTED_CODER(&f->Coders[0]))
@@ -408,7 +667,9 @@ static SRes CheckSupportedFolder(const CSzFolder *f)
 
 
 
-static SRes SzFolder_Decode2(const CSzFolder *folder,
+static SRes SzFolder_Decode2(
+    const CSzAr *p,
+    const CSzFolder *folder,
     const Byte *propsData,
     const UInt64 *unpackSizes,
     const UInt64 *packPositions,
@@ -422,6 +683,130 @@ static SRes SzFolder_Decode2(const CSzFolder *folder,
   Byte *tempBuf3 = 0;
 
   RINOK(CheckSupportedFolder(folder))
+
+  {
+    int aesIndex = FindAesCoder(folder);
+    if (aesIndex >= 0)
+    {
+      const CSzCoderInfo *aesCoder = &folder->Coders[aesIndex];
+      Byte key[32];
+      Byte iv[16];
+
+      RINOK(GetAesKeyAndIv((CSzAr *)p, aesCoder, propsData, key, iv))
+
+      UInt32 si = folder->PackStreams[0];
+      UInt64 offset = packPositions[si];
+      UInt64 inSize = packPositions[(size_t)si + 1] - offset;
+      RINOK(LookInStream_SeekTo(inStream, startPos + offset))
+
+      CAesLookInStream *aesStream = (CAesLookInStream *)ISzAlloc_Alloc(allocMain, sizeof(CAesLookInStream));
+      if (!aesStream)
+        return SZ_ERROR_MEM;
+
+      AesLookInStream_Init(aesStream, inStream, inSize, key, iv);
+
+      SRes decodeRes = SZ_OK;
+
+      if (folder->NumCoders == 1)
+      {
+        if (inSize < outSize)
+          decodeRes = SZ_ERROR_DATA;
+        else
+          decodeRes = SzDecodeCopy(outSize, &aesStream->vt, outBuffer);
+      }
+      else
+      {
+        int mainIndex = -1;
+        int filterIndex = -1;
+        UInt32 i;
+        for (i = 0; i < folder->NumCoders; i++)
+        {
+          if ((int)i == aesIndex) continue;
+          if (IS_MAIN_METHOD((UInt32)folder->Coders[i].MethodID))
+            mainIndex = (int)i;
+          else
+            filterIndex = (int)i;
+        }
+
+        if (mainIndex < 0)
+        {
+          ISzAlloc_Free(allocMain, aesStream);
+          return SZ_ERROR_UNSUPPORTED;
+        }
+
+        const CSzCoderInfo *mainCoder = &folder->Coders[mainIndex];
+
+        if (mainCoder->MethodID == k_Copy)
+        {
+          decodeRes = SzDecodeCopy(outSize, &aesStream->vt, outBuffer);
+        }
+        else if (mainCoder->MethodID == k_LZMA)
+        {
+          decodeRes = SzDecodeLzma(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain);
+        }
+      #ifndef Z7_NO_METHOD_LZMA2
+        else if (mainCoder->MethodID == k_LZMA2)
+        {
+          decodeRes = SzDecodeLzma2(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain);
+        }
+      #endif
+      #ifdef Z7_PPMD_SUPPORT
+        else if (mainCoder->MethodID == k_PPMD)
+        {
+          decodeRes = SzDecodePpmd(propsData + mainCoder->PropsOffset, mainCoder->PropsSize, inSize, &aesStream->vt, outBuffer, outSize, allocMain);
+        }
+      #endif
+        else
+        {
+          decodeRes = SZ_ERROR_UNSUPPORTED;
+        }
+
+        if (decodeRes == SZ_OK && filterIndex >= 0)
+        {
+          const CSzCoderInfo *fCoder = &folder->Coders[filterIndex];
+          #if defined(Z7_USE_BRANCH_FILTER)
+          #if !defined(Z7_NO_METHODS_FILTERS)
+          if (fCoder->MethodID == k_Delta)
+          {
+            if (fCoder->PropsSize != 1)
+              decodeRes = SZ_ERROR_UNSUPPORTED;
+            else
+            {
+              Byte state[DELTA_STATE_SIZE];
+              Delta_Init(state);
+              Delta_Decode(state, (unsigned)(propsData[fCoder->PropsOffset]) + 1, outBuffer, outSize);
+            }
+          }
+          #endif
+          #ifdef Z7_USE_FILTER_ARM64
+          else if (fCoder->MethodID == k_ARM64)
+          {
+            UInt32 pc = 0;
+            if (fCoder->PropsSize == 4)
+            {
+              pc = GetUi32(propsData + fCoder->PropsOffset);
+              if (pc & 3) decodeRes = SZ_ERROR_UNSUPPORTED;
+            }
+            else if (fCoder->PropsSize != 0) decodeRes = SZ_ERROR_UNSUPPORTED;
+            if (decodeRes == SZ_OK)
+              z7_BranchConv_ARM64_Dec(outBuffer, outSize, pc);
+          }
+          #endif
+          #if !defined(Z7_NO_METHODS_FILTERS)
+          else if (fCoder->MethodID == k_BCJ)
+          {
+            UInt32 state = Z7_BRANCH_CONV_ST_X86_STATE_INIT_VAL;
+            z7_BranchConvSt_X86_Dec(outBuffer, outSize, 0, &state);
+          }
+          #endif
+          #endif
+        }
+      }
+
+      ISzAlloc_Free(allocMain, aesStream);
+      return decodeRes;
+    }
+  }
 
   for (ci = 0; ci < folder->NumCoders; ci++)
   {
@@ -653,7 +1038,7 @@ SRes SzAr_DecodeFolder(const CSzAr *p, UInt32 folderIndex,
     unsigned i;
     Byte *tempBuf[3] = { 0, 0, 0};
 
-    res = SzFolder_Decode2(&folder, data,
+    res = SzFolder_Decode2(p, &folder, data,
         &p->CoderUnpackSizes[p->FoToCoderUnpackSizes[folderIndex]],
         p->PackPositions + p->FoStartPackStreamIndex[folderIndex],
         inStream, startPos,

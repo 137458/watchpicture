@@ -86,26 +86,24 @@ class SevenZArchiveManager(
             }
         }
 
-        if (password.isNullOrEmpty() && Native7z.isAvailable) {
-            if (!isEncrypted(file)) {
-                val session = Native7zArchiveSession.open(file.absolutePath)
-                if (session != null) {
-                    return session.use { s ->
-                        s.entries
-                            .asSequence()
-                            .filter { !it.isDirectory }
-                            .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                            .filter { ZipArchiveManager.isImageFile(it.path) }
-                            .map { entry ->
-                                ArchiveEntryInfo(
-                                    name = entry.path,
-                                    uncompressedSize = entry.size,
-                                    isEncrypted = false
-                                )
-                            }
-                            .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
-                            .toList()
-                    }
+        if (Native7z.isAvailable) {
+            val session = Native7zArchiveSession.open(file.absolutePath, password)
+            if (session != null) {
+                return session.use { s ->
+                    s.entries
+                        .asSequence()
+                        .filter { !it.isDirectory }
+                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                        .filter { ZipArchiveManager.isImageFile(it.path) }
+                        .map { entry ->
+                            ArchiveEntryInfo(
+                                name = entry.path,
+                                uncompressedSize = entry.size,
+                                isEncrypted = !password.isNullOrEmpty()
+                            )
+                        }
+                        .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+                        .toList()
                 }
             }
         }
@@ -175,8 +173,8 @@ class SevenZArchiveManager(
      * closes when the stream is closed.
      */
     fun getEntryInputStream(file: File, entryName: String, password: String? = null): InputStream {
-        if (password.isNullOrEmpty() && Native7z.isAvailable) {
-            val session = Native7zArchiveSession.open(file.absolutePath)
+        if (Native7z.isAvailable) {
+            val session = Native7zArchiveSession.open(file.absolutePath, password)
             if (session != null) {
                 val entry = session.findEntry(entryName)
                 if (entry != null) {
@@ -241,8 +239,8 @@ class SevenZArchiveManager(
     ) {
         if (!isValidSevenZArchive(file) || targetEntryNames.isEmpty()) return
 
-        if (password.isNullOrEmpty() && Native7z.isAvailable) {
-            val session = Native7zArchiveSession.open(file.absolutePath)
+        if (Native7z.isAvailable) {
+            val session = Native7zArchiveSession.open(file.absolutePath, password)
             if (session != null) {
                 session.use { s ->
                     val targets = targetEntryNames.map { it.replace('\\', '/').trimStart('/') }.toSet()

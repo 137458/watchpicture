@@ -33,6 +33,7 @@ struct Native7zArchive {
     Byte *outBuffer;
     size_t outBufferSize;
     std::mutex mutex;
+    std::vector<uint8_t> passwordBytes;
 
     Native7zArchive() : blockIndex(0xFFFFFFFF), outBuffer(nullptr), outBufferSize(0) {
         SzArEx_Init(&db);
@@ -41,6 +42,18 @@ struct Native7zArchive {
         File_Construct(&archiveStream.file);
         LookToRead2_CreateVTable(&lookStream, False);
         lookStream.buf = nullptr;
+    }
+
+    void setPassword(const uint8_t *pwd, size_t len) {
+        if (pwd && len > 0) {
+            passwordBytes.assign(pwd, pwd + len);
+            db.db.passwordBytes = passwordBytes.data();
+            db.db.passwordLen = passwordBytes.size();
+        } else {
+            passwordBytes.clear();
+            db.db.passwordBytes = nullptr;
+            db.db.passwordLen = 0;
+        }
     }
 
     ~Native7zArchive() {
@@ -121,11 +134,27 @@ static jlong initArchiveStream(JNIEnv *env, Native7zArchive *archive) {
     return reinterpret_cast<jlong>(archive);
 }
 
+static void extractPasswordBytes(JNIEnv *env, jstring password, std::vector<uint8_t> &outBytes) {
+    outBytes.clear();
+    if (!password) return;
+    jsize len = env->GetStringLength(password);
+    if (len <= 0) return;
+    const jchar *chars = env->GetStringChars(password, nullptr);
+    if (!chars) return;
+    outBytes.resize(static_cast<size_t>(len) * 2);
+    for (jsize i = 0; i < len; i++) {
+        outBytes[static_cast<size_t>(i) * 2] = static_cast<uint8_t>(chars[i] & 0xFF);
+        outBytes[static_cast<size_t>(i) * 2 + 1] = static_cast<uint8_t>((chars[i] >> 8) & 0xFF);
+    }
+    env->ReleaseStringChars(password, chars);
+}
+
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_watchpicture_app_archive_Native7z_nativeOpen(
     JNIEnv *env,
     jclass /* clazz */,
-    jstring path
+    jstring path,
+    jstring password
 ) {
     if (!path) {
         throwIOException(env, "Path cannot be null");
@@ -150,6 +179,12 @@ Java_com_watchpicture_app_archive_Native7z_nativeOpen(
         return 0;
     }
 
+    std::vector<uint8_t> pwdBytes;
+    extractPasswordBytes(env, password, pwdBytes);
+    if (!pwdBytes.empty()) {
+        archive->setPassword(pwdBytes.data(), pwdBytes.size());
+    }
+
     return initArchiveStream(env, archive);
 }
 
@@ -157,7 +192,8 @@ extern "C" JNIEXPORT jlong JNICALL
 Java_com_watchpicture_app_archive_Native7z_nativeOpenFd(
     JNIEnv *env,
     jclass /* clazz */,
-    jint fd
+    jint fd,
+    jstring password
 ) {
     if (fd < 0) {
         throwIOException(env, "Invalid file descriptor");
@@ -172,6 +208,12 @@ Java_com_watchpicture_app_archive_Native7z_nativeOpenFd(
 
     auto *archive = new Native7zArchive();
     archive->archiveStream.file.fd = dupFd;
+
+    std::vector<uint8_t> pwdBytes;
+    extractPasswordBytes(env, password, pwdBytes);
+    if (!pwdBytes.empty()) {
+        archive->setPassword(pwdBytes.data(), pwdBytes.size());
+    }
 
     return initArchiveStream(env, archive);
 }

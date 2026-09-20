@@ -106,6 +106,11 @@ static void SzAr_Init(CSzAr *p)
   p->CodersData = NULL;
 
   p->RangeLimit = 0;
+  p->passwordBytes = NULL;
+  p->passwordLen = 0;
+  p->cachedSaltLen = 0;
+  p->cachedNumCyclesPower = -1;
+  p->isKeyValid = False;
 }
 
 Z7_NO_INLINE

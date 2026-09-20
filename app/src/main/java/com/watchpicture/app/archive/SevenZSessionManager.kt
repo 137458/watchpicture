@@ -125,66 +125,71 @@ class SevenZSessionManager(
             var lookaheadRemaining = lookahead
             val discardBuffer = ByteArray(32 * 1024)
 
-            while (true) {
-                kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                val entry = currentSz.nextEntry ?: break
-                session.currentEntryIndex++
+            try {
+                while (true) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val entry = currentSz.nextEntry ?: break
+                    session.currentEntryIndex++
 
-                val isDir = entry.isDirectory
-                val entryName = entry.name
-                val isTarget = (session.currentEntryIndex == targetIdx)
+                    val isDir = entry.isDirectory
+                    val entryName = entry.name
+                    val isTarget = (session.currentEntryIndex == targetIdx)
 
-                if (isTarget) {
-                    targetFound = true
-                    if (!isDir) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            onEntryExtracted(entryName, stream)
-                            while (stream.read(discardBuffer) != -1) {
-                                // drain remaining
+                    if (isTarget) {
+                        targetFound = true
+                        if (!isDir) {
+                            currentSz.getInputStream(entry).use { stream ->
+                                onEntryExtracted(entryName, stream)
+                                while (stream.read(discardBuffer) != -1) {
+                                    // drain remaining
+                                }
+                            }
+                        }
+                    } else if (!targetFound) {
+                        // In solid compression, intermediate bytes must be decoded anyway to reach target.
+                        // Opportunistically caching them saves work and turns O(N^2) seek into O(N) linear work.
+                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                            currentSz.getInputStream(entry).use { stream ->
+                                onEntryExtracted(entryName, stream)
+                                while (stream.read(discardBuffer) != -1) {
+                                    // drain remaining
+                                }
+                            }
+                        } else if (!isDir) {
+                            currentSz.getInputStream(entry).use { stream ->
+                                while (stream.read(discardBuffer) != -1) {
+                                    // fast discard non-image entries
+                                }
+                            }
+                        }
+                    } else if (targetFound && lookaheadRemaining > 0) {
+                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                            currentSz.getInputStream(entry).use { stream ->
+                                onEntryExtracted(entryName, stream)
+                                while (stream.read(discardBuffer) != -1) {
+                                    // drain remaining
+                                }
+                            }
+                            lookaheadRemaining--
+                        } else if (!isDir) {
+                            currentSz.getInputStream(entry).use { stream ->
+                                while (stream.read(discardBuffer) != -1) {
+                                    // discard
+                                }
                             }
                         }
                     }
-                } else if (!targetFound) {
-                    // In solid compression, intermediate bytes must be decoded anyway to reach target.
-                    // Opportunistically caching them saves work and turns O(N^2) seek into O(N) linear work.
-                    if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            onEntryExtracted(entryName, stream)
-                            while (stream.read(discardBuffer) != -1) {
-                                // drain remaining
-                            }
-                        }
-                    } else if (!isDir) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            while (stream.read(discardBuffer) != -1) {
-                                // fast discard non-image entries
-                            }
-                        }
-                    }
-                } else if (targetFound && lookaheadRemaining > 0) {
-                    if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            onEntryExtracted(entryName, stream)
-                            while (stream.read(discardBuffer) != -1) {
-                                // drain remaining
-                            }
-                        }
-                        lookaheadRemaining--
-                    } else if (!isDir) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            while (stream.read(discardBuffer) != -1) {
-                                // discard
-                            }
-                        }
+
+                    if (targetFound && lookaheadRemaining <= 0) {
+                        break
                     }
                 }
 
-                if (targetFound && lookaheadRemaining <= 0) {
-                    break
-                }
+                targetFound
+            } catch (t: Throwable) {
+                session.reset()
+                throw t
             }
-
-            targetFound
         }
     }
 
@@ -267,65 +272,83 @@ class SevenZSessionManager(
             var lookaheadRemaining = lookahead
             val discardBuffer = ByteArray(32 * 1024)
 
-            while (true) {
-                kotlinx.coroutines.currentCoroutineContext().ensureActive()
-                val entry = currentSz.nextEntry ?: break
-                session.currentEntryIndex++
+            try {
+                while (true) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val entry = currentSz.nextEntry ?: break
+                    session.currentEntryIndex++
 
-                val isDir = entry.isDirectory
-                val entryName = entry.name
-                val isTarget = (session.currentEntryIndex == targetIdx)
+                    val isDir = entry.isDirectory
+                    val entryName = entry.name
+                    val isTarget = (session.currentEntryIndex == targetIdx)
 
-                if (isTarget) {
-                    if (!isDir) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            result = thumbnailDiskCache.getOrPutResult(
-                                zipFile = file,
-                                entryName = entryName,
-                                targetSizePx = targetSizePx,
-                                password = password,
-                                keepBitmapInMemory = keepBitmapInMemory
-                            ) { stream }
+                    if (isTarget) {
+                        if (!isDir) {
+                            currentSz.getInputStream(entry).use { stream ->
+                                result = thumbnailDiskCache.getOrPutResult(
+                                    zipFile = file,
+                                    entryName = entryName,
+                                    targetSizePx = targetSizePx,
+                                    password = password,
+                                    keepBitmapInMemory = keepBitmapInMemory
+                                ) { stream }
+                            }
                         }
-                    }
-                } else if (session.currentEntryIndex < targetIdx) {
-                    if (!isDir) {
-                        if (ZipArchiveManager.isImageFile(entryName) &&
-                            thumbnailDiskCache.get(file, entryName, targetSizePx, password) == null
-                        ) {
-                            // Opportunistically save intermediate thumbnails to eliminate backward resets
+                    } else if (session.currentEntryIndex < targetIdx) {
+                        if (!isDir) {
+                            if (ZipArchiveManager.isImageFile(entryName) &&
+                                thumbnailDiskCache.get(file, entryName, targetSizePx, password) == null
+                            ) {
+                                // Opportunistically save intermediate thumbnails to eliminate backward resets
+                                currentSz.getInputStream(entry).use { stream ->
+                                    thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
+                                }
+                            } else {
+                                currentSz.getInputStream(entry).use { stream ->
+                                    while (stream.read(discardBuffer) != -1) {
+                                        // fast discard
+                                    }
+                                }
+                            }
+                        }
+                    } else if (session.currentEntryIndex > targetIdx && lookaheadRemaining > 0) {
+                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
                             currentSz.getInputStream(entry).use { stream ->
                                 thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
                             }
-                        } else {
+                            lookaheadRemaining--
+                        } else if (!isDir) {
                             currentSz.getInputStream(entry).use { stream ->
                                 while (stream.read(discardBuffer) != -1) {
-                                    // fast discard
+                                    // discard
                                 }
                             }
                         }
                     }
-                } else if (session.currentEntryIndex > targetIdx && lookaheadRemaining > 0) {
-                    if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
-                        }
-                        lookaheadRemaining--
-                    } else if (!isDir) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            while (stream.read(discardBuffer) != -1) {
-                                // discard
-                            }
-                        }
+
+                    if (result != null && lookaheadRemaining <= 0) {
+                        break
                     }
                 }
 
-                if (result != null && lookaheadRemaining <= 0) {
-                    break
-                }
+                result
+            } catch (t: Throwable) {
+                session.reset()
+                throw t
             }
+        }
+    }
 
-            result
+    /**
+     * Returns entries in their exact physical archive storage order.
+     */
+    fun getPhysicalEntries(file: File, password: String?): List<SevenZArchiveEntry>? {
+        val session = getSession(file, password)
+        return try {
+            session.openIfNeeded()
+            session.entries.ifEmpty { null }
+        } catch (_: Throwable) {
+            null
         }
     }
 
