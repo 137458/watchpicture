@@ -185,27 +185,11 @@ fun ThumbnailGridScreen(
                             items = uiState.images,
                             key = { index, img -> "${img.packId}_${img.entryPath}_$index" }
                         ) { index, item ->
-                            val context = androidx.compose.ui.platform.LocalContext.current
                             ThumbnailItem(
                                 image = item,
                                 sessionPassword = sessionPassword,
                                 index = index + 1,
                                 onClick = {
-                                    val targetModel = item.toImageModel(sessionPassword)
-                                    if (targetModel is com.watchpicture.app.coil.ZipImageSource) {
-                                        val app = context.applicationContext as? com.watchpicture.app.WatchPictureApp
-                                        val diskCache = app?.archiveDiskCache
-                                        val zipManager = app?.zipArchiveManager
-                                        if (diskCache != null && zipManager != null) {
-                                            kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
-                                                runCatching {
-                                                    diskCache.getOrPut(targetModel.zipFile, targetModel.entryName, targetModel.password) {
-                                                        zipManager.getEntryInputStream(targetModel.zipFile, targetModel.entryName, targetModel.password)
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
                                     onNavigate(
                                         AppRoute.GalleryViewer(
                                             packId = packId,
@@ -230,7 +214,7 @@ private fun ThumbnailItem(
     onClick: () -> Unit
 ) {
     val model: Any? = remember(image, sessionPassword) {
-        image.toImageModel(sessionPassword)
+        image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -238,15 +222,17 @@ private fun ThumbnailItem(
         if (model != null) {
             val builder = coil3.request.ImageRequest.Builder(context)
                 .data(model)
+                .size(360, 360)
+                .precision(coil3.size.Precision.INEXACT)
                 .crossfade(100)
                 .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
 
             val thumbKey = when (model) {
                 is com.watchpicture.app.coil.ZipImageSource -> {
                     val pwdHash = model.password?.hashCode()?.toString(16) ?: "none"
-                    "thumb:zip://${model.zipFile.absolutePath}#${model.entryName}#pwd=$pwdHash"
+                    "thumb:zip://${model.zipFile.absolutePath}#${model.entryName}#pwd=$pwdHash#sz=360"
                 }
-                is java.io.File -> "thumb:file://${model.absolutePath}"
+                is java.io.File -> "thumb:file://${model.absolutePath}#sz=360"
                 else -> null
             }
             if (thumbKey != null) {

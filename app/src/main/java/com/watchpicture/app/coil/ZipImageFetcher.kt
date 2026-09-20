@@ -27,16 +27,51 @@ class ZipImageFetcher(
     private val data: ZipImageSource,
     private val options: Options,
     private val zipArchiveManager: ZipArchiveManager,
-    private val archiveDiskCache: ArchiveDiskCache? = null
+    private val archiveDiskCache: ArchiveDiskCache? = null,
+    private val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache? = null
 ) : Fetcher {
 
-    override suspend fun fetch(): FetchResult = withContext(Dispatchers.IO) {
+    companion object {
+        // Limit max concurrent decompression/decoding threads to 3 to prevent pegging all CPU big cores
+        private val decompressDispatcher = Dispatchers.IO.limitedParallelism(3)
+    }
+
+    override suspend fun fetch(): FetchResult = withContext(decompressDispatcher) {
         val password = data.password
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.get(data.zipFile.absolutePath) }.getOrNull()
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.lastUsedPassword }.getOrNull()
 
         val mimeType = resolveMimeType(data.entryName)
 
+        // Branch 1: Thumbnail dedicated pipeline (never dumps full uncompressed raw bytes to flash)
+        val thumbCache = thumbnailDiskCache
+            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.thumbnailDiskCache }.getOrNull()
+
+        if (data.isThumbnail && thumbCache != null) {
+            val thumbFile = thumbCache.getOrPut(
+                zipFile = data.zipFile,
+                entryName = data.entryName,
+                targetSizePx = data.targetSizePx,
+                password = password
+            ) {
+                zipArchiveManager.getEntryInputStream(
+                    file = data.zipFile,
+                    entryName = data.entryName,
+                    password = password
+                )
+            }
+
+            return@withContext SourceFetchResult(
+                source = ImageSource(
+                    file = thumbFile.toOkioPath(),
+                    fileSystem = options.fileSystem
+                ),
+                mimeType = "image/webp",
+                dataSource = DataSource.DISK
+            )
+        }
+
+        // Branch 2: Full-res viewing and Telephoto tile subsampling pipeline
         val diskCache = archiveDiskCache
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.archiveDiskCache }.getOrNull()
 
@@ -103,14 +138,15 @@ class ZipImageFetcher(
 
     class Factory(
         private val zipArchiveManager: ZipArchiveManager,
-        private val archiveDiskCache: ArchiveDiskCache? = null
+        private val archiveDiskCache: ArchiveDiskCache? = null,
+        private val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache? = null
     ) : Fetcher.Factory<ZipImageSource> {
         override fun create(
             data: ZipImageSource,
             options: Options,
             imageLoader: ImageLoader
         ): Fetcher {
-            return ZipImageFetcher(data, options, zipArchiveManager, archiveDiskCache)
+            return ZipImageFetcher(data, options, zipArchiveManager, archiveDiskCache, thumbnailDiskCache)
         }
     }
 }

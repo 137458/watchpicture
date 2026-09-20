@@ -162,7 +162,7 @@ fun GalleryViewerScreen(
 
             LaunchedEffect(pagerState.currentPage, readingMode, images) {
                 // Short debounce so fast flings skip intermediate pages
-                kotlinx.coroutines.delay(150)
+                kotlinx.coroutines.delay(120)
                 val isRtl = (readingMode == ReadingMode.RTL)
                 val curr = pagerState.currentPage
                 val prefetchIndices = if (isRtl) {
@@ -172,17 +172,62 @@ fun GalleryViewerScreen(
                 }
 
                 kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    for (idx in prefetchIndices) {
-                        if (idx in images.indices) {
-                            val targetImg = images[idx]
-                            val model = targetImg.toImageModel(sessionPassword)
-                            if (model is com.watchpicture.app.coil.ZipImageSource && diskCache != null && zipManager != null) {
+                    val validIndices = prefetchIndices.filter { it in images.indices }
+                    val targetModels = validIndices.mapNotNull { idx ->
+                        images[idx].toImageModel(sessionPassword)
+                    }
+
+                    // 1. Group ZipImageSources by zipFile for single-pass sequential extraction
+                    val zipGroups = targetModels.filterIsInstance<com.watchpicture.app.coil.ZipImageSource>()
+                        .groupBy { it.zipFile }
+
+                    if (diskCache != null && zipManager != null) {
+                        for ((zipFile, entries) in zipGroups) {
+                            val uncachedEntries = entries.filter { item ->
+                                val key = "${zipFile.absolutePath}#${zipFile.lastModified()}#${item.entryName}#${item.password ?: "none"}"
+                                val md5 = java.security.MessageDigest.getInstance("MD5").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
+                                val ext = item.entryName.substringAfterLast('.', "dat").lowercase()
+                                val filePrefix = if (!item.password.isNullOrEmpty()) "enc_" else "raw_"
+                                val target = java.io.File(context.cacheDir, "archive_cache/$filePrefix$md5.$ext")
+                                !target.exists() || target.length() <= 0L
+                            }
+
+                            if (uncachedEntries.isNotEmpty()) {
                                 runCatching {
-                                    diskCache.getOrPut(model.zipFile, model.entryName, model.password) {
-                                        zipManager.getEntryInputStream(model.zipFile, model.entryName, model.password)
+                                    zipManager.extractSequentialEntries(
+                                        file = zipFile,
+                                        targetEntryNames = uncachedEntries.map { it.entryName },
+                                        password = uncachedEntries.firstOrNull()?.password
+                                    ) { name, stream ->
+                                        diskCache.getOrPut(zipFile, name, uncachedEntries.firstOrNull()?.password) { stream }
                                     }
                                 }
                             }
+                        }
+                    }
+
+                    // 2. Memory preheating: pre-decode next adjacent page into Coil MemoryCache for 0ms instant display
+                    val nextIdx = if (isRtl) curr - 1 else curr + 1
+                    if (nextIdx in images.indices) {
+                        val nextModel = images[nextIdx].toImageModel(sessionPassword)
+                        if (nextModel != null) {
+                            val fullKey = when (nextModel) {
+                                is com.watchpicture.app.coil.ZipImageSource -> {
+                                    val pwdHash = nextModel.password?.hashCode()?.toString(16) ?: "none"
+                                    "full:zip://${nextModel.zipFile.absolutePath}#${nextModel.entryName}#pwd=$pwdHash"
+                                }
+                                is java.io.File -> "full:file://${nextModel.absolutePath}"
+                                else -> null
+                            }
+                            val prefetchReq = coil3.request.ImageRequest.Builder(context)
+                                .data(nextModel)
+                                .precision(coil3.size.Precision.EXACT)
+                                .bitmapConfig(android.graphics.Bitmap.Config.HARDWARE)
+                                .apply {
+                                    if (fullKey != null) memoryCacheKey(fullKey)
+                                }
+                                .build()
+                            coil3.SingletonImageLoader.get(context).enqueue(prefetchReq)
                         }
                     }
                 }
@@ -412,9 +457,9 @@ private fun ZoomableImage(
             val thumbKey = when (imageModel) {
                 is com.watchpicture.app.coil.ZipImageSource -> {
                     val pwdHash = imageModel.password?.hashCode()?.toString(16) ?: "none"
-                    "thumb:zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash"
+                    "thumb:zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash#sz=360"
                 }
-                is java.io.File -> "thumb:file://${imageModel.absolutePath}"
+                is java.io.File -> "thumb:file://${imageModel.absolutePath}#sz=360"
                 else -> null
             }
             if (thumbKey != null) {

@@ -26,6 +26,9 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
     val archiveDiskCache: com.watchpicture.app.archive.ArchiveDiskCache by lazy {
         com.watchpicture.app.archive.ArchiveDiskCache(java.io.File(cacheDir, "archive_cache"))
     }
+    val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache by lazy {
+        com.watchpicture.app.archive.ThumbnailDiskCache(java.io.File(cacheDir, "thumbnail_cache"))
+    }
 
     val externalArchiveFlow = kotlinx.coroutines.flow.MutableSharedFlow<android.net.Uri>(
         replay = 1,
@@ -74,7 +77,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
         return ImageLoader.Builder(context)
             .components {
                 add(ZipImageKeyer())
-                add(ZipImageFetcher.Factory(zipArchiveManager, archiveDiskCache))
+                add(ZipImageFetcher.Factory(zipArchiveManager, archiveDiskCache, thumbnailDiskCache))
                 if (android.os.Build.VERSION.SDK_INT >= 28) {
                     add(coil3.gif.AnimatedImageDecoder.Factory())
                 } else {

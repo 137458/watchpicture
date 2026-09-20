@@ -13,7 +13,8 @@ import java.util.Locale
  * Strictly avoids extracting archives to disk; delivers entries as memory streams.
  */
 class ZipArchiveManager(
-    private val sevenZManager: SevenZArchiveManager = SevenZArchiveManager()
+    private val sevenZManager: SevenZArchiveManager = SevenZArchiveManager(),
+    val handlePool: ArchiveHandlePool = ArchiveHandlePool()
 ) {
 
     companion object {
@@ -188,8 +189,24 @@ class ZipArchiveManager(
         }
 
         val normalized = entryName.replace('\\', '/')
+
+        // 1. Ultra-fast native path for unencrypted archives (Android C++ zlib backed)
+        if (password.isNullOrEmpty()) {
+            val nativeStream = handlePool.openNativeEntryStream(file, entryName)
+                ?: handlePool.openNativeEntryStream(file, normalized)
+                ?: (if (entryName.any { it in '\u4e00'..'\u9fa5' }) handlePool.openNativeEntryStream(file, entryName, GBK_CHARSET) else null)
+            if (nativeStream != null) return nativeStream
+        } else {
+            // 2. Cached handle for encrypted archives
+            val encStream = handlePool.openEncryptedEntryStream(file, entryName, password)
+                ?: handlePool.openEncryptedEntryStream(file, normalized, password)
+                ?: (if (entryName.any { it in '\u4e00'..'\u9fa5' }) handlePool.openEncryptedEntryStream(file, entryName, password, GBK_CHARSET) else null)
+            if (encStream != null) return encStream
+        }
+
         val nfcNormalized = java.text.Normalizer.normalize(normalized, java.text.Normalizer.Form.NFC)
 
+        // 3. Fallback for non-standard path variations and legacy charsets
         fun tryOpen(charset: Charset?): InputStream? {
             val zip = if (password != null) {
                 ZipFile(file, password.toCharArray())
@@ -220,5 +237,28 @@ class ZipArchiveManager(
         return tryOpen(null)
             ?: tryOpen(GBK_CHARSET)
             ?: throw NoSuchElementException("Entry '$entryName' not found in archive ${file.name}")
+    }
+
+    /**
+     * Efficiently extracts a batch of entries in sequential order, using single-pass
+     * stream extraction for solid 7z archives and pool-cached handles for zip archives.
+     */
+    fun extractSequentialEntries(
+        file: File,
+        targetEntryNames: Collection<String>,
+        password: String? = null,
+        onEntryExtracted: (name: String, stream: InputStream) -> Unit
+    ) {
+        if (isSevenZFile(file)) {
+            sevenZManager.extractSequentialEntries(file, targetEntryNames, password, onEntryExtracted)
+            return
+        }
+        for (name in targetEntryNames) {
+            runCatching {
+                getEntryInputStream(file, name, password).use { stream ->
+                    onEntryExtracted(name, stream)
+                }
+            }
+        }
     }
 }

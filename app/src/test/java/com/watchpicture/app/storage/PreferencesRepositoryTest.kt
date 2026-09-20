@@ -59,5 +59,15 @@ class PreferencesRepositoryTest {
         // Write ignored version
         testDataStore.edit { it[keyIgnoredVer] = "v1.2.0" }
         assertEquals("v1.2.0", testDataStore.data.first()[keyIgnoredVer])
+
+        val keyStandaloneArchives = androidx.datastore.preferences.core.stringSetPreferencesKey("standalone_archives")
+        val initialArchives = testDataStore.data.first()[keyStandaloneArchives] ?: emptySet()
+        assertEquals(emptySet<String>(), initialArchives)
+
+        testDataStore.edit {
+            it[keyStandaloneArchives] = setOf("content://com.android.providers.media.documents/document/123", "file:///storage/emulated/0/test.zip")
+        }
+        val savedArchives = testDataStore.data.first()[keyStandaloneArchives]
+        assertEquals(setOf("content://com.android.providers.media.documents/document/123", "file:///storage/emulated/0/test.zip"), savedArchives)
     }
 }

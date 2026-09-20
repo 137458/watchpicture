@@ -90,6 +90,26 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                     // Ignore corrupted uri
                 }
             }
+
+            // Restore standalone archives on startup
+            val savedStandalone = preferencesRepository.standaloneArchivesFlow.first()
+            if (savedStandalone.isNotEmpty()) {
+                val restoredPacks = savedStandalone.mapNotNull { uriStr ->
+                    try {
+                        val uri = Uri.parse(uriStr)
+                        archiveFileResolver.resolve(app, uri)
+                    } catch (_: Exception) {
+                        null
+                    }
+                }
+                if (restoredPacks.isNotEmpty()) {
+                    _uiState.update { state ->
+                        val existingIds = state.standalonePacks.map { it.id }.toSet()
+                        val newPacks = restoredPacks.filter { it.id !in existingIds }
+                        state.copy(standalonePacks = state.standalonePacks + newPacks)
+                    }
+                }
+            }
         }
     }
 
@@ -160,6 +180,8 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
             return
         }
 
+        safManager.takePersistablePermission(app, uri)
+
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
             val pack = archiveFileResolver.resolve(app, uri)
@@ -173,6 +195,9 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                 }
                 return@launch
             }
+
+            // Persist standalone archive Uri across restarts
+            preferencesRepository.addStandaloneArchive(uri.toString())
 
             // Stash into standalonePacks (putting newly opened archive at the front)
             _uiState.update { state ->
@@ -362,6 +387,11 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
      */
     fun removePack(pack: PackItem, deleteFile: Boolean = false) {
         viewModelScope.launch(Dispatchers.IO) {
+            // 0. Remove from persistent preferences
+            preferencesRepository.removeStandaloneArchive(pack.uriString)
+            pack.directPath?.let { preferencesRepository.removeStandaloneArchive(it) }
+            preferencesRepository.removeStandaloneArchive(pack.id)
+
             // 1. If it's a cached file from ContentResolver, always delete cache file
             val directPath = pack.directPath
             if (directPath != null) {

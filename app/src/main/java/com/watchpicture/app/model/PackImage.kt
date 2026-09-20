@@ -25,7 +25,9 @@ data class PackImage(
  */
 fun PackImage.toImageModel(
     sessionPassword: String? = null,
-    passwordStore: com.watchpicture.app.security.SessionPasswordStore? = null
+    passwordStore: com.watchpicture.app.security.SessionPasswordStore? = null,
+    isThumbnail: Boolean = false,
+    targetSizePx: Int = 360
 ): Any? {
     val store = passwordStore
         ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore }.getOrNull()
@@ -42,7 +44,9 @@ fun PackImage.toImageModel(
             else -> ZipImageSource(
                 zipFile = direct,
                 entryName = entryPath,
-                password = resolvedPassword
+                password = resolvedPassword,
+                isThumbnail = isThumbnail,
+                targetSizePx = targetSizePx
             )
         }
     }

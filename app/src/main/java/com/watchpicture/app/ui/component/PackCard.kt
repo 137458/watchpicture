@@ -222,5 +222,5 @@ fun PackCard(
 }
 
 private fun resolveCoverModel(pack: PackItem, password: String?): Any? {
-    return pack.coverImage?.toImageModel(password)
+    return pack.coverImage?.toImageModel(password, isThumbnail = true, targetSizePx = 360)
 }

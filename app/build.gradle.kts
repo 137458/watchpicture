@@ -114,8 +114,9 @@ dependencies {
     implementation("me.saket.telephoto:zoomable-image-coil3:0.19.0")
     implementation("com.squareup.okio:okio:3.9.1")
 
-    // Archive Engine: Zip4j & Apache Commons Compress (7z)
+    // Archive Engine: Zip4j, Apache Commons Compress (7z) & LibArchive Native JNI
     implementation("net.lingala.zip4j:zip4j:2.11.5")
+    implementation("me.zhanghai.android.libarchive:library:1.1.6")
     implementation("org.apache.commons:commons-compress:1.27.1")
     implementation("org.tukaani:xz:1.10")
 

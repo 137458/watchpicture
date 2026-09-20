@@ -135,4 +135,15 @@ class SevenZArchiveManagerTest {
         // Wrong password fails verification
         assertFalse(manager.verifyPassword(headerEncrypted7z, "wrong_password_123"))
     }
+
+    @Test
+    fun `extracts sequential entries in one pass to avoid quadratic solid decompression`() {
+        val extracted = mutableMapOf<String, ByteArray>()
+        manager.extractSequentialEntries(plain7z, listOf("2_page.jpg", "10_page.jpg")) { name, stream ->
+            extracted[name] = stream.readBytes()
+        }
+        assertEquals(2, extracted.size)
+        assertArrayEquals(testImageBytes1, extracted["2_page.jpg"])
+        assertArrayEquals(testImageBytes1, extracted["10_page.jpg"])
+    }
 }

@@ -8,5 +8,7 @@ import java.io.File
 data class ZipImageSource(
     val zipFile: File,
     val entryName: String,
-    val password: String? = null
+    val password: String? = null,
+    val isThumbnail: Boolean = false,
+    val targetSizePx: Int = 360
 )

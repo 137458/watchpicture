@@ -29,6 +29,7 @@ class PreferencesRepository(private val context: Context) {
         private val KEY_READING_MODE = stringPreferencesKey("reading_mode")
         private val KEY_AUTO_CHECK_UPDATE = androidx.datastore.preferences.core.booleanPreferencesKey("auto_check_update")
         private val KEY_IGNORED_VERSION = stringPreferencesKey("ignored_version")
+        private val KEY_STANDALONE_ARCHIVES = androidx.datastore.preferences.core.stringSetPreferencesKey("standalone_archives")
     }
 
     val lastRootUriFlow: Flow<String?> = context.settingsDataStore.data.map { preferences ->
@@ -88,6 +89,30 @@ class PreferencesRepository(private val context: Context) {
     suspend fun saveIgnoredVersion(version: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_IGNORED_VERSION] = version
+        }
+    }
+
+    val standaloneArchivesFlow: Flow<Set<String>> = context.settingsDataStore.data.map { preferences ->
+        preferences[KEY_STANDALONE_ARCHIVES] ?: emptySet()
+    }
+
+    suspend fun addStandaloneArchive(uriString: String) {
+        context.settingsDataStore.edit { preferences ->
+            val current = preferences[KEY_STANDALONE_ARCHIVES] ?: emptySet()
+            preferences[KEY_STANDALONE_ARCHIVES] = current + uriString
+        }
+    }
+
+    suspend fun removeStandaloneArchive(uriString: String) {
+        context.settingsDataStore.edit { preferences ->
+            val current = preferences[KEY_STANDALONE_ARCHIVES] ?: emptySet()
+            preferences[KEY_STANDALONE_ARCHIVES] = current - uriString
+        }
+    }
+
+    suspend fun saveStandaloneArchives(uris: Set<String>) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_STANDALONE_ARCHIVES] = uris
         }
     }
 }

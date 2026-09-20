@@ -175,4 +175,39 @@ class SevenZArchiveManager {
             throw e
         }
     }
+
+    /**
+     * Extracts multiple entries in a single sequential pass through the 7z archive stream.
+     * This turns an O(N^2) solid compression decompression disaster into an optimal O(N) single-pass stream,
+     * drastically reducing CPU power, heating, and latency when paging or prefetching pictures.
+     */
+    fun extractSequentialEntries(
+        file: File,
+        targetEntryNames: Collection<String>,
+        password: String? = null,
+        onEntryExtracted: (name: String, stream: InputStream) -> Unit
+    ) {
+        if (!isValidSevenZArchive(file) || targetEntryNames.isEmpty()) return
+
+        val targets = targetEntryNames.map { it.replace('\\', '/') }.toSet()
+        val builder = SevenZFile.builder().setFile(file)
+        if (!password.isNullOrEmpty()) {
+            builder.setPassword(password)
+        }
+
+        builder.get().use { sevenZ ->
+            val remainingTargets = targets.toMutableSet()
+            while (remainingTargets.isNotEmpty()) {
+                val entry = sevenZ.nextEntry ?: break
+                if (entry.isDirectory) continue
+
+                val normalizedName = entry.name.replace('\\', '/')
+                if (normalizedName in remainingTargets) {
+                    remainingTargets.remove(normalizedName)
+                    val stream = sevenZ.getInputStream(entry)
+                    onEntryExtracted(entry.name, stream)
+                }
+            }
+        }
+    }
 }
