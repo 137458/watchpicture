@@ -91,6 +91,28 @@ class ArchiveDiskCache(
         entryName: String,
         password: String?,
         openStream: () -> InputStream
+    ): File = putDirect(zipFile, entryName, password) { tempFile ->
+        openStream().use { input ->
+            FileOutputStream(tempFile).use { output ->
+                val buffer = ByteArray(BUFFER_SIZE)
+                var bytesRead: Int
+                while (input.read(buffer).also { bytesRead = it } != -1) {
+                    output.write(buffer, 0, bytesRead)
+                }
+                output.flush()
+            }
+        }
+    }
+
+    /**
+     * Retrieves an already cached file or writes directly to [tempTargetFile] via [writer]
+     * without intermediate file copying. Atomically renames to target file upon successful completion.
+     */
+    fun putDirect(
+        zipFile: File,
+        entryName: String,
+        password: String?,
+        writer: (tempTargetFile: File) -> Unit
     ): File {
         val isEncrypted = !password.isNullOrEmpty()
         val cacheKey = computeKey(zipFile, entryName, password)
@@ -114,20 +136,11 @@ class ArchiveDiskCache(
 
             val tempFile = File(directory, "${targetFile.name}.${System.nanoTime()}.tmp")
             try {
-                openStream().use { input ->
-                    FileOutputStream(tempFile).use { output ->
-                        val buffer = ByteArray(BUFFER_SIZE)
-                        var bytesRead: Int
-                        while (input.read(buffer).also { bytesRead = it } != -1) {
-                            output.write(buffer, 0, bytesRead)
-                        }
-                        output.flush()
-                    }
-                }
+                writer(tempFile)
 
                 if (!tempFile.exists() || tempFile.length() <= 0L) {
                     if (tempFile.exists()) tempFile.delete()
-                    throw IOException("Failed to extract '$entryName': stream produced 0 bytes")
+                    throw IOException("Failed to extract '$entryName': writer produced 0 bytes")
                 }
 
                 if (targetFile.exists()) {

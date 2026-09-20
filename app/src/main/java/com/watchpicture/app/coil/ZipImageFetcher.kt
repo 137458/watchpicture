@@ -66,26 +66,32 @@ class ZipImageFetcher(
                 )
             }
 
-            val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
-                ?: if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
-                    extractCoord.extractHighPriority(data.zipFile, data.entryName, password)
-                } else null
-
-            val thumbFile = thumbCache.getOrPut(
-                zipFile = data.zipFile,
-                entryName = data.entryName,
-                targetSizePx = data.targetSizePx,
-                password = password
-            ) {
-                if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
-                    java.io.FileInputStream(cachedFull)
-                } else {
-                    // Plain ZIP: stream directly into downsampler, 0 full-res disk dump!
-                    zipArchiveManager.getEntryInputStream(
-                        file = data.zipFile,
-                        entryName = data.entryName,
-                        password = password
-                    )
+            val thumbFile = if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
+                extractCoord.extractThumbnailDirect(
+                    file = data.zipFile,
+                    entryName = data.entryName,
+                    targetSizePx = data.targetSizePx,
+                    password = password,
+                    thumbnailDiskCache = thumbCache
+                )
+            } else {
+                val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
+                thumbCache.getOrPut(
+                    zipFile = data.zipFile,
+                    entryName = data.entryName,
+                    targetSizePx = data.targetSizePx,
+                    password = password
+                ) {
+                    if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
+                        java.io.FileInputStream(cachedFull)
+                    } else {
+                        // Stream directly into downsampler, 0 full-res disk dump!
+                        zipArchiveManager.getEntryInputStream(
+                            file = data.zipFile,
+                            entryName = data.entryName,
+                            password = password
+                        )
+                    }
                 }
             }
 

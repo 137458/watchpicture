@@ -42,6 +42,7 @@ import coil3.request.bitmapConfig
 import kotlinx.coroutines.launch
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
+import com.watchpicture.app.archive.ZipArchiveManager
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.navigation.AppRoute
@@ -75,6 +76,21 @@ fun ThumbnailGridScreen(
 
     LaunchedEffect(packId) {
         viewModel.loadImages(packId)
+    }
+
+    LaunchedEffect(uiState.images, packId) {
+        val file = File(packId)
+        if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && uiState.images.isNotEmpty()) {
+            val app = WatchPictureApp.instance
+            val entryNames = uiState.images.map { it.entryPath }
+            app.archiveExtractionCoordinator.startBatchThumbnailSweep(
+                file = file,
+                entryNames = entryNames,
+                targetSizePx = 360,
+                password = sessionPassword,
+                thumbnailDiskCache = app.thumbnailDiskCache
+            )
+        }
     }
 
     Scaffold(

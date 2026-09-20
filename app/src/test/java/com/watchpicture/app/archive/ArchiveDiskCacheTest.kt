@@ -164,4 +164,31 @@ class ArchiveDiskCacheTest {
         val totalSize = files.sumOf { it.length() }
         assertTrue("Total size must stay within limit of 500KB", totalSize <= 500 * 1024)
     }
+
+    @Test
+    fun `putDirect writes to target file directly and hits cache on subsequent calls`() {
+        val cache = ArchiveDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+        val entryName = "direct_entry.jpg"
+        val payload = "DirectPayloadData12345".toByteArray()
+        var writerInvocations = 0
+
+        val file1 = cache.putDirect(dummyZip, entryName, password = null) { targetTemp ->
+            writerInvocations++
+            targetTemp.writeBytes(payload)
+        }
+
+        assertTrue("Target file must exist after putDirect", file1.exists())
+        assertEquals(payload.size.toLong(), file1.length())
+        assertArrayEquals(payload, file1.readBytes())
+        assertEquals(1, writerInvocations)
+
+        // Second call must hit cache and NOT invoke writer
+        val file2 = cache.putDirect(dummyZip, entryName, password = null) {
+            writerInvocations++
+            fail("Writer should not be called on cache hit")
+        }
+
+        assertEquals(file1.absolutePath, file2.absolutePath)
+        assertEquals("Writer must not be called again", 1, writerInvocations)
+    }
 }

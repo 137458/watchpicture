@@ -192,4 +192,49 @@ class ZipImageFetcherTest {
         val fullCached = archiveDiskCache.get(plainZip, "thumb_entry.jpg", null)
         assertNull("Plain ZIP thumbnail should NOT dump full-res image to ArchiveDiskCache", fullCached)
     }
+
+    @Test
+    fun `fetches thumbnail for 7z without dumping to archive disk cache`() = runBlocking<Unit> {
+        val sevenZFile = tempFolder.newFile("sample_thumb.7z")
+        org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(sevenZFile).use { out ->
+            val entry = out.createArchiveEntry(tempFolder.newFile("tmp7z"), "7z_thumb.jpg")
+            entry.size = sampleBytes.size.toLong()
+            out.putArchiveEntry(entry)
+            out.write(sampleBytes)
+            out.closeArchiveEntry()
+        }
+
+        val manager = ZipArchiveManager()
+        val archiveCacheDir = tempFolder.newFolder("archive_cache_7z")
+        val thumbCacheDir = tempFolder.newFolder("thumb_cache_7z")
+        val archiveDiskCache = com.watchpicture.app.archive.ArchiveDiskCache(archiveCacheDir)
+        val thumbnailDiskCache = com.watchpicture.app.archive.ThumbnailDiskCache(thumbCacheDir)
+        val coordinator = com.watchpicture.app.archive.ArchiveExtractionCoordinator(manager, archiveDiskCache)
+
+        val thumbData = ZipImageSource(
+            zipFile = sevenZFile,
+            entryName = "7z_thumb.jpg",
+            isThumbnail = true,
+            targetSizePx = 360
+        )
+
+        val options = Options(
+            context = object : android.content.ContextWrapper(null) {},
+            fileSystem = FileSystem.SYSTEM
+        )
+
+        val fetcher = ZipImageFetcher(thumbData, options, manager, archiveDiskCache, thumbnailDiskCache, coordinator)
+        val result = fetcher.fetch()
+
+        assertTrue(result is SourceFetchResult)
+        assertEquals("image/webp", (result as SourceFetchResult).mimeType)
+
+        // Verify: thumbnail cache has the thumbnail
+        val thumbCached = thumbnailDiskCache.get(sevenZFile, "7z_thumb.jpg", 360, null)
+        assertNotNull("7z thumbnail should exist in thumbnail disk cache", thumbCached)
+
+        // Verify: ArchiveDiskCache must NOT have the full-resolution entry!
+        val fullCached = archiveDiskCache.get(sevenZFile, "7z_thumb.jpg", null)
+        assertNull("7z thumbnail MUST NOT dump full-res image to ArchiveDiskCache", fullCached)
+    }
 }

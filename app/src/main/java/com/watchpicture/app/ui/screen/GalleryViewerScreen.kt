@@ -159,6 +159,15 @@ fun GalleryViewerScreen(
             val app = context.applicationContext as? com.watchpicture.app.WatchPictureApp
             val coordinator = app?.archiveExtractionCoordinator
 
+            androidx.compose.runtime.DisposableEffect(packId) {
+                onDispose {
+                    val file = java.io.File(packId)
+                    if (file.exists() && file.isFile) {
+                        coordinator?.closeSession(file)
+                    }
+                }
+            }
+
             LaunchedEffect(pagerState.currentPage, readingMode, images) {
                 // Debounce so fast flings skip intermediate pages
                 kotlinx.coroutines.delay(100)

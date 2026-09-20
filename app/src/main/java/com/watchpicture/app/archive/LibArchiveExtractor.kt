@@ -30,22 +30,15 @@ object LibArchiveExtractor {
     }
 
     /**
-     * Extracts entries from an archive using libarchive native JNI.
-     *
-     * @param file The archive file.
-     * @param targetEntryName Name of the entry that must be extracted.
-     * @param password Optional archive password.
-     * @param maxLookahead Number of entries to opportunistically cache after target is found.
-     * @param onEntryExtracted Callback invoked when an entry is extracted; receives entry name and temp file.
-     * @return True if the target entry was extracted, false otherwise.
+     * Extracts entries from an archive using libarchive native JNI by streaming directly to the caller's OutputStream,
+     * completely eliminating intermediate temporary file allocation and flash write amplification.
      */
-    fun extractWithOpportunisticCache(
+    fun extractDirectWithOpportunisticCache(
         file: File,
         targetEntryName: String,
         password: String?,
         maxLookahead: Int,
-        tempDirectory: File? = null,
-        onEntryExtracted: (name: String, extractedFile: File) -> Unit
+        onWriteEntry: (name: String, writeToStream: (java.io.OutputStream) -> Unit) -> Unit
     ): Boolean {
         if (!isAvailable) return false
 
@@ -96,38 +89,22 @@ object LibArchiveExtractor {
                             java.text.Normalizer.normalize(entryNormalized, java.text.Normalizer.Form.NFC) == nfcTarget)
 
                     if (isTarget || (isImage && (!targetFound || lookaheadRemaining > 0))) {
-                        // Extract to a safe internal cache temp file to strictly comply with Scoped Storage
-                        val safeDir = tempDirectory
-                            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.cacheDir }.getOrNull()
-                            ?: File(System.getProperty("java.io.tmpdir") ?: ".")
-                        if (!safeDir.exists()) safeDir.mkdirs()
-                        val tempFile = File.createTempFile("libarc_", ".tmp", safeDir)
-                        try {
-                            FileOutputStream(tempFile).use { fos ->
-                                while (true) {
-                                    buffer.clear()
-                                    Archive.readData(archive, buffer)
-                                    buffer.flip()
-                                    if (!buffer.hasRemaining()) break
-                                    val bytes = ByteArray(buffer.remaining())
-                                    buffer.get(bytes)
-                                    fos.write(bytes)
-                                }
-                                fos.flush()
+                        onWriteEntry(entryName) { outputStream ->
+                            while (true) {
+                                buffer.clear()
+                                Archive.readData(archive, buffer)
+                                buffer.flip()
+                                if (!buffer.hasRemaining()) break
+                                val bytes = ByteArray(buffer.remaining())
+                                buffer.get(bytes)
+                                outputStream.write(bytes)
                             }
-                            if (tempFile.exists() && tempFile.length() > 0L) {
-                                onEntryExtracted(entryName, tempFile)
-                                if (isTarget) {
-                                    targetFound = true
-                                } else if (targetFound) {
-                                    lookaheadRemaining--
-                                }
-                            } else {
-                                tempFile.delete()
-                            }
-                        } catch (e: Throwable) {
-                            tempFile.delete()
-                            throw e
+                            outputStream.flush()
+                        }
+                        if (isTarget) {
+                            targetFound = true
+                        } else if (targetFound) {
+                            lookaheadRemaining--
                         }
                     } else {
                         // Skip entry data rapidly in native C code without buffer copying
@@ -154,6 +131,47 @@ object LibArchiveExtractor {
             try {
                 pfd.close()
             } catch (_: Throwable) {}
+        }
+    }
+
+    /**
+     * Extracts entries from an archive using libarchive native JNI.
+     *
+     * @param file The archive file.
+     * @param targetEntryName Name of the entry that must be extracted.
+     * @param password Optional archive password.
+     * @param maxLookahead Number of entries to opportunistically cache after target is found.
+     * @param onEntryExtracted Callback invoked when an entry is extracted; receives entry name and temp file.
+     * @return True if the target entry was extracted, false otherwise.
+     */
+    fun extractWithOpportunisticCache(
+        file: File,
+        targetEntryName: String,
+        password: String?,
+        maxLookahead: Int,
+        tempDirectory: File? = null,
+        onEntryExtracted: (name: String, extractedFile: File) -> Unit
+    ): Boolean {
+        val safeDir = tempDirectory
+            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.cacheDir }.getOrNull()
+            ?: File(System.getProperty("java.io.tmpdir") ?: ".")
+        if (!safeDir.exists()) safeDir.mkdirs()
+
+        return extractDirectWithOpportunisticCache(file, targetEntryName, password, maxLookahead) { entryName, writeToStream ->
+            val tempFile = File.createTempFile("libarc_", ".tmp", safeDir)
+            try {
+                FileOutputStream(tempFile).use { fos ->
+                    writeToStream(fos)
+                }
+                if (tempFile.exists() && tempFile.length() > 0L) {
+                    onEntryExtracted(entryName, tempFile)
+                } else {
+                    tempFile.delete()
+                }
+            } catch (e: Throwable) {
+                tempFile.delete()
+                throw e
+            }
         }
     }
 }

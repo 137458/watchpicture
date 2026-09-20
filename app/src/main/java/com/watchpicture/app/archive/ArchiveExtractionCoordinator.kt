@@ -23,7 +23,8 @@ import java.util.concurrent.ConcurrentHashMap
 class ArchiveExtractionCoordinator(
     private val zipArchiveManager: ZipArchiveManager,
     private val archiveDiskCache: ArchiveDiskCache,
-    private val powerThermalManager: PowerThermalManager? = null
+    private val powerThermalManager: PowerThermalManager? = null,
+    val sevenZSessionManager: SevenZSessionManager = SevenZSessionManager()
 ) {
     companion object {
         // Number of subsequent entries to greedily extract while the 7z stream is already open
@@ -75,28 +76,25 @@ class ArchiveExtractionCoordinator(
         }
     }
 
-    private fun extractSevenZWithOpportunisticCache(
+    private suspend fun extractSevenZWithOpportunisticCache(
         file: File,
         targetEntryName: String,
         password: String?
     ): File {
         val lookahead = if (powerThermalManager?.isThrottled == true) 0 else SOLID_LOOKAHEAD_WINDOW
 
-        // Fast path 1: Native C/C++ libarchive JNI with Os.mmap zero-copy
+        // Fast path 1: Native C/C++ libarchive JNI with direct zero-copy write
         if (LibArchiveExtractor.isAvailable) {
-            val nativeSuccess = LibArchiveExtractor.extractWithOpportunisticCache(
+            val nativeSuccess = LibArchiveExtractor.extractDirectWithOpportunisticCache(
                 file = file,
                 targetEntryName = targetEntryName,
                 password = password,
-                maxLookahead = lookahead,
-                tempDirectory = archiveDiskCache.directory
-            ) { name, extractedTempFile ->
-                try {
-                    archiveDiskCache.getOrPut(file, name, password) {
-                        java.io.FileInputStream(extractedTempFile)
+                maxLookahead = lookahead
+            ) { name, writeToStream ->
+                archiveDiskCache.putDirect(file, name, password) { tempTargetFile ->
+                    java.io.FileOutputStream(tempTargetFile).use { fos ->
+                        writeToStream(fos)
                     }
-                } finally {
-                    extractedTempFile.delete()
                 }
             }
 
@@ -108,7 +106,24 @@ class ArchiveExtractionCoordinator(
             }
         }
 
-        // Fast path 2 / Fallback: Apache Commons Compress (SevenZFile Java engine)
+        // Fast path 2: Session-based forward streaming (O(1) sequential progression, no rewinding from 0)
+        val sessionSuccess = sevenZSessionManager.extractSequential(
+            file = file,
+            targetEntryName = targetEntryName,
+            password = password,
+            lookahead = lookahead
+        ) { name, stream ->
+            archiveDiskCache.getOrPut(file, name, password) { stream }
+        }
+
+        if (sessionSuccess) {
+            val cached = archiveDiskCache.get(file, targetEntryName, password)
+            if (cached != null && cached.exists() && cached.length() > 0L) {
+                return cached
+            }
+        }
+
+        // Fast path 3 / Fallback: One-off Apache Commons Compress
         val normalizedTarget = targetEntryName.replace('\\', '/')
         val nfcTarget = java.text.Normalizer.normalize(normalizedTarget, java.text.Normalizer.Form.NFC)
 
@@ -141,7 +156,6 @@ class ArchiveExtractionCoordinator(
                     resultFile = extracted
                     targetFound = true
                 } else if (isImage) {
-                    // Opportunistically cache prior entries or lookahead entries
                     val isAlreadyCached = archiveDiskCache.get(file, entryName, password) != null
                     if (!isAlreadyCached) {
                         if (!targetFound || lookaheadRemaining > 0) {
@@ -166,6 +180,110 @@ class ArchiveExtractionCoordinator(
         return resultFile
             ?: archiveDiskCache.get(file, targetEntryName, password)
             ?: throw NoSuchElementException("Entry '$targetEntryName' not found in 7z archive ${file.name}")
+    }
+
+    /**
+     * Extracts a thumbnail entry directly into [ThumbnailDiskCache] without dumping the full uncompressed
+     * file to [ArchiveDiskCache], reducing flash write amplification by 99%+.
+     */
+    suspend fun extractThumbnailDirect(
+        file: File,
+        entryName: String,
+        targetSizePx: Int,
+        password: String?,
+        thumbnailDiskCache: ThumbnailDiskCache
+    ): File = withContext(ArchiveDispatchers.decompressDispatcher) {
+        // Fast path 1: Instant cache hit in thumbnailDiskCache
+        val cachedThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
+        if (cachedThumb != null && cachedThumb.exists() && cachedThumb.length() > 0L) {
+            return@withContext cachedThumb
+        }
+
+        // Fast path 2: If full image is already cached in archiveDiskCache, downsample from it
+        val cachedFull = archiveDiskCache.get(file, entryName, password)
+        if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
+            return@withContext thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) {
+                java.io.FileInputStream(cachedFull)
+            }
+        }
+
+        val mutex = getLockFor(file)
+        mutex.withLock {
+            val recheckThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
+            if (recheckThumb != null && recheckThumb.exists() && recheckThumb.length() > 0L) {
+                return@withLock recheckThumb
+            }
+
+            thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) {
+                zipArchiveManager.getEntryInputStream(file, entryName, password)
+            }
+        }
+    }
+
+    /**
+     * Generates thumbnails for a list of entries in a single sequential pass through the 7z archive,
+     * avoiding multiple re-scans of solid blocks and ensuring high UI responsiveness in thumbnail grids.
+     */
+    suspend fun startBatchThumbnailSweep(
+        file: File,
+        entryNames: List<String>,
+        targetSizePx: Int,
+        password: String?,
+        thumbnailDiskCache: ThumbnailDiskCache,
+        onProgress: ((completed: Int, total: Int) -> Unit)? = null
+    ) = withContext(ArchiveDispatchers.decompressDispatcher) {
+        if (entryNames.isEmpty()) return@withContext
+        if (powerThermalManager?.isThrottled == true) return@withContext
+
+        val uncached = entryNames.filter { name ->
+            thumbnailDiskCache.get(file, name, targetSizePx, password) == null
+        }
+        if (uncached.isEmpty()) return@withContext
+
+        val mutex = getLockFor(file)
+        mutex.withLock {
+            if (powerThermalManager?.isThrottled == true) return@withLock
+            val targets = uncached.filter { name ->
+                thumbnailDiskCache.get(file, name, targetSizePx, password) == null
+            }
+            if (targets.isEmpty()) return@withLock
+
+            var count = 0
+            val total = targets.size
+
+            if (ZipArchiveManager.isSevenZFile(file)) {
+                runCatching {
+                    zipArchiveManager.extractSequentialEntries(file, targets, password) { name, stream ->
+                        if (powerThermalManager?.isThrottled == true) {
+                            return@extractSequentialEntries
+                        }
+                        runCatching {
+                            thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) { stream }
+                            count++
+                            onProgress?.invoke(count, total)
+                        }
+                    }
+                }
+            } else {
+                for (name in targets) {
+                    if (powerThermalManager?.isThrottled == true) break
+                    runCatching {
+                        thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
+                            zipArchiveManager.getEntryInputStream(file, name, password)
+                        }
+                        count++
+                        onProgress?.invoke(count, total)
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * Closes any active streaming sessions for [file].
+     */
+    fun closeSession(file: File) {
+        sevenZSessionManager.closeSession(file)
     }
 
     /**

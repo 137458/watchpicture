@@ -154,9 +154,17 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
      */
     fun clearSessionPassword(packId: String) {
         passwordStore.remove(packId)
+        val file = File(packId)
+        if (file.exists() && file.isFile) {
+            app.archiveExtractionCoordinator.closeSession(file)
+        }
     }
 
     fun lockPack(packId: String) {
         passwordStore.markExplicitlyLocked(packId)
+        val file = File(packId)
+        if (file.exists() && file.isFile) {
+            app.archiveExtractionCoordinator.closeSession(file)
+        }
     }
 }
