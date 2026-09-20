@@ -71,6 +71,28 @@ class SevenZArchiveManager {
     fun getImageEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
         if (!isValidSevenZArchive(file)) return emptyList()
 
+        if (password.isNullOrEmpty() && Native7z.isAvailable) {
+            val session = Native7zArchiveSession.open(file.absolutePath)
+            if (session != null) {
+                return session.use { s ->
+                    s.entries
+                        .asSequence()
+                        .filter { !it.isDirectory }
+                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                        .filter { ZipArchiveManager.isImageFile(it.path) }
+                        .map { entry ->
+                            ArchiveEntryInfo(
+                                name = entry.path,
+                                uncompressedSize = entry.size,
+                                isEncrypted = false
+                            )
+                        }
+                        .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+                        .toList()
+                }
+            }
+        }
+
         val builder = SevenZFile.builder().setFile(file)
         if (!password.isNullOrEmpty()) {
             builder.setPassword(password)
@@ -139,6 +161,22 @@ class SevenZArchiveManager {
      * closes when the stream is closed.
      */
     fun getEntryInputStream(file: File, entryName: String, password: String? = null): InputStream {
+        if (password.isNullOrEmpty() && Native7z.isAvailable) {
+            val session = Native7zArchiveSession.open(file.absolutePath)
+            if (session != null) {
+                val entry = session.findEntry(entryName)
+                if (entry != null) {
+                    val bytes = session.extractToBytes(entry.index)
+                    session.close()
+                    if (bytes != null) {
+                        return java.io.ByteArrayInputStream(bytes)
+                    }
+                } else {
+                    session.close()
+                }
+            }
+        }
+
         val normalized = entryName.replace('\\', '/')
         val nfcNormalized = java.text.Normalizer.normalize(normalized, java.text.Normalizer.Form.NFC)
         val builder = SevenZFile.builder().setFile(file)
@@ -188,6 +226,23 @@ class SevenZArchiveManager {
         onEntryExtracted: (name: String, stream: InputStream) -> Unit
     ) {
         if (!isValidSevenZArchive(file) || targetEntryNames.isEmpty()) return
+
+        if (password.isNullOrEmpty() && Native7z.isAvailable) {
+            val session = Native7zArchiveSession.open(file.absolutePath)
+            if (session != null) {
+                session.use { s ->
+                    val targets = targetEntryNames.map { it.replace('\\', '/').trimStart('/') }.toSet()
+                    val targetEntries = s.entries.filter { !it.isDirectory && it.path.trimStart('/') in targets }
+                    for (entry in targetEntries) {
+                        val bytes = s.extractToBytes(entry.index) ?: continue
+                        java.io.ByteArrayInputStream(bytes).use { stream ->
+                            onEntryExtracted(entry.path, stream)
+                        }
+                    }
+                }
+                return
+            }
+        }
 
         val targets = targetEntryNames.map { it.replace('\\', '/') }.toSet()
         val builder = SevenZFile.builder().setFile(file)

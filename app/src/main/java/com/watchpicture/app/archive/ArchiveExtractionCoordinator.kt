@@ -83,7 +83,15 @@ class ArchiveExtractionCoordinator(
     ): File {
         val lookahead = if (powerThermalManager?.isThrottled == true) 0 else SOLID_LOOKAHEAD_WINDOW
 
-        // Fast path 1: Native C/C++ libarchive JNI with direct zero-copy write
+        // Fast path 1: Official Native 7-Zip ANSI-C LZMA SDK with C-level solid block cache & zero-copy direct file dump
+        if (Native7z.isAvailable && password.isNullOrEmpty()) {
+            val nativeExtracted = extractSevenZNative(file, targetEntryName, lookahead)
+            if (nativeExtracted != null && nativeExtracted.exists() && nativeExtracted.length() > 0L) {
+                return nativeExtracted
+            }
+        }
+
+        // Fast path 2: Native C/C++ libarchive JNI with direct zero-copy write
         if (LibArchiveExtractor.isAvailable) {
             val nativeSuccess = LibArchiveExtractor.extractDirectWithOpportunisticCache(
                 file = file,
@@ -180,6 +188,46 @@ class ArchiveExtractionCoordinator(
         return resultFile
             ?: archiveDiskCache.get(file, targetEntryName, password)
             ?: throw NoSuchElementException("Entry '$targetEntryName' not found in 7z archive ${file.name}")
+    }
+
+    private fun extractSevenZNative(
+        file: File,
+        targetEntryName: String,
+        lookahead: Int
+    ): File? {
+        val session = Native7zArchiveSession.open(file.absolutePath) ?: return null
+        return session.use { s ->
+            val normalizedTarget = targetEntryName.replace('\\', '/').trimStart('/')
+            val targetEntry = s.findEntry(normalizedTarget) ?: return null
+            val targetFile = archiveDiskCache.putDirect(file, targetEntry.path, null) { tempTargetFile ->
+                val ok = s.extractToFile(targetEntry.index, tempTargetFile)
+                if (!ok) throw java.io.IOException("Native 7z extraction failed for ${targetEntry.path}")
+            }
+
+            // Opportunistically pre-extract subsequent images in the same solid block
+            if (lookahead > 0) {
+                val nextEntries = s.entries
+                    .asSequence()
+                    .filter { it.index > targetEntry.index && !it.isDirectory }
+                    .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                    .filter { ZipArchiveManager.isImageFile(it.path) }
+                    .take(lookahead)
+                    .toList()
+
+                for (next in nextEntries) {
+                    val alreadyCached = archiveDiskCache.get(file, next.path, null)
+                    if (alreadyCached == null || !alreadyCached.exists() || alreadyCached.length() == 0L) {
+                        runCatching {
+                            archiveDiskCache.putDirect(file, next.path, null) { tempTargetFile ->
+                                s.extractToFile(next.index, tempTargetFile)
+                            }
+                        }
+                    }
+                }
+            }
+
+            targetFile
+        }
     }
 
     /**

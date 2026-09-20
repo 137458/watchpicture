@@ -26,7 +26,13 @@
 - 修复了 Coil 缓存键未包含密码哈希，导致解锁后仍命中解密前失败缓存的问题。
 - 修复了通过系统选择器导入的单文件内容 URI 压缩包在浏览详情页直接返回空图片列表的问题。
 
+### 优化
+- 深度接入官方 7-Zip 原生 ANSI-C LZMA SDK（v26.03）解压引擎，同一固实块内的多图读取借助 C 级内存缓存彻底免除重复解压，运算开销直降至近乎 $O(1)$。
+- 优化 7z 图片提取管线，利用原生 C 级 POSIX 文件操作直通目标缓存文件，消除 JVM 堆中转与临时文件二次拷贝，显著降低 GC 压力与发热能耗。
+
 ### 新增
+- 新增官方 7-Zip 原生 ANSI-C LZMA SDK（v26.03）完整 NDK CMake 编译管线（`libnative7z.so`），覆盖 `arm64-v8a`、`armeabi-v7a`、`x86_64`、`x86` 全平台架构。
+- 新增 `Native7z` 与 `Native7zArchiveSession` JNI 高性能接口，提供固实块缓存感知、直接落盘与内存字节直出功能，并在无原生库环境（如主机单元测试）或遇到特殊加密时自动平滑回退至 Java Commons Compress 引擎。
 - 新增 `ArchiveDispatchers` 专属能效调度器，显式注入 Linux 后台优先级（`THREAD_PRIORITY_BACKGROUND`），将计算密集型解压任务严格隔离至小核运行，释放大核保障 120Hz 手机屏幕的 8.3ms 帧渲染预算。
 - 新增 `PowerThermalManager` 系统温控与省电状态动态感知组件，在设备发热（`THERMAL_STATUS_MODERATE`+）或开启省电模式时自适应截断前瞻预读并压制解压并发。
 - 新增 `ArchiveExtractionCoordinator` 解压协调调度中心，保障单一压缩包单线程互斥流式解压，并赋予当前焦点页最高抢占调度优先级。
