@@ -10,7 +10,13 @@ import top.yukonga.miuix.kmp.nav.core.NavKey
 sealed interface AppRoute : NavKey {
 
     @Serializable
+    data object Main : AppRoute
+
+    @Serializable
     data object PackList : AppRoute
+
+    @Serializable
+    data object Update : AppRoute
 
     @Serializable
     data class ThumbnailGrid(val packId: String, val title: String) : AppRoute

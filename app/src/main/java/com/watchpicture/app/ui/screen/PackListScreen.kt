@@ -74,7 +74,8 @@ import top.yukonga.miuix.kmp.window.WindowDialog
 @Composable
 fun PackListScreen(
     viewModel: PackViewModel,
-    onNavigate: (AppRoute) -> Unit
+    onNavigate: (AppRoute) -> Unit,
+    contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
     val uiState by viewModel.uiState.collectAsState()
     val scrollBehavior = MiuixScrollBehavior()
@@ -176,6 +177,7 @@ fun PackListScreen(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
+                .padding(contentPadding)
         ) {
             when {
                 uiState.isLoading -> {

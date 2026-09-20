@@ -8,8 +8,10 @@ import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.screen.GalleryViewerScreen
+import com.watchpicture.app.ui.screen.MainScreen
 import com.watchpicture.app.ui.screen.PackListScreen
 import com.watchpicture.app.ui.screen.ThumbnailGridScreen
+import com.watchpicture.app.ui.screen.UpdateScreen
 import com.watchpicture.app.ui.viewmodel.PackViewModel
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.nav.core.NavDisplay
@@ -27,7 +29,7 @@ fun App() {
     val themeController = remember { ThemeController(ColorSchemeMode.System) }
 
     MiuixTheme(controller = themeController) {
-        val backStack = rememberNavBackStack<AppRoute>(AppRoute.PackList)
+        val backStack = rememberNavBackStack<AppRoute>(AppRoute.Main)
 
         BackHandler(enabled = backStack.size > 1) {
             backStack.removeLastOrNull()
@@ -39,11 +41,23 @@ fun App() {
             transition = NavTransitions.MiuixDefault,
             modifier = Modifier.fillMaxSize()
         ) {
+            entry<AppRoute.Main> {
+                MainScreen(
+                    onNavigate = { route -> backStack.add(route) }
+                )
+            }
+
             entry<AppRoute.PackList> {
                 val packViewModel: PackViewModel = viewModel()
                 PackListScreen(
                     viewModel = packViewModel,
                     onNavigate = { route -> backStack.add(route) }
+                )
+            }
+
+            entry<AppRoute.Update> {
+                UpdateScreen(
+                    onBack = { backStack.removeLastOrNull() }
                 )
             }
 

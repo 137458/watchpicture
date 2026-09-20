@@ -44,5 +44,20 @@ class PreferencesRepositoryTest {
         // Write reading mode
         testDataStore.edit { it[KEY_READING_MODE] = ReadingMode.RTL.name }
         assertEquals(ReadingMode.RTL.name, testDataStore.data.first()[KEY_READING_MODE])
+
+        val keyAutoUpdate = androidx.datastore.preferences.core.booleanPreferencesKey("auto_check_update")
+        val keyIgnoredVer = stringPreferencesKey("ignored_version")
+
+        // Auto update defaults to true if unset
+        val autoUpdateDefault = testDataStore.data.first()[keyAutoUpdate] ?: true
+        assertEquals(true, autoUpdateDefault)
+
+        // Write auto update preference
+        testDataStore.edit { it[keyAutoUpdate] = false }
+        assertEquals(false, testDataStore.data.first()[keyAutoUpdate])
+
+        // Write ignored version
+        testDataStore.edit { it[keyIgnoredVer] = "v1.2.0" }
+        assertEquals("v1.2.0", testDataStore.data.first()[keyIgnoredVer])
     }
 }

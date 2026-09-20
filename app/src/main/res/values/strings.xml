@@ -11,4 +11,58 @@
     <string name="confirm">确认</string>
     <string name="cancel">取消</string>
     <string name="loading">加载中…</string>
+
+    <!-- Bottom Bar Tabs -->
+    <string name="tab_packs">图包</string>
+    <string name="tab_settings">设置</string>
+    <string name="tab_update">更新</string>
+
+    <!-- Settings Screen -->
+    <string name="settings_title">设置</string>
+    <string name="settings_section_general">常规浏览</string>
+    <string name="settings_reading_mode_title">画廊翻页方向</string>
+    <string name="settings_reading_mode_ltr">从左往右 (LTR)</string>
+    <string name="settings_reading_mode_rtl">从右往左 (RTL 日漫)</string>
+    <string name="settings_default_sort_title">默认排序方式</string>
+    <string name="settings_section_security">安全与缓存</string>
+    <string name="settings_clear_passwords_title">清除已记住的临时解密密码</string>
+    <string name="settings_clear_passwords_summary">清除当前会话中为加密图包缓存的所有密码</string>
+    <string name="settings_clear_passwords_done">已清除所有临时会话密码</string>
+    <string name="settings_section_about">关于与更新</string>
+    <string name="settings_version_title">当前版本</string>
+    <string name="settings_github_repo">开源仓库</string>
+    <string name="settings_check_update_entry">检查新版本</string>
+    <string name="settings_check_update_entry_summary">前往版本更新与变更日志页面</string>
+
+    <!-- Update Screen & Dialog -->
+    <string name="update_screen_title">软件与更新</string>
+    <string name="update_checking_hint">正在检查更新…</string>
+    <string name="update_found_header">发现新版本 %1$s (当前 %2$s)</string>
+    <string name="update_latest_header">当前已是最新版本 %1$s</string>
+    <string name="update_changelog_title_new">%1$s 更新日志</string>
+    <string name="update_changelog_title_current">当前版本 %1$s 日志</string>
+    <string name="update_release_default_title">版本更新内容</string>
+    <string name="update_downloading_hint">正在下载更新包…</string>
+    <string name="update_btn_install_now">立即安装更新</string>
+    <string name="update_btn_download_now">立即下载更新</string>
+    <string name="update_section_settings">更新偏好设置</string>
+    <string name="update_pref_auto_check_title">自动检查更新</string>
+    <string name="update_pref_auto_check_summary">应用启动时在后台检查 GitHub 最新版本</string>
+    <string name="update_pref_manual_check_title">立即检查更新</string>
+    <string name="update_pref_manual_check_summary">向 GitHub Releases 获取最新发布信息</string>
+    <string name="update_dialog_title">发现新版本</string>
+    <string name="update_dialog_ready_install">新版本安装包已就绪，可立即安装</string>
+    <string name="update_dialog_download_failed">下载安装包失败: %1$s</string>
+    <string name="update_dialog_network_hint">若网络受限，可尝试使用浏览器直接下载</string>
+    <string name="update_dialog_btn_cancel_download">取消下载</string>
+    <string name="update_dialog_btn_background_download">后台下载</string>
+    <string name="update_dialog_btn_redownload">重新下载</string>
+    <string name="update_dialog_btn_install">立即安装</string>
+    <string name="update_dialog_btn_browser">浏览器下载</string>
+    <string name="update_dialog_btn_retry">重试</string>
+    <string name="update_dialog_btn_later">稍后提醒</string>
+    <string name="update_dialog_btn_ignore">忽略此版本</string>
+    <string name="update_dialog_btn_update">立即更新</string>
+    <string name="update_dialog_no_changelog">暂无更新日志说明</string>
+    <string name="update_dialog_downloading">正在下载更新%1$s</string>
 </resources>

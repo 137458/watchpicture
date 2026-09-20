@@ -5,6 +5,9 @@ All notable changes to this project will be documented in this file.
 ## [未发布]
 
 ### 新增
+- Miuix 悬浮底栏（FloatingBottomBar）：集成「图包」与「设置」双 Tab 导航，支持液态玻璃折射、双重离屏采样渲染（CombinedBackdrop）、阻尼弹性拖拽手势与低功耗陀螺仪感应随动高光，并支持多层次三态兼容降级。
+- 偏好设置界面（SettingsScreen）：遵循 Miuix 卡片与偏好设计规范，支持画廊翻页方向选择、默认排序配置、内存临时解密密码一键清除及版本更新中心入口。
+- 版本检测与更新体系（UpdateScreen / UpdateDialog / UpdateManager）：对接 GitHub Releases，实现自动与手动检查更新、SemVer 规范版本比对、Compose Markdown 变更日志渲染、断点续传下载、实时速率计算、FileProvider 调起系统包安装及浏览器直链下载降级。
 - 核心存储与 SAF 授权管理：支持通过系统文件选择器选取本地根目录，并持久化 URI 访问权限；兼容直接文件路径极速扫描。
 - 图包扫描与识别引擎：统一抽象普通文件夹（DirectoryPack）与压缩包（ZipPack），支持 `.zip` 与 `.cbz` 格式。
 - 加密压缩包流式解密：基于 Zip4j 内存级按需解压，通过 `zipFile.getInputStream(fileHeader)` 流式提取图片数据，杜绝全量落盘。

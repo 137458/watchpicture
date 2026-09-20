@@ -27,6 +27,8 @@ class PreferencesRepository(private val context: Context) {
         private val KEY_LAST_ROOT_URI = stringPreferencesKey("last_root_uri")
         private val KEY_SORT_OPTION = stringPreferencesKey("sort_option")
         private val KEY_READING_MODE = stringPreferencesKey("reading_mode")
+        private val KEY_AUTO_CHECK_UPDATE = androidx.datastore.preferences.core.booleanPreferencesKey("auto_check_update")
+        private val KEY_IGNORED_VERSION = stringPreferencesKey("ignored_version")
     }
 
     val lastRootUriFlow: Flow<String?> = context.settingsDataStore.data.map { preferences ->
@@ -51,6 +53,14 @@ class PreferencesRepository(private val context: Context) {
         }
     }
 
+    val autoCheckUpdateFlow: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
+        preferences[KEY_AUTO_CHECK_UPDATE] ?: true
+    }
+
+    val ignoredVersionFlow: Flow<String?> = context.settingsDataStore.data.map { preferences ->
+        preferences[KEY_IGNORED_VERSION]
+    }
+
     suspend fun saveLastRootUri(uriString: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_LAST_ROOT_URI] = uriString
@@ -66,6 +76,18 @@ class PreferencesRepository(private val context: Context) {
     suspend fun saveReadingMode(mode: ReadingMode) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_READING_MODE] = mode.name
+        }
+    }
+
+    suspend fun saveAutoCheckUpdate(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUTO_CHECK_UPDATE] = enabled
+        }
+    }
+
+    suspend fun saveIgnoredVersion(version: String) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_IGNORED_VERSION] = version
         }
     }
 }
