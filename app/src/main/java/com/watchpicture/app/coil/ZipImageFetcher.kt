@@ -28,12 +28,13 @@ class ZipImageFetcher(
     private val options: Options,
     private val zipArchiveManager: ZipArchiveManager,
     private val archiveDiskCache: ArchiveDiskCache? = null,
-    private val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache? = null
+    private val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache? = null,
+    private val coordinator: com.watchpicture.app.archive.ArchiveExtractionCoordinator? = null
 ) : Fetcher {
 
     companion object {
-        // Limit max concurrent decompression/decoding threads to 3 to prevent pegging all CPU big cores
-        private val decompressDispatcher = Dispatchers.IO.limitedParallelism(3)
+        // Limit max concurrent decompression/decoding threads to 2 to prevent CPU overheating
+        private val decompressDispatcher = Dispatchers.IO.limitedParallelism(2)
     }
 
     override suspend fun fetch(): FetchResult = withContext(decompressDispatcher) {
@@ -42,6 +43,11 @@ class ZipImageFetcher(
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.lastUsedPassword }.getOrNull()
 
         val mimeType = resolveMimeType(data.entryName)
+
+        val diskCache = archiveDiskCache
+            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.archiveDiskCache }.getOrNull()
+        val extractCoord = coordinator
+            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.archiveExtractionCoordinator }.getOrNull()
 
         // Branch 1: Thumbnail dedicated pipeline (never dumps full uncompressed raw bytes to flash)
         val thumbCache = thumbnailDiskCache
@@ -54,11 +60,23 @@ class ZipImageFetcher(
                 targetSizePx = data.targetSizePx,
                 password = password
             ) {
-                zipArchiveManager.getEntryInputStream(
-                    file = data.zipFile,
-                    entryName = data.entryName,
-                    password = password
-                )
+                // If full-res file is already cached on disk, read directly from disk (0ms decompression!)
+                val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
+                if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
+                    java.io.FileInputStream(cachedFull)
+                } else if (extractCoord != null) {
+                    // Extract via coordinator to take advantage of single-pass solid caching
+                    val extracted = kotlinx.coroutines.runBlocking {
+                        extractCoord.extractHighPriority(data.zipFile, data.entryName, password)
+                    }
+                    java.io.FileInputStream(extracted)
+                } else {
+                    zipArchiveManager.getEntryInputStream(
+                        file = data.zipFile,
+                        entryName = data.entryName,
+                        password = password
+                    )
+                }
             }
 
             return@withContext SourceFetchResult(
@@ -72,20 +90,21 @@ class ZipImageFetcher(
         }
 
         // Branch 2: Full-res viewing and Telephoto tile subsampling pipeline
-        val diskCache = archiveDiskCache
-            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.archiveDiskCache }.getOrNull()
-
         if (diskCache != null) {
-            val cachedFile = diskCache.getOrPut(
-                zipFile = data.zipFile,
-                entryName = data.entryName,
-                password = password
-            ) {
-                zipArchiveManager.getEntryInputStream(
-                    file = data.zipFile,
+            val cachedFile = if (extractCoord != null) {
+                extractCoord.extractHighPriority(data.zipFile, data.entryName, password)
+            } else {
+                diskCache.getOrPut(
+                    zipFile = data.zipFile,
                     entryName = data.entryName,
                     password = password
-                )
+                ) {
+                    zipArchiveManager.getEntryInputStream(
+                        file = data.zipFile,
+                        entryName = data.entryName,
+                        password = password
+                    )
+                }
             }
 
             return@withContext SourceFetchResult(
@@ -139,14 +158,15 @@ class ZipImageFetcher(
     class Factory(
         private val zipArchiveManager: ZipArchiveManager,
         private val archiveDiskCache: ArchiveDiskCache? = null,
-        private val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache? = null
+        private val thumbnailDiskCache: com.watchpicture.app.archive.ThumbnailDiskCache? = null,
+        private val coordinator: com.watchpicture.app.archive.ArchiveExtractionCoordinator? = null
     ) : Fetcher.Factory<ZipImageSource> {
         override fun create(
             data: ZipImageSource,
             options: Options,
             imageLoader: ImageLoader
         ): Fetcher {
-            return ZipImageFetcher(data, options, zipArchiveManager, archiveDiskCache, thumbnailDiskCache)
+            return ZipImageFetcher(data, options, zipArchiveManager, archiveDiskCache, thumbnailDiskCache, coordinator)
         }
     }
 }

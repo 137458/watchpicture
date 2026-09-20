@@ -63,6 +63,26 @@ class ArchiveDiskCache(
     }
 
     /**
+     * Checks whether an entry is already cached and returns the cached file if present, or null.
+     */
+    fun get(
+        zipFile: File,
+        entryName: String,
+        password: String?
+    ): File? {
+        val isEncrypted = !password.isNullOrEmpty()
+        val cacheKey = computeKey(zipFile, entryName, password)
+        val filePrefix = if (isEncrypted) "enc_" else "raw_"
+        val ext = entryName.substringAfterLast('.', "dat").lowercase()
+        val targetFile = File(directory, "$filePrefix$cacheKey.$ext")
+        if (targetFile.exists() && targetFile.length() > 0) {
+            targetFile.setLastModified(System.currentTimeMillis())
+            return targetFile
+        }
+        return null
+    }
+
+    /**
      * Retrieves an already cached file or streams it directly from the archive via [openStream].
      * Writing uses atomic rename (.tmp -> target) to ensure thread-safety and avoid partial files.
      */

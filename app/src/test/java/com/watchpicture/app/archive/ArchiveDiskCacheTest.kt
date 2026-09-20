@@ -48,6 +48,15 @@ class ArchiveDiskCacheTest {
 
         assertEquals("Same cached file must be returned", file1.absolutePath, file2.absolutePath)
         assertEquals("Stream must NOT be reopened on cache hit", 1, streamOpenCount)
+
+        // get() should return the cached file directly
+        val fileDirect = cache.get(dummyZip, entryName, password = null)
+        assertNotNull(fileDirect)
+        assertEquals(file1.absolutePath, fileDirect?.absolutePath)
+
+        // get() should return null for non-cached entry
+        val fileNonExistent = cache.get(dummyZip, "non_existent.jpg", password = null)
+        assertNull(fileNonExistent)
     }
 
     @Test

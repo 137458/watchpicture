@@ -154,89 +154,46 @@ fun GalleryViewerScreen(
                 isCurrentPageZoomed = false
             }
 
-            // Directional background prefetching of adjacent archive entries into ArchiveDiskCache
+            // Directional background prefetching of adjacent archive entries using coordinator
             val context = androidx.compose.ui.platform.LocalContext.current
             val app = context.applicationContext as? com.watchpicture.app.WatchPictureApp
-            val diskCache = app?.archiveDiskCache
-            val zipManager = app?.zipArchiveManager
+            val coordinator = app?.archiveExtractionCoordinator
 
             LaunchedEffect(pagerState.currentPage, readingMode, images) {
-                // Short debounce so fast flings skip intermediate pages
-                kotlinx.coroutines.delay(120)
+                // Debounce so fast flings skip intermediate pages
+                kotlinx.coroutines.delay(100)
                 val isRtl = (readingMode == ReadingMode.RTL)
                 val curr = pagerState.currentPage
                 val prefetchIndices = if (isRtl) {
-                    listOf(curr - 1, curr - 2, curr + 1)
+                    listOf(curr - 1, curr - 2)
                 } else {
-                    listOf(curr + 1, curr + 2, curr - 1)
+                    listOf(curr + 1, curr + 2)
                 }
 
-                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    val validIndices = prefetchIndices.filter { it in images.indices }
-                    val targetModels = validIndices.mapNotNull { idx ->
-                        images[idx].toImageModel(sessionPassword)
-                    }
+                val validIndices = prefetchIndices.filter { it in images.indices }
+                val targetModels = validIndices.mapNotNull { idx ->
+                    images[idx].toImageModel(sessionPassword)
+                }
 
-                    // 1. Group ZipImageSources by zipFile for single-pass sequential extraction
-                    val zipGroups = targetModels.filterIsInstance<com.watchpicture.app.coil.ZipImageSource>()
-                        .groupBy { it.zipFile }
+                val zipGroups = targetModels.filterIsInstance<com.watchpicture.app.coil.ZipImageSource>()
+                    .groupBy { it.zipFile }
 
-                    if (diskCache != null && zipManager != null) {
-                        for ((zipFile, entries) in zipGroups) {
-                            val uncachedEntries = entries.filter { item ->
-                                val key = "${zipFile.absolutePath}#${zipFile.lastModified()}#${item.entryName}#${item.password ?: "none"}"
-                                val md5 = java.security.MessageDigest.getInstance("MD5").digest(key.toByteArray()).joinToString("") { "%02x".format(it) }
-                                val ext = item.entryName.substringAfterLast('.', "dat").lowercase()
-                                val filePrefix = if (!item.password.isNullOrEmpty()) "enc_" else "raw_"
-                                val target = java.io.File(context.cacheDir, "archive_cache/$filePrefix$md5.$ext")
-                                !target.exists() || target.length() <= 0L
-                            }
-
-                            if (uncachedEntries.isNotEmpty()) {
-                                runCatching {
-                                    zipManager.extractSequentialEntries(
-                                        file = zipFile,
-                                        targetEntryNames = uncachedEntries.map { it.entryName },
-                                        password = uncachedEntries.firstOrNull()?.password
-                                    ) { name, stream ->
-                                        diskCache.getOrPut(zipFile, name, uncachedEntries.firstOrNull()?.password) { stream }
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // 2. Memory preheating: pre-decode next adjacent page into Coil MemoryCache for 0ms instant display
-                    val nextIdx = if (isRtl) curr - 1 else curr + 1
-                    if (nextIdx in images.indices) {
-                        val nextModel = images[nextIdx].toImageModel(sessionPassword)
-                        if (nextModel != null) {
-                            val fullKey = when (nextModel) {
-                                is com.watchpicture.app.coil.ZipImageSource -> {
-                                    val pwdHash = nextModel.password?.hashCode()?.toString(16) ?: "none"
-                                    "full:zip://${nextModel.zipFile.absolutePath}#${nextModel.entryName}#pwd=$pwdHash"
-                                }
-                                is java.io.File -> "full:file://${nextModel.absolutePath}"
-                                else -> null
-                            }
-                            val prefetchReq = coil3.request.ImageRequest.Builder(context)
-                                .data(nextModel)
-                                .precision(coil3.size.Precision.EXACT)
-                                .bitmapConfig(android.graphics.Bitmap.Config.HARDWARE)
-                                .apply {
-                                    if (fullKey != null) memoryCacheKey(fullKey)
-                                }
-                                .build()
-                            coil3.SingletonImageLoader.get(context).enqueue(prefetchReq)
-                        }
+                if (coordinator != null) {
+                    for ((zipFile, entries) in zipGroups) {
+                        coordinator.prefetch(
+                            file = zipFile,
+                            targetEntryNames = entries.map { it.entryName },
+                            password = entries.firstOrNull()?.password
+                        )
                     }
                 }
             }
 
             // Horizontal Pager with reverseLayout support for Manga RTL mode
+            // beyondViewportPageCount is 0 to ensure 100% CPU is dedicated to the visible page
             HorizontalPager(
                 state = pagerState,
-                beyondViewportPageCount = 1,
+                beyondViewportPageCount = 0,
                 userScrollEnabled = !isCurrentPageZoomed,
                 reverseLayout = (readingMode == ReadingMode.RTL),
                 modifier = Modifier.fillMaxSize()
@@ -419,62 +376,93 @@ private fun ZoomableImage(
     onSingleTap: () -> Unit,
     onZoomChanged: (Boolean) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val app = context.applicationContext as? com.watchpicture.app.WatchPictureApp
+    val diskCache = app?.archiveDiskCache
+    val coordinator = app?.archiveExtractionCoordinator
+
     val imageModel: Any? = remember(image, sessionPassword) {
         image.toImageModel(sessionPassword)
     }
 
     if (imageModel != null) {
-        val context = androidx.compose.ui.platform.LocalContext.current
-        val zoomableState = me.saket.telephoto.zoomable.rememberZoomableImageState()
+        // Track whether full-resolution File is available on disk
+        var resolvedFile by remember(image, sessionPassword) {
+            val initial = when (imageModel) {
+                is java.io.File -> imageModel
+                is com.watchpicture.app.coil.ZipImageSource -> {
+                    diskCache?.get(imageModel.zipFile, imageModel.entryName, imageModel.password)
+                }
+                else -> null
+            }
+            androidx.compose.runtime.mutableStateOf(initial)
+        }
 
+        // On-demand high-priority extraction for currently visible image
+        LaunchedEffect(image, sessionPassword) {
+            if (resolvedFile == null && imageModel is com.watchpicture.app.coil.ZipImageSource && coordinator != null) {
+                runCatching {
+                    val extracted = coordinator.extractHighPriority(
+                        file = imageModel.zipFile,
+                        entryName = imageModel.entryName,
+                        password = imageModel.password
+                    )
+                    resolvedFile = extracted
+                }
+            }
+        }
+
+        val zoomableState = me.saket.telephoto.zoomable.rememberZoomableImageState()
         val zoomFraction: Float? = zoomableState.zoomableState.zoomFraction
         val isZoomed = (zoomFraction ?: 0f) > 0.02f
         LaunchedEffect(isZoomed) {
             onZoomChanged(isZoomed)
         }
 
-        val request = remember(imageModel) {
-            val builder = coil3.request.ImageRequest.Builder(context)
-                .data(imageModel)
-                .crossfade(150)
-                .precision(coil3.size.Precision.EXACT)
-                .bitmapConfig(android.graphics.Bitmap.Config.HARDWARE)
-
-            // Distinct full-res cache key to prevent collision with grid thumbnail
-            val fullKey = when (imageModel) {
-                is com.watchpicture.app.coil.ZipImageSource -> {
-                    val pwdHash = imageModel.password?.hashCode()?.toString(16) ?: "none"
-                    "full:zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash"
-                }
-                is java.io.File -> "full:file://${imageModel.absolutePath}"
-                else -> null
-            }
-            if (fullKey != null) {
-                builder.memoryCacheKey(fullKey)
+        val activeFile = resolvedFile
+        if (activeFile != null) {
+            // Full-res seekable local File: Activates Telephoto's native SubSamplingImageSource (BitmapRegionDecoder)
+            val fullRequest = remember(activeFile) {
+                coil3.request.ImageRequest.Builder(context)
+                    .data(activeFile)
+                    .crossfade(150)
+                    .precision(coil3.size.Precision.EXACT)
+                    .build()
             }
 
-            // High-speed instant thumbnail placeholder (0ms) from memory cache
-            val thumbKey = when (imageModel) {
-                is com.watchpicture.app.coil.ZipImageSource -> {
-                    val pwdHash = imageModel.password?.hashCode()?.toString(16) ?: "none"
-                    "thumb:zip://${imageModel.zipFile.absolutePath}#${imageModel.entryName}#pwd=$pwdHash#sz=360"
-                }
-                is java.io.File -> "thumb:file://${imageModel.absolutePath}#sz=360"
-                else -> null
+            me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
+                model = fullRequest,
+                contentDescription = image.displayName,
+                state = zoomableState,
+                onClick = { onSingleTap() },
+                modifier = Modifier.fillMaxSize()
+            )
+        } else {
+            // Immediate 0ms thumbnail preview while high-priority decompression is in flight
+            val thumbModel = remember(image, sessionPassword) {
+                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
             }
-            if (thumbKey != null) {
-                builder.placeholderMemoryCacheKey(coil3.memory.MemoryCache.Key(thumbKey))
+            val thumbRequest = remember(thumbModel) {
+                coil3.request.ImageRequest.Builder(context)
+                    .data(thumbModel)
+                    .precision(coil3.size.Precision.INEXACT)
+                    .crossfade(100)
+                    .build()
             }
 
-            builder.build()
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clickable { onSingleTap() },
+                contentAlignment = Alignment.Center
+            ) {
+                coil3.compose.AsyncImage(
+                    model = thumbRequest,
+                    contentDescription = image.displayName,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
-
-        me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
-            model = request,
-            contentDescription = image.displayName,
-            state = zoomableState,
-            onClick = { onSingleTap() },
-            modifier = Modifier.fillMaxSize()
-        )
     }
 }
