@@ -229,20 +229,22 @@ class SafManager(
                 return uri.path?.let { File(it) }
             }
 
-            if (DocumentsContract.isTreeUri(uri)) {
-                val treeDocId = DocumentsContract.getTreeDocumentId(uri)
-                if (treeDocId.startsWith("primary:")) {
-                    val relativePath = treeDocId.removePrefix("primary:")
-                    return File(Environment.getExternalStorageDirectory(), relativePath)
-                }
+            // Attempt to resolve document ID first (supports tree-child document URIs and standalone document URIs)
+            val docId = try {
+                DocumentsContract.getDocumentId(uri)
+            } catch (_: Exception) {
+                if (DocumentsContract.isTreeUri(uri)) {
+                    try {
+                        DocumentsContract.getTreeDocumentId(uri)
+                    } catch (_: Exception) {
+                        null
+                    }
+                } else null
             }
 
-            if (DocumentsContract.isDocumentUri(null, uri)) {
-                val docId = DocumentsContract.getDocumentId(uri)
-                if (docId.startsWith("primary:")) {
-                    val relativePath = docId.removePrefix("primary:")
-                    return File(Environment.getExternalStorageDirectory(), relativePath)
-                }
+            if (docId != null && docId.startsWith("primary:")) {
+                val relativePath = docId.removePrefix("primary:")
+                return File(Environment.getExternalStorageDirectory(), relativePath)
             }
         } catch (_: Exception) {
             // Ignore resolution errors and return null

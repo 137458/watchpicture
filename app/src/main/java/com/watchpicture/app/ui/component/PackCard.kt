@@ -32,10 +32,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
-import com.watchpicture.app.coil.ZipImageSource
 import com.watchpicture.app.model.DirectoryPack
 import com.watchpicture.app.model.PackItem
 import com.watchpicture.app.model.ZipPack
+import com.watchpicture.app.model.toImageModel
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.Text
@@ -215,24 +215,7 @@ fun PackCard(
 }
 
 private fun resolveCoverModel(pack: PackItem, password: String?): Any? {
-    val cover = pack.coverImage ?: return null
-    return when (pack) {
-        is ZipPack -> {
-            val file = pack.directPath?.let { File(it) }
-            if (file != null && file.exists()) {
-                ZipImageSource(
-                    zipFile = file,
-                    entryName = cover.entryPath,
-                    password = password
-                )
-            } else {
-                null
-            }
-        }
-        is DirectoryPack -> {
-            cover.directFilePath?.let { File(it) } ?: cover.fileUri?.let { Uri.parse(it) }
-        }
-    }
+    return pack.coverImage?.toImageModel(password)
 }
 
 private fun formatFileSize(bytes: Long): String {

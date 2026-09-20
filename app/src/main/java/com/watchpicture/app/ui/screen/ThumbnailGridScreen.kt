@@ -38,8 +38,8 @@ import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
-import com.watchpicture.app.coil.ZipImageSource
 import com.watchpicture.app.model.PackImage
+import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.basic.Icon
@@ -197,23 +197,7 @@ private fun ThumbnailItem(
     onClick: () -> Unit
 ) {
     val model: Any? = remember(image, sessionPassword) {
-        val direct = image.directFilePath?.let { File(it) }
-        if (direct != null && direct.exists()) {
-            if (direct.isDirectory) {
-                File(direct, image.entryPath)
-            } else {
-                // ZIP entry
-                ZipImageSource(
-                    zipFile = direct,
-                    entryName = image.entryPath,
-                    password = sessionPassword
-                )
-            }
-        } else if (image.fileUri != null) {
-            Uri.parse(image.fileUri)
-        } else {
-            null
-        }
+        image.toImageModel(sessionPassword)
     }
 
     Box(
