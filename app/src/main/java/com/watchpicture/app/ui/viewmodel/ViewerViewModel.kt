@@ -39,15 +39,29 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
     private val _uiState = MutableStateFlow(ViewerUiState())
     val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
 
+    private val packImagesCache = java.util.concurrent.ConcurrentHashMap<String, List<PackImage>>()
+
     fun loadImages(packId: String) {
+        val cached = packImagesCache[packId]
+        if (cached != null && cached.isNotEmpty()) {
+            com.watchpicture.app.util.AppLog.i("PackImages", "Instant 0ms cache hit for $packId (${cached.size} images)")
+            _uiState.update { it.copy(isLoading = false, images = cached, errorMessage = null) }
+            return
+        }
+
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+            val t0 = System.currentTimeMillis()
             try {
                 val images = withContext(Dispatchers.IO) {
                     resolvePackImages(packId)
                 }
+                packImagesCache[packId] = images
+                val elapsed = System.currentTimeMillis() - t0
+                com.watchpicture.app.util.AppLog.i("PackImages", "Resolved ${images.size} entries for $packId in ${elapsed}ms")
                 _uiState.update { it.copy(isLoading = false, images = images) }
             } catch (e: Exception) {
+                com.watchpicture.app.util.AppLog.e("PackImages", "Failed to load pack images for $packId", e)
                 _uiState.update {
                     it.copy(
                         isLoading = false,
@@ -161,6 +175,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
     }
 
     fun lockPack(packId: String) {
+        packImagesCache.remove(packId)
         passwordStore.markExplicitlyLocked(packId)
         val file = File(packId)
         if (file.exists() && file.isFile) {

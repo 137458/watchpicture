@@ -40,6 +40,7 @@ class ZipImageFetcher(
     }
 
     override suspend fun fetch(): FetchResult = withContext(decompressDispatcher) {
+        val t0 = System.currentTimeMillis()
         val password = data.password
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.get(data.zipFile.absolutePath) }.getOrNull()
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.lastUsedPassword }.getOrNull()
@@ -58,6 +59,7 @@ class ZipImageFetcher(
         if (data.isThumbnail && thumbCache != null) {
             val existingThumb = thumbCache.get(data.zipFile, data.entryName, data.targetSizePx, password)
             if (existingThumb != null) {
+                com.watchpicture.app.util.AppLog.i("Thumbnail", "Disk hit for ${data.entryName} in ${System.currentTimeMillis() - t0}ms")
                 return@withContext SourceFetchResult(
                     source = ImageSource(
                         file = existingThumb.toOkioPath(),
@@ -99,7 +101,9 @@ class ZipImageFetcher(
                 }
             }
 
+            val elapsed = System.currentTimeMillis() - t0
             if (thumbResult.bitmap != null && !thumbResult.bitmap.isRecycled) {
+                com.watchpicture.app.util.AppLog.i("Thumbnail", "Memory bypass for ${data.entryName} in ${elapsed}ms")
                 return@withContext ImageFetchResult(
                     image = thumbResult.bitmap.asImage(),
                     isSampled = true,
@@ -107,6 +111,7 @@ class ZipImageFetcher(
                 )
             }
 
+            com.watchpicture.app.util.AppLog.i("Thumbnail", "Disk extracted for ${data.entryName} in ${elapsed}ms")
             return@withContext SourceFetchResult(
                 source = ImageSource(
                     file = thumbResult.file.toOkioPath(),

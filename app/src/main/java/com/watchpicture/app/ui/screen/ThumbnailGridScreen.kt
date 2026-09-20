@@ -81,6 +81,8 @@ fun ThumbnailGridScreen(
     LaunchedEffect(uiState.images, packId) {
         val file = File(packId)
         if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && uiState.images.isNotEmpty()) {
+            // Delay background sweep by 800ms to allow visible viewport thumbnails to load without CPU contention
+            kotlinx.coroutines.delay(800)
             val app = WatchPictureApp.instance
             val entryNames = uiState.images.map { it.entryPath }
             app.archiveExtractionCoordinator.startBatchThumbnailSweep(
@@ -247,13 +249,12 @@ private fun ThumbnailItem(
                 .data(model)
                 .size(360, 360)
                 .precision(coil3.size.Precision.INEXACT)
-                .crossfade(100)
                 .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
 
             val thumbKey = when (model) {
                 is com.watchpicture.app.coil.ZipImageSource -> {
                     val pwdHash = model.password?.hashCode()?.toString(16) ?: "none"
-                    "thumb:zip://${model.zipFile.absolutePath}#${model.entryName}#pwd=$pwdHash#sz=360"
+                    "zip://${model.zipFile.absolutePath}#${model.entryName}#pwd=$pwdHash#thumb#sz=360"
                 }
                 is java.io.File -> "thumb:file://${model.absolutePath}#sz=360"
                 else -> null

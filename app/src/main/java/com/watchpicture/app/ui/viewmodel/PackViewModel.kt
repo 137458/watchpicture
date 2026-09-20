@@ -264,9 +264,13 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
 
                     if (lastPwd != null && targetFile != null && targetFile.exists()) {
                         viewModelScope.launch {
+                            val t0 = System.currentTimeMillis()
+                            com.watchpicture.app.util.AppLog.i("PackClick", "Verifying lastUsedPassword for ${pack.name}...")
                             val isValid = withContext(Dispatchers.IO) {
                                 zipArchiveManager.verifyPassword(targetFile, lastPwd)
                             }
+                            val elapsed = System.currentTimeMillis() - t0
+                            com.watchpicture.app.util.AppLog.i("PackClick", "Password verify for ${pack.name}: isValid=$isValid in ${elapsed}ms")
                             if (isValid) {
                                 val aliases = listOfNotNull(
                                     targetFile.absolutePath,

@@ -24,18 +24,9 @@ class ZipImageMapper(
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.get(data.zipFile.absolutePath) }.getOrNull()
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.lastUsedPassword }.getOrNull()
 
+        // Thumbnails stay as ZipImageSource to leverage ZipImageKeyer and ZipImageFetcher's memory Bitmap bypass
         if (data.isThumbnail) {
-            val thumbCache = thumbnailDiskCache
-                ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.thumbnailDiskCache }.getOrNull()
-            val thumbFile = thumbCache?.get(
-                zipFile = data.zipFile,
-                entryName = data.entryName,
-                targetSizePx = data.targetSizePx,
-                password = password
-            )
-            if (thumbFile != null && thumbFile.exists() && thumbFile.length() > 0) {
-                return thumbFile
-            }
+            return null
         }
 
         val diskCache = archiveDiskCache

@@ -281,27 +281,26 @@ class ArchiveExtractionCoordinator(
             }
         }
 
-        // Fast path 3: 7z stream session (works for BOTH encrypted and non-encrypted 7z!)
-        if (ZipArchiveManager.isSevenZFile(file)) {
-            val thumbResult = sevenZSessionManager.extractThumbnailResult(
-                file = file,
-                targetEntryName = entryName,
-                targetSizePx = targetSizePx,
-                password = password,
-                thumbnailDiskCache = thumbnailDiskCache,
-                lookahead = if (powerThermalManager?.isThrottled == true) 0 else 2,
-                keepBitmapInMemory = keepBitmapInMemory
-            )
-            if (thumbResult != null && thumbResult.file.exists() && thumbResult.file.length() > 0L) {
-                return@withContext thumbResult
-            }
-        }
-
         val mutex = getLockFor(file)
         mutex.withLock {
             val recheckThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
             if (recheckThumb != null && recheckThumb.exists() && recheckThumb.length() > 0L) {
                 return@withLock ThumbnailResult(recheckThumb, null)
+            }
+
+            if (ZipArchiveManager.isSevenZFile(file)) {
+                val thumbResult = sevenZSessionManager.extractThumbnailResult(
+                    file = file,
+                    targetEntryName = entryName,
+                    targetSizePx = targetSizePx,
+                    password = password,
+                    thumbnailDiskCache = thumbnailDiskCache,
+                    lookahead = if (powerThermalManager?.isThrottled == true) 0 else 2,
+                    keepBitmapInMemory = keepBitmapInMemory
+                )
+                if (thumbResult != null && thumbResult.file.exists() && thumbResult.file.length() > 0L) {
+                    return@withLock thumbResult
+                }
             }
 
             thumbnailDiskCache.getOrPutResult(file, entryName, targetSizePx, password, keepBitmapInMemory) {

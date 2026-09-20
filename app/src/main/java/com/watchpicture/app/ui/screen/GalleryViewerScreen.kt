@@ -448,25 +448,14 @@ private fun ZoomableImage(
         }
 
         val activeFile = resolvedFile
-        if (activeFile != null) {
-            // Full-res seekable local File: Activates Telephoto's native SubSamplingImageSource (BitmapRegionDecoder)
-            val fullRequest = remember(activeFile) {
-                coil3.request.ImageRequest.Builder(context)
-                    .data(activeFile)
-                    .crossfade(150)
-                    .precision(coil3.size.Precision.EXACT)
-                    .build()
-            }
 
-            me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
-                model = fullRequest,
-                contentDescription = image.displayName,
-                state = zoomableState,
-                onClick = { onSingleTap() },
-                modifier = Modifier.fillMaxSize()
-            )
-        } else {
-            // Immediate 0ms thumbnail preview while high-priority decompression is in flight
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .clickable { onSingleTap() },
+            contentAlignment = Alignment.Center
+        ) {
+            // Immediate 0ms thumbnail preview base layer: guarantees zero black screen regardless of cache state
             val thumbModel = remember(image, sessionPassword) {
                 image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
             }
@@ -474,20 +463,31 @@ private fun ZoomableImage(
                 coil3.request.ImageRequest.Builder(context)
                     .data(thumbModel)
                     .precision(coil3.size.Precision.INEXACT)
-                    .crossfade(100)
                     .build()
             }
 
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .clickable { onSingleTap() },
-                contentAlignment = Alignment.Center
-            ) {
-                coil3.compose.AsyncImage(
-                    model = thumbRequest,
+            coil3.compose.AsyncImage(
+                model = thumbRequest,
+                contentDescription = image.displayName,
+                contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // High-resolution seekable tile layer seamlessly overlays on top once ready
+            if (activeFile != null) {
+                val fullRequest = remember(activeFile) {
+                    coil3.request.ImageRequest.Builder(context)
+                        .data(activeFile)
+                        .crossfade(150)
+                        .precision(coil3.size.Precision.EXACT)
+                        .build()
+                }
+
+                me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
+                    model = fullRequest,
                     contentDescription = image.displayName,
-                    contentScale = androidx.compose.ui.layout.ContentScale.Fit,
+                    state = zoomableState,
+                    onClick = { onSingleTap() },
                     modifier = Modifier.fillMaxSize()
                 )
             }

@@ -60,7 +60,6 @@ class ThumbnailDiskCache(
         val cacheKey = computeKey(zipFile, entryName, targetSizePx, password)
         val targetFile = File(directory, "thumb_$cacheKey.webp")
         if (targetFile.exists() && targetFile.length() > 0) {
-            targetFile.setLastModified(System.currentTimeMillis())
             return targetFile
         }
         return null
@@ -89,14 +88,12 @@ class ThumbnailDiskCache(
 
         // Fast path
         if (targetFile.exists() && targetFile.length() > 0) {
-            targetFile.setLastModified(System.currentTimeMillis())
             return ThumbnailResult(targetFile, null)
         }
 
         val stripeLock = getLockFor(cacheKey)
         stripeLock.withLock {
             if (targetFile.exists() && targetFile.length() > 0) {
-                targetFile.setLastModified(System.currentTimeMillis())
                 return ThumbnailResult(targetFile, null)
             }
 

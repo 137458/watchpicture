@@ -246,6 +246,7 @@ class SevenZSessionManager(
 
             // If target is behind current cursor, solid stream cannot seek backwards -> reset to start
             if (targetIdx <= session.currentEntryIndex) {
+                com.watchpicture.app.util.AppLog.w("7zSession", "Stream rewind reset for $targetEntryName (cursor=${session.currentEntryIndex} -> target=$targetIdx)")
                 session.reset()
             }
 
