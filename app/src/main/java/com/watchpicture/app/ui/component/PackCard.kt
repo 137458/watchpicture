@@ -61,12 +61,9 @@ fun PackCard(
     val isLocked = pack.isEncrypted && sessionPassword == null
 
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .combinedClickable(
-                onClick = onClick,
-                onLongClick = onLongClick
-            )
+        modifier = modifier.fillMaxWidth(),
+        onClick = onClick,
+        onLongPress = onLongClick
     ) {
         Column(
             modifier = Modifier

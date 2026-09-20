@@ -10,19 +10,20 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * Dedicated dispatchers for CPU-intensive archive operations.
  *
- * Enforces [Process.THREAD_PRIORITY_BACKGROUND] on worker threads to guarantee
- * that heavy decompression (Deflate / LZMA) and image sampling run exclusively
- * on Linux energy-efficient (LITTLE) CPU cores. This leaves prime and performance
- * cores unhindered to fulfill the 8.3ms frame rendering budget on 120Hz mobile screens.
+ * Differentiates between interactive foreground decompression (scheduled on performance
+ * cores for instantaneous image viewing and AES-256 decryption) and background sweeps
+ * (scheduled on energy-efficient LITTLE cores to avoid frame drops).
  */
 object ArchiveDispatchers {
 
     private val threadId = AtomicInteger(1)
+    private val sweepThreadId = AtomicInteger(1)
 
-    private val backgroundThreadFactory = ThreadFactory { runnable ->
+    private val foregroundThreadFactory = ThreadFactory { runnable ->
         Thread({
             try {
-                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                // Interactive foreground priority allows EAS to use fast performance / middle cores
+                Process.setThreadPriority(Process.THREAD_PRIORITY_DEFAULT)
             } catch (_: Throwable) {
                 // Ignore in non-Android JVM environments
             }
@@ -30,11 +31,33 @@ object ArchiveDispatchers {
         }, "watchpic-decompress-${threadId.getAndIncrement()}")
     }
 
+    private val backgroundThreadFactory = ThreadFactory { runnable ->
+        Thread({
+            try {
+                // Low priority forces background batch sweeping onto energy-efficient LITTLE cores
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+            } catch (_: Throwable) {
+                // Ignore in non-Android JVM environments
+            }
+            runnable.run()
+        }, "watchpic-sweep-${sweepThreadId.getAndIncrement()}")
+    }
+
     /**
-     * Dedicated dispatcher for archive decompression and downsampling.
-     * Concurrency is fixed at 3 to match mobile little-core clusters (typically 3~4 cores).
+     * Interactive dispatcher for active image decompression, AES-256 decryption and downsampling.
+     * Concurrency is dynamically sized to available device cores (3..6) on performance clusters.
      */
     val decompressDispatcher: CoroutineDispatcher = Executors
-        .newFixedThreadPool(3, backgroundThreadFactory)
+        .newFixedThreadPool(
+            Runtime.getRuntime().availableProcessors().coerceIn(3, 6),
+            foregroundThreadFactory
+        )
+        .asCoroutineDispatcher()
+
+    /**
+     * Low-priority dispatcher for idle batch sweeps and lookahead preheating.
+     */
+    val backgroundSweepDispatcher: CoroutineDispatcher = Executors
+        .newFixedThreadPool(2, backgroundThreadFactory)
         .asCoroutineDispatcher()
 }

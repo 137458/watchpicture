@@ -161,6 +161,10 @@ class SevenZSessionManagerTest {
         val lookaheadThumb = thumbCache.get(solid7z, "03.jpg", 100, password = null)
         assertNotNull("Lookahead thumbnail for 03.jpg should be cached", lookaheadThumb)
 
+        // Intermediate 00.jpg and 01.jpg should be opportunistically cached in thumbnail cache to eliminate O(N^2) backward rewinds
+        assertNotNull("Opportunistic thumbnail for 00.jpg should be cached", thumbCache.get(solid7z, "00.jpg", 100, password = null))
+        assertNotNull("Opportunistic thumbnail for 01.jpg should be cached", thumbCache.get(solid7z, "01.jpg", 100, password = null))
+
         // Invariant: Intermediate 00.jpg and 01.jpg must NOT have been saved as full-res files to archiveDiskCache
         assertNull(archiveDiskCache.get(solid7z, "00.jpg", password = null))
         assertNull(archiveDiskCache.get(solid7z, "01.jpg", password = null))

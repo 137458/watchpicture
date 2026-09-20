@@ -87,23 +87,25 @@ class SevenZArchiveManager(
         }
 
         if (password.isNullOrEmpty() && Native7z.isAvailable) {
-            val session = Native7zArchiveSession.open(file.absolutePath)
-            if (session != null) {
-                return session.use { s ->
-                    s.entries
-                        .asSequence()
-                        .filter { !it.isDirectory }
-                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                        .filter { ZipArchiveManager.isImageFile(it.path) }
-                        .map { entry ->
-                            ArchiveEntryInfo(
-                                name = entry.path,
-                                uncompressedSize = entry.size,
-                                isEncrypted = false
-                            )
-                        }
-                        .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
-                        .toList()
+            if (!isEncrypted(file)) {
+                val session = Native7zArchiveSession.open(file.absolutePath)
+                if (session != null) {
+                    return session.use { s ->
+                        s.entries
+                            .asSequence()
+                            .filter { !it.isDirectory }
+                            .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                            .filter { ZipArchiveManager.isImageFile(it.path) }
+                            .map { entry ->
+                                ArchiveEntryInfo(
+                                    name = entry.path,
+                                    uncompressedSize = entry.size,
+                                    isEncrypted = false
+                                )
+                            }
+                            .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+                            .toList()
+                    }
                 }
             }
         }

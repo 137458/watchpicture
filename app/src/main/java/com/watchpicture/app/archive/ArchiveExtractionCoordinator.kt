@@ -304,9 +304,11 @@ class ArchiveExtractionCoordinator(
         password: String?,
         thumbnailDiskCache: ThumbnailDiskCache,
         onProgress: ((completed: Int, total: Int) -> Unit)? = null
-    ) = withContext(ArchiveDispatchers.decompressDispatcher) {
+    ) = withContext(ArchiveDispatchers.backgroundSweepDispatcher) {
         if (entryNames.isEmpty()) return@withContext
-        if (powerThermalManager?.isThrottled == true) return@withContext
+        if (powerThermalManager?.isThrottled == true) {
+            return@withContext
+        }
 
         val uncached = entryNames.filter { name ->
             thumbnailDiskCache.get(file, name, targetSizePx, password) == null
@@ -372,13 +374,13 @@ class ArchiveExtractionCoordinator(
     }
 
     /**
-     * Asynchronously prefetches adjacent entries in background on energy-efficient LITTLE cores.
+     * Asynchronously prefetches adjacent entries in background without blocking the UI thread.
      */
     suspend fun prefetch(
         file: File,
         targetEntryNames: List<String>,
         password: String?
-    ) = withContext(ArchiveDispatchers.decompressDispatcher) {
+    ) = withContext(ArchiveDispatchers.backgroundSweepDispatcher) {
         if (powerThermalManager?.isThrottled == true) {
             // Drop background prefetch immediately when phone is hot or in battery saver mode
             return@withContext
@@ -397,10 +399,12 @@ class ArchiveExtractionCoordinator(
             if (stillUncached.isEmpty()) return@withLock
 
             if (ZipArchiveManager.isSevenZFile(file)) {
-                // Use single-pass extraction for 7z
+                // Reuse active warm SevenZSessionManager to avoid repeating 524k-round PBKDF2 key derivations
                 runCatching {
-                    zipArchiveManager.extractSequentialEntries(file, stillUncached, password) { name, stream ->
-                        archiveDiskCache.getOrPut(file, name, password) { stream }
+                    for (name in stillUncached) {
+                        sevenZSessionManager.extractSequential(file, name, password, lookahead = 0) { extractedName, stream ->
+                            archiveDiskCache.getOrPut(file, extractedName, password) { stream }
+                        }
                     }
                 }
             } else {

@@ -111,8 +111,7 @@ class SafManager(
             if (isZip || isCbz || is7z) {
                 val cachedPassword = passwordStore.get(child.absolutePath)
                 val entries = zipArchiveManager.getImageEntries(child, cachedPassword)
-                val isEncrypted = entries.any { it.isEncrypted } ||
-                        (entries.isEmpty() && zipArchiveManager.isEncrypted(child))
+                val isEncrypted = zipArchiveManager.isEncrypted(child) || entries.any { it.isEncrypted }
 
                 val cover = entries.firstOrNull()?.let { entry ->
                     PackImage(

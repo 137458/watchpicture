@@ -131,20 +131,38 @@ class SevenZSessionManager(
                 if (isTarget) {
                     targetFound = true
                     if (!isDir) {
-                        val stream = currentSz.getInputStream(entry)
-                        onEntryExtracted(entryName, stream)
+                        currentSz.getInputStream(entry).use { stream ->
+                            onEntryExtracted(entryName, stream)
+                            while (stream.read(discardBuffer) != -1) {
+                                // drain remaining
+                            }
+                        }
                     }
                 } else if (!targetFound) {
                     // In solid compression, intermediate bytes must be decoded anyway to reach target.
                     // Opportunistically caching them saves work and turns O(N^2) seek into O(N) linear work.
                     if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
-                        val stream = currentSz.getInputStream(entry)
-                        onEntryExtracted(entryName, stream)
+                        currentSz.getInputStream(entry).use { stream ->
+                            onEntryExtracted(entryName, stream)
+                            while (stream.read(discardBuffer) != -1) {
+                                // drain remaining
+                            }
+                        }
+                    } else if (!isDir) {
+                        currentSz.getInputStream(entry).use { stream ->
+                            while (stream.read(discardBuffer) != -1) {
+                                // discard
+                            }
+                        }
                     }
                 } else if (targetFound && lookaheadRemaining > 0) {
                     if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
-                        val stream = currentSz.getInputStream(entry)
-                        onEntryExtracted(entryName, stream)
+                        currentSz.getInputStream(entry).use { stream ->
+                            onEntryExtracted(entryName, stream)
+                            while (stream.read(discardBuffer) != -1) {
+                                // drain remaining
+                            }
+                        }
                         lookaheadRemaining--
                     } else if (!isDir) {
                         currentSz.getInputStream(entry).use { stream ->
@@ -165,8 +183,11 @@ class SevenZSessionManager(
     }
 
     /**
-     * Extracts a thumbnail entry and optional lookahead entries sequentially within the active session,
-     * downsampling directly into [ThumbnailDiskCache] without dumping full-resolution images to flash.
+     * Directly decodes and stores a downsampled WebP thumbnail into [thumbnailDiskCache]
+     * using the active forward 7z stream session.
+     *
+     * Opportunistically caches intermediate images encountered before [targetEntryName]
+     * into [thumbnailDiskCache], turning O(N^2) seek penalty into an optimal O(N) linear pass.
      */
     suspend fun extractThumbnail(
         file: File,
@@ -174,7 +195,7 @@ class SevenZSessionManager(
         targetSizePx: Int,
         password: String?,
         thumbnailDiskCache: ThumbnailDiskCache,
-        lookahead: Int = 2
+        lookahead: Int = 0
     ): File? {
         val session = getSession(file, password)
 
@@ -221,9 +242,18 @@ class SevenZSessionManager(
                     }
                 } else if (session.currentEntryIndex < targetIdx) {
                     if (!isDir) {
-                        currentSz.getInputStream(entry).use { stream ->
-                            while (stream.read(discardBuffer) != -1) {
-                                // discard
+                        if (ZipArchiveManager.isImageFile(entryName) &&
+                            thumbnailDiskCache.get(file, entryName, targetSizePx, password) == null
+                        ) {
+                            // Opportunistically save intermediate thumbnails to eliminate backward resets
+                            currentSz.getInputStream(entry).use { stream ->
+                                thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
+                            }
+                        } else {
+                            currentSz.getInputStream(entry).use { stream ->
+                                while (stream.read(discardBuffer) != -1) {
+                                    // discard
+                                }
                             }
                         }
                     }
