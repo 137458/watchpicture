@@ -3,6 +3,7 @@ package com.watchpicture.app.archive
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -108,7 +109,11 @@ class ArchiveExtractionCoordinator(
     ): File {
         // Yield background sweep to immediately free the session lock and CPU cores
         pauseBackgroundSweep()
-        return extract(file, entryName, password)
+        try {
+            return extract(file, entryName, password)
+        } finally {
+            resumeBackgroundSweep()
+        }
     }
 
     private fun extractZipEntry(file: File, entryName: String, password: String?): File {
@@ -149,11 +154,15 @@ class ArchiveExtractionCoordinator(
             if (extractedFile != null && extractedFile.exists() && extractedFile.length() > 0L) {
                 if (lookahead > 0) {
                     val nextEntries = sevenZSessionManager.getNextImageEntries(file, targetEntryName, password, lookahead)
-                    for (nextEntry in nextEntries) {
-                        if (archiveDiskCache.get(file, nextEntry, password) == null) {
-                            runCatching {
-                                archiveDiskCache.putDirectSuspend(file, nextEntry, password) { tempTargetFile ->
-                                    sevenZSessionManager.extractToFile(file, nextEntry, password, tempTargetFile, 0)
+                    if (nextEntries.isNotEmpty()) {
+                        kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.backgroundSweepDispatcher).launch {
+                            for (nextEntry in nextEntries) {
+                                if (archiveDiskCache.get(file, nextEntry, password) == null) {
+                                    runCatching {
+                                        archiveDiskCache.putDirectSuspend(file, nextEntry, password) { tempTargetFile ->
+                                            sevenZSessionManager.extractToFile(file, nextEntry, password, tempTargetFile, 0)
+                                        }
+                                    }
                                 }
                             }
                         }

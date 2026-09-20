@@ -164,10 +164,7 @@ fun GalleryViewerScreen(
             androidx.compose.runtime.DisposableEffect(packId) {
                 coordinator?.pauseBackgroundSweep()
                 onDispose {
-                    val file = java.io.File(packId)
-                    if (file.exists() && file.isFile) {
-                        coordinator?.closeSession(file)
-                    }
+                    coordinator?.resumeBackgroundSweep()
                 }
             }
 
@@ -450,15 +447,24 @@ private fun ZoomableImage(
 
         val activeFile = resolvedFile
 
+        val currentModel = activeFile ?: imageModel
+        val fullRequest = remember(currentModel) {
+            coil3.request.ImageRequest.Builder(context)
+                .data(currentModel)
+                .crossfade(200)
+                .precision(coil3.size.Precision.EXACT)
+                .build()
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxSize()
                 .clickable { onSingleTap() },
             contentAlignment = Alignment.Center
         ) {
-            // Immediate 0ms thumbnail preview base layer: guarantees zero black screen regardless of cache state
+            // Immediate preview base layer: prevents black screen while full resolution loads
             val thumbModel = remember(image, sessionPassword) {
-                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
+                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 720)
             }
             val thumbRequest = remember(thumbModel) {
                 coil3.request.ImageRequest.Builder(context)
@@ -469,29 +475,19 @@ private fun ZoomableImage(
 
             coil3.compose.AsyncImage(
                 model = thumbRequest,
-                contentDescription = image.displayName,
+                contentDescription = null,
                 contentScale = androidx.compose.ui.layout.ContentScale.Fit,
                 modifier = Modifier.fillMaxSize()
             )
 
-            // High-resolution seekable tile layer seamlessly overlays on top once ready
-            if (activeFile != null) {
-                val fullRequest = remember(activeFile) {
-                    coil3.request.ImageRequest.Builder(context)
-                        .data(activeFile)
-                        .crossfade(150)
-                        .precision(coil3.size.Precision.EXACT)
-                        .build()
-                }
-
-                me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
-                    model = fullRequest,
-                    contentDescription = image.displayName,
-                    state = zoomableState,
-                    onClick = { onSingleTap() },
-                    modifier = Modifier.fillMaxSize()
-                )
-            }
+            // High-resolution interactive ZoomableAsyncImage is always active for consistent gestures and display
+            me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
+                model = fullRequest,
+                contentDescription = image.displayName,
+                state = zoomableState,
+                onClick = { onSingleTap() },
+                modifier = Modifier.fillMaxSize()
+            )
         }
     }
 }

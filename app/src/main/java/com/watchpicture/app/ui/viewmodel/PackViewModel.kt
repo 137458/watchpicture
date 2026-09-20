@@ -266,7 +266,7 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                         viewModelScope.launch {
                             val t0 = System.currentTimeMillis()
                             com.watchpicture.app.util.AppLog.i("PackClick", "Verifying lastUsedPassword for ${pack.name}...")
-                            val isValid = withContext(Dispatchers.IO) {
+                            val isValid = withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
                                 zipArchiveManager.verifyPassword(targetFile, lastPwd)
                             }
                             val elapsed = System.currentTimeMillis() - t0
@@ -347,7 +347,7 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
 
         viewModelScope.launch {
             _uiState.update { it.copy(isVerifyingPassword = true, passwordError = null) }
-            val isValid = withContext(Dispatchers.IO) {
+            val isValid = withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
                 zipArchiveManager.verifyPassword(targetFile, password)
             }
 

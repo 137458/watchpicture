@@ -486,6 +486,34 @@ Java_com_watchpicture_app_archive_Native7z_nativePurgeBlockCache(
     archive->purgeBlockCache();
 }
 
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_watchpicture_app_archive_Native7z_nativeVerify(
+    JNIEnv * /* env */,
+    jclass /* clazz */,
+    jlong handle,
+    jint fileIndex
+) {
+    if (!handle || fileIndex < 0) return JNI_FALSE;
+    auto *archive = reinterpret_cast<Native7zArchive *>(handle);
+    size_t offset = 0;
+    size_t outSizeProcessed = 0;
+
+    std::lock_guard<std::mutex> lock(archive->mutex);
+    SRes res = SzArEx_Extract(
+        &archive->db,
+        &archive->lookStream.vt,
+        static_cast<UInt32>(fileIndex),
+        &archive->blockIndex,
+        &archive->outBuffer,
+        &archive->outBufferSize,
+        &offset,
+        &outSizeProcessed,
+        &g_Alloc,
+        &g_Alloc
+    );
+    return (res == SZ_OK) ? JNI_TRUE : JNI_FALSE;
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_watchpicture_app_archive_Native7z_nativeClose(
     JNIEnv * /* env */,

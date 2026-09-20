@@ -70,6 +70,9 @@ object Native7z {
     external fun nativePurgeBlockCache(handle: Long)
 
     @JvmStatic
+    external fun nativeVerify(handle: Long, fileIndex: Int): Boolean
+
+    @JvmStatic
     external fun nativeClose(handle: Long)
 
     @JvmStatic
@@ -139,6 +142,14 @@ class Native7zArchiveSession private constructor(
     fun extractToBytes(fileIndex: Int): ByteArray? {
         if (closed.get()) return null
         return Native7z.nativeExtractToBytes(handle, fileIndex)
+    }
+
+    /**
+     * Probes entry decryption and solid block decompression without allocating large Java byte arrays.
+     */
+    fun verifyEntry(fileIndex: Int): Boolean {
+        if (closed.get()) return false
+        return Native7z.nativeVerify(handle, fileIndex)
     }
 
     /**

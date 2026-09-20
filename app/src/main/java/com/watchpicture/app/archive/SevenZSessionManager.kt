@@ -1,6 +1,7 @@
 package com.watchpicture.app.archive
 
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
@@ -541,6 +542,53 @@ class SevenZSessionManager(
     }
 
     /**
+     * Quickly probes whether password can decrypt entries using lightweight native verification
+     * without extracting full uncompressed images into Java byte arrays.
+     */
+    suspend fun verifyPassword(file: File, password: String): Boolean {
+        val session = getSession(file, password)
+        return try {
+            session.lock.withLock {
+                session.lastAccessTime = System.currentTimeMillis()
+                try {
+                    session.openIfNeeded()
+                } catch (_: Throwable) {
+                    session.close()
+                    return@withLock false
+                }
+                val native = session.nativeSession
+                if (native != null && !session.nativeFailed) {
+                    val encrypted = native.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isImageFile(it.path) }
+                    if (encrypted == null) return@withLock true
+                    val ok = native.verifyEntry(encrypted.index)
+                    if (ok) return@withLock true
+                    session.markNativeFailed()
+                }
+
+                // Java probe fallback
+                try {
+                    session.openJavaSevenZ()
+                } catch (_: Throwable) {
+                    session.close()
+                    return@withLock false
+                }
+                val sz = session.sevenZ ?: return@withLock false
+                val entry = sz.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isImageFile(it.name) } ?: return@withLock true
+                try {
+                    sz.getInputStream(entry).use { stream ->
+                        val buf = ByteArray(16)
+                        stream.read(buf) >= 0
+                    }
+                } catch (_: Throwable) {
+                    false
+                }
+            }
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
      * Returns entry names in their exact physical archive storage order.
      */
     fun getPhysicalEntryNames(file: File, password: String?): List<String>? {
@@ -637,7 +685,19 @@ class SevenZSessionManager(
      */
     fun closeSession(file: File) {
         val key = getSessionKey(file)
-        sessions.remove(key)?.close()
+        val session = sessions.remove(key) ?: return
+        val isMainThread = try {
+            android.os.Looper.myLooper() != null && android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+        } catch (_: Throwable) {
+            false
+        }
+        if (isMainThread) {
+            kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
+                session.close()
+            }
+        } else {
+            session.close()
+        }
     }
 
     /**

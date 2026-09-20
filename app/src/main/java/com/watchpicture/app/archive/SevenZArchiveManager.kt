@@ -140,31 +140,15 @@ class SevenZArchiveManager(
      */
     fun verifyPassword(file: File, password: String): Boolean {
         if (!isValidSevenZArchive(file)) return false
-
-        if (sessionManager.prewarmSession(file, password)) {
-            val entries = sessionManager.getEntries(file, password)
-            val encryptedEntry = entries?.firstOrNull { it.isEncrypted }
-            if (encryptedEntry != null) {
-                val valid = runCatching {
-                    var ok = false
-                    kotlinx.coroutines.runBlocking {
-                        sessionManager.extractSequential(file, encryptedEntry.name, password, lookahead = 0) { _, stream ->
-                            val buf = ByteArray(64)
-                            ok = stream.read(buf) >= 0
-                        }
-                    }
-                    ok
-                }.getOrDefault(false)
-
-                if (!valid) {
-                    sessionManager.closeSession(file)
-                    return false
-                }
+        val ok = runCatching {
+            kotlinx.coroutines.runBlocking {
+                sessionManager.verifyPassword(file, password)
             }
-            return true
+        }.getOrDefault(false)
+        if (!ok) {
+            sessionManager.closeSession(file)
         }
-
-        return false
+        return ok
     }
 
     /**
