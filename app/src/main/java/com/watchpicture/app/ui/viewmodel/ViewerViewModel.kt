@@ -25,7 +25,9 @@ data class ViewerUiState(
     val errorMessage: String? = null
 )
 
-class ViewerViewModel(application: Application) : AndroidViewModel(application) {
+class ViewerViewModel(application: Application = WatchPictureApp.instance) : AndroidViewModel(application) {
+
+    constructor() : this(WatchPictureApp.instance)
 
     private val app = application as WatchPictureApp
     private val zipArchiveManager = app.zipArchiveManager

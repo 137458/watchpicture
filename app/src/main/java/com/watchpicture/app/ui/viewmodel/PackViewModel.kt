@@ -59,7 +59,9 @@ data class PackListUiState(
         }
 }
 
-class PackViewModel(application: Application) : AndroidViewModel(application) {
+class PackViewModel(application: Application = WatchPictureApp.instance) : AndroidViewModel(application) {
+
+    constructor() : this(WatchPictureApp.instance)
 
     private val app = application as WatchPictureApp
     private val zipArchiveManager = app.zipArchiveManager
