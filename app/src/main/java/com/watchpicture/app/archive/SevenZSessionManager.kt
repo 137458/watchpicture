@@ -28,13 +28,27 @@ class SevenZSessionManager(
         val password: String?
     ) {
         val lock = Mutex()
+        var nativeSession: Native7zArchiveSession? = null
         var sevenZ: SevenZFile? = null
         var entries: List<SevenZArchiveEntry> = emptyList()
         var currentEntryIndex: Int = -1
         var lastAccessTime: Long = System.currentTimeMillis()
 
         fun openIfNeeded() {
-            if (sevenZ == null) {
+            if (nativeSession == null && sevenZ == null) {
+                if (Native7z.isAvailable) {
+                    try {
+                        val ns = Native7zArchiveSession.open(file.absolutePath, password)
+                        if (ns != null && ns.entries.isNotEmpty()) {
+                            nativeSession = ns
+                            com.watchpicture.app.util.AppLog.d("7zSession", "Native7z session opened for ${file.name} with ${ns.entries.size} entries")
+                            return
+                        }
+                    } catch (t: Throwable) {
+                        com.watchpicture.app.util.AppLog.w("7zSession", "Native7z open failed, fallback to Java SevenZFile: ${t.message}")
+                    }
+                }
+
                 val builder = SevenZFile.builder().setFile(file)
                 if (!password.isNullOrEmpty()) {
                     builder.setPassword(password)
@@ -47,11 +61,17 @@ class SevenZSessionManager(
         }
 
         fun reset() {
+            if (nativeSession != null) {
+                // Native session has random access via solid block cache, no stream rewind needed!
+                return
+            }
             close()
             openIfNeeded()
         }
 
         fun close() {
+            runCatching { nativeSession?.close() }
+            nativeSession = null
             runCatching { sevenZ?.close() }
             sevenZ = null
             entries = emptyList()
@@ -98,6 +118,36 @@ class SevenZSessionManager(
         return session.lock.withLock {
             session.lastAccessTime = System.currentTimeMillis()
             session.openIfNeeded()
+
+            val native = session.nativeSession
+            if (native != null) {
+                val targetEntry = native.findEntry(targetEntryName) ?: return@withLock false
+                val bytes = native.extractToBytes(targetEntry.index) ?: return@withLock false
+                java.io.ByteArrayInputStream(bytes).use { stream ->
+                    onEntryExtracted(targetEntry.path, stream)
+                }
+
+                if (lookahead > 0) {
+                    val nextEntries = native.entries
+                        .asSequence()
+                        .filter { it.index > targetEntry.index && !it.isDirectory }
+                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                        .filter { ZipArchiveManager.isImageFile(it.path) }
+                        .take(lookahead)
+                        .toList()
+
+                    for (next in nextEntries) {
+                        val nextBytes = native.extractToBytes(next.index)
+                        if (nextBytes != null) {
+                            java.io.ByteArrayInputStream(nextBytes).use { stream ->
+                                onEntryExtracted(next.path, stream)
+                            }
+                        }
+                    }
+                }
+                return@withLock true
+            }
+
             val sz = session.sevenZ ?: return@withLock false
 
             val normalizedTarget = targetEntryName.replace('\\', '/')
@@ -244,6 +294,46 @@ class SevenZSessionManager(
         return session.lock.withLock {
             session.lastAccessTime = System.currentTimeMillis()
             session.openIfNeeded()
+
+            val native = session.nativeSession
+            if (native != null) {
+                val targetEntry = native.findEntry(targetEntryName) ?: return@withLock null
+                val bytes = native.extractToBytes(targetEntry.index) ?: return@withLock null
+
+                val result = thumbnailDiskCache.getOrPutResult(
+                    zipFile = file,
+                    entryName = targetEntryName,
+                    targetSizePx = targetSizePx,
+                    password = password,
+                    keepBitmapInMemory = keepBitmapInMemory
+                ) {
+                    java.io.ByteArrayInputStream(bytes)
+                }
+
+                if (lookahead > 0) {
+                    val nextEntries = native.entries
+                        .asSequence()
+                        .filter { it.index > targetEntry.index && !it.isDirectory }
+                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                        .filter { ZipArchiveManager.isImageFile(it.path) }
+                        .take(lookahead)
+                        .toList()
+
+                    for (next in nextEntries) {
+                        if (thumbnailDiskCache.get(file, next.path, targetSizePx, password) == null) {
+                            val nextBytes = native.extractToBytes(next.index)
+                            if (nextBytes != null) {
+                                thumbnailDiskCache.getOrPut(file, next.path, targetSizePx, password) {
+                                    java.io.ByteArrayInputStream(nextBytes)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                return@withLock result
+            }
+
             val sz = session.sevenZ ?: return@withLock null
 
             val normalizedTarget = targetEntryName.replace('\\', '/')
@@ -340,6 +430,60 @@ class SevenZSessionManager(
     }
 
     /**
+     * Extracts target entry directly to destination file using native C zero-copy stream write
+     * if native session is available. Returns true if extracted natively, false otherwise.
+     */
+    suspend fun extractToFile(
+        file: File,
+        targetEntryName: String,
+        password: String?,
+        destination: File,
+        lookahead: Int = 0
+    ): Boolean {
+        val session = getSession(file, password)
+        return session.lock.withLock {
+            session.lastAccessTime = System.currentTimeMillis()
+            session.openIfNeeded()
+            val native = session.nativeSession ?: return@withLock false
+            val targetEntry = native.findEntry(targetEntryName) ?: return@withLock false
+
+            val ok = native.extractToFile(targetEntry.index, destination)
+            if (!ok) return@withLock false
+
+            if (lookahead > 0) {
+                val nextEntries = native.entries
+                    .asSequence()
+                    .filter { it.index > targetEntry.index && !it.isDirectory }
+                    .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                    .filter { ZipArchiveManager.isImageFile(it.path) }
+                    .take(lookahead)
+                    .toList()
+
+                // Opportunistic background extraction can be done if desired
+            }
+            true
+        }
+    }
+
+    /**
+     * Returns entry names in their exact physical archive storage order.
+     */
+    fun getPhysicalEntryNames(file: File, password: String?): List<String>? {
+        val session = getSession(file, password)
+        return try {
+            session.openIfNeeded()
+            val native = session.nativeSession
+            if (native != null) {
+                native.entries.map { it.path }
+            } else {
+                session.entries.map { it.name }.ifEmpty { null }
+            }
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
+    /**
      * Returns entries in their exact physical archive storage order.
      */
     fun getPhysicalEntries(file: File, password: String?): List<SevenZArchiveEntry>? {
@@ -361,7 +505,7 @@ class SevenZSessionManager(
         val session = getSession(file, password)
         return try {
             session.openIfNeeded()
-            session.sevenZ != null
+            session.nativeSession != null || session.sevenZ != null
         } catch (_: Throwable) {
             sessions.remove(key)?.close()
             false
@@ -375,9 +519,28 @@ class SevenZSessionManager(
         val key = getSessionKey(file)
         val session = sessions[key] ?: return null
         if (session.password != password) return null
-        if (session.entries.isEmpty()) return null
 
         val naturalOrderComparator = NaturalOrderComparator()
+        val native = session.nativeSession
+        if (native != null) {
+            if (native.entries.isEmpty()) return null
+            return native.entries
+                .asSequence()
+                .filter { !it.isDirectory }
+                .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                .filter { ZipArchiveManager.isImageFile(it.path) }
+                .map { entry ->
+                    ArchiveEntryInfo(
+                        name = entry.path,
+                        uncompressedSize = entry.size,
+                        isEncrypted = !password.isNullOrEmpty()
+                    )
+                }
+                .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+                .toList()
+        }
+
+        if (session.entries.isEmpty()) return null
         return session.entries
             .asSequence()
             .filter { !it.isDirectory }

@@ -694,7 +694,7 @@ static SRes SzFolder_Decode2(
 
       RINOK(GetAesKeyAndIv((CSzAr *)p, aesCoder, propsData, key, iv))
 
-      UInt32 si = folder->PackStreams[0];
+      UInt32 si = 0;
       UInt64 offset = packPositions[si];
       UInt64 inSize = packPositions[(size_t)si + 1] - offset;
       RINOK(LookInStream_SeekTo(inStream, startPos + offset))

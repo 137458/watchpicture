@@ -221,4 +221,21 @@ class SevenZSessionManagerTest {
         )
         assertNull("Should return null and not rewind when allowRewind=false", thumb1)
     }
+
+    @Test
+    fun `getPhysicalEntryNames returns list of names in physical order`() {
+        val names = sessionManager.getPhysicalEntryNames(solid7z, password = null)
+        assertNotNull(names)
+        assertEquals(listOf("00.jpg", "01.jpg", "02.jpg", "03.jpg"), names)
+    }
+
+    @Test
+    fun `prewarmSession opens session and keeps it active`() {
+        val prewarmed = sessionManager.prewarmSession(solid7z, password = null)
+        assertTrue(prewarmed)
+        assertEquals(1, sessionManager.activeSessionCount)
+        val entries = sessionManager.getEntries(solid7z, password = null)
+        assertNotNull(entries)
+        assertEquals(4, entries!!.size)
+    }
 }

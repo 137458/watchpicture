@@ -88,11 +88,40 @@ class Native7zArchiveSession private constructor(
     val entries: List<Native7zEntry>
 ) : Closeable {
     private val closed = AtomicBoolean(false)
-    private val entryMap: Map<String, Native7zEntry> = entries.associateBy { it.path.trimStart('/') }
+    private val entryMap: Map<String, Native7zEntry>
+    private val fileNameMap: Map<String, Native7zEntry>
+
+    init {
+        val map = HashMap<String, Native7zEntry>(entries.size * 2)
+        val fMap = HashMap<String, Native7zEntry>(entries.size * 2)
+        for (e in entries) {
+            val norm = e.path.replace('\\', '/').trimStart('/')
+            map[norm] = e
+            map[e.path] = e
+            val fileName = norm.substringAfterLast('/')
+            if (!fMap.containsKey(fileName)) {
+                fMap[fileName] = e
+            }
+        }
+        entryMap = map
+        fileNameMap = fMap
+    }
 
     fun findEntry(entryPath: String): Native7zEntry? {
-        val normalized = entryPath.trimStart('/')
-        return entryMap[normalized]
+        val normalized = entryPath.replace('\\', '/').trimStart('/')
+        entryMap[normalized]?.let { return it }
+        entryMap[entryPath]?.let { return it }
+
+        val nfc = java.text.Normalizer.normalize(normalized, java.text.Normalizer.Form.NFC)
+        for (e in entries) {
+            val p = e.path.replace('\\', '/').trimStart('/')
+            if (p == normalized || java.text.Normalizer.normalize(p, java.text.Normalizer.Form.NFC) == nfc) {
+                return e
+            }
+        }
+
+        val fileName = normalized.substringAfterLast('/')
+        return fileNameMap[fileName]
     }
 
     /**

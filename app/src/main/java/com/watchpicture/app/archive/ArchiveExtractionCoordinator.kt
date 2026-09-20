@@ -354,9 +354,9 @@ class ArchiveExtractionCoordinator(
         if (uncached.isEmpty()) return@withContext
 
         if (ZipArchiveManager.isSevenZFile(file)) {
-            val rawPhysical = sevenZSessionManager.getPhysicalEntries(file, password)
+            val rawPhysical = sevenZSessionManager.getPhysicalEntryNames(file, password)
             val physicalOrderMap = rawPhysical?.mapIndexed { idx, it ->
-                it.name.replace('\\', '/') to idx
+                it.replace('\\', '/') to idx
             }?.toMap() ?: emptyMap()
 
             // Sort uncached targets strictly ascending according to physical order in the 7z archive
