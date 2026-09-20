@@ -104,6 +104,14 @@ class ZipImageFetcher(
             val elapsed = System.currentTimeMillis() - t0
             if (thumbResult.bitmap != null && !thumbResult.bitmap.isRecycled) {
                 com.watchpicture.app.util.AppLog.i("Thumbnail", "Memory bypass for ${data.entryName} in ${elapsed}ms")
+                val keyStr = "zip://${data.zipFile.absolutePath}#${data.entryName}#pwd=${password?.hashCode()?.toString(16) ?: "none"}#thumb#sz=${data.targetSizePx}"
+                runCatching {
+                    val memCache = coil3.SingletonImageLoader.get(options.context).memoryCache
+                    memCache?.set(
+                        coil3.memory.MemoryCache.Key(keyStr),
+                        coil3.memory.MemoryCache.Value(image = thumbResult.bitmap.asImage())
+                    )
+                }
                 return@withContext ImageFetchResult(
                     image = thumbResult.bitmap.asImage(),
                     isSampled = true,

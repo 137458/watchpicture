@@ -440,3 +440,45 @@ Java_com_watchpicture_app_archive_Native7z_nativeClose(
     auto *archive = reinterpret_cast<Native7zArchive *>(handle);
     delete archive;
 }
+
+#include "sha256_kdf.h"
+
+extern "C" JNIEXPORT jbyteArray JNICALL
+Java_com_watchpicture_app_archive_Native7z_nativeDeriveKey(
+    JNIEnv *env,
+    jclass /* clazz */,
+    jbyteArray passwordBytes,
+    jbyteArray saltBytes,
+    jint numCyclesPower
+) {
+    if (!passwordBytes || !saltBytes) {
+        return nullptr;
+    }
+
+    jsize pwdLen = env->GetArrayLength(passwordBytes);
+    jsize saltLen = env->GetArrayLength(saltBytes);
+
+    jbyte *pwdPtr = env->GetByteArrayElements(passwordBytes, nullptr);
+    jbyte *saltPtr = env->GetByteArrayElements(saltBytes, nullptr);
+
+    uint8_t outKey[32];
+    sha256_7z_derive_key(
+        reinterpret_cast<const uint8_t *>(pwdPtr),
+        static_cast<size_t>(pwdLen),
+        reinterpret_cast<const uint8_t *>(saltPtr),
+        static_cast<size_t>(saltLen),
+        numCyclesPower,
+        outKey
+    );
+
+    env->ReleaseByteArrayElements(passwordBytes, pwdPtr, JNI_ABORT);
+    env->ReleaseByteArrayElements(saltBytes, saltPtr, JNI_ABORT);
+
+    jbyteArray result = env->NewByteArray(32);
+    if (!result) {
+        return nullptr;
+    }
+    env->SetByteArrayRegion(result, 0, 32, reinterpret_cast<const jbyte *>(outKey));
+    return result;
+}
+

@@ -1,6 +1,8 @@
 package com.watchpicture.app.archive
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -32,6 +34,16 @@ class ArchiveExtractionCoordinator(
     }
 
     private val archiveLocks = ConcurrentHashMap<String, Mutex>()
+    private val activeSweepJob = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?>(null)
+
+    /**
+     * Pauses and cancels any currently executing background thumbnail sweep.
+     * Called when a high-priority viewport request occurs, immediately releasing
+     * CPU cores and session mutexes for instant foreground page rendering.
+     */
+    fun pauseBackgroundSweep() {
+        activeSweepJob.getAndSet(null)?.cancel()
+    }
 
     private fun getLockFor(file: File): Mutex {
         val path = try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
@@ -78,7 +90,11 @@ class ArchiveExtractionCoordinator(
         file: File,
         entryName: String,
         password: String?
-    ): File = extract(file, entryName, password)
+    ): File {
+        // Yield background sweep to immediately free the session lock and CPU cores
+        pauseBackgroundSweep()
+        return extract(file, entryName, password)
+    }
 
     private fun extractZipEntry(file: File, entryName: String, password: String?): File {
         return archiveDiskCache.getOrPut(file, entryName, password) {
@@ -326,6 +342,8 @@ class ArchiveExtractionCoordinator(
             return@withContext
         }
 
+        activeSweepJob.set(kotlinx.coroutines.currentCoroutineContext()[Job])
+
         val uncached = entryNames.filter { name ->
             thumbnailDiskCache.get(file, name, targetSizePx, password) == null
         }
@@ -335,6 +353,7 @@ class ArchiveExtractionCoordinator(
             var count = 0
             val total = uncached.size
             for (target in uncached) {
+                if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
                 if (powerThermalManager?.isThrottled == true) break
                 val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
                 if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
@@ -349,7 +368,8 @@ class ArchiveExtractionCoordinator(
                         targetSizePx = targetSizePx,
                         password = password,
                         thumbnailDiskCache = thumbnailDiskCache,
-                        lookahead = 0
+                        lookahead = 0,
+                        allowRewind = false
                     )
                 }
                 count++

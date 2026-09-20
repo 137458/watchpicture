@@ -71,6 +71,13 @@ object Native7z {
 
     @JvmStatic
     external fun nativeClose(handle: Long)
+
+    @JvmStatic
+    external fun nativeDeriveKey(
+        passwordBytes: ByteArray,
+        saltBytes: ByteArray,
+        numCyclesPower: Int
+    ): ByteArray?
 }
 
 /**

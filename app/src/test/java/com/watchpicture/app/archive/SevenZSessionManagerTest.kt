@@ -169,4 +169,56 @@ class SevenZSessionManagerTest {
         assertNull(archiveDiskCache.get(solid7z, "00.jpg", password = null))
         assertNull(archiveDiskCache.get(solid7z, "01.jpg", password = null))
     }
+
+    @Test
+    fun `extractSequential with allowRewind=false skips backward target without rewinding`() = runBlocking {
+        // Advance cursor to 02.jpg
+        val ok2 = sessionManager.extractSequential(solid7z, "02.jpg", password = null, lookahead = 0) { _, _ -> }
+        assertTrue(ok2)
+
+        // Request 00.jpg with allowRewind = false (simulating background sweep)
+        var callbackCalled = false
+        val ok0 = sessionManager.extractSequential(solid7z, "00.jpg", password = null, lookahead = 0, allowRewind = false) { _, _ ->
+            callbackCalled = true
+        }
+
+        assertFalse("Should not rewind or succeed for backward target when allowRewind=false", ok0)
+        assertFalse("Callback should not be invoked", callbackCalled)
+
+        // The session cursor should remain at 02.jpg, so forward request to 03.jpg continues forward seamlessly
+        var extracted03 = false
+        val ok3 = sessionManager.extractSequential(solid7z, "03.jpg", password = null, lookahead = 0) { name, _ ->
+            if (name == "03.jpg") extracted03 = true
+        }
+        assertTrue(ok3)
+        assertTrue(extracted03)
+    }
+
+    @Test
+    fun `extractThumbnailResult with allowRewind=false skips backward target without rewinding`() = runBlocking {
+        val thumbDir = tempFolder.newFolder("rewind_thumb_dir")
+        val thumbCache = ThumbnailDiskCache(thumbDir)
+
+        // Advance to 02.jpg
+        val thumb2 = sessionManager.extractThumbnailResult(
+            file = solid7z,
+            targetEntryName = "02.jpg",
+            targetSizePx = 100,
+            password = null,
+            thumbnailDiskCache = thumbCache,
+            allowRewind = true
+        )
+        assertNotNull(thumb2)
+
+        // Request 01.jpg with allowRewind = false
+        val thumb1 = sessionManager.extractThumbnailResult(
+            file = solid7z,
+            targetEntryName = "01.jpg",
+            targetSizePx = 100,
+            password = null,
+            thumbnailDiskCache = thumbCache,
+            allowRewind = false
+        )
+        assertNull("Should return null and not rewind when allowRewind=false", thumb1)
+    }
 }

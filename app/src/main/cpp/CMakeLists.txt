@@ -42,6 +42,7 @@ add_library(
     native7z
     SHARED
     ${7Z_C_SOURCES}
+    sha256_kdf.c
     native7z_jni.cpp
 )
 

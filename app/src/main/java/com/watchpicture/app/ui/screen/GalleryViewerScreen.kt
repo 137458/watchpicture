@@ -162,6 +162,7 @@ fun GalleryViewerScreen(
             val coordinator = app?.archiveExtractionCoordinator
 
             androidx.compose.runtime.DisposableEffect(packId) {
+                coordinator?.pauseBackgroundSweep()
                 onDispose {
                     val file = java.io.File(packId)
                     if (file.exists() && file.isFile) {

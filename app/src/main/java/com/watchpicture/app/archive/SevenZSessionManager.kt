@@ -1,5 +1,6 @@
 package com.watchpicture.app.archive
 
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import org.apache.commons.compress.archivers.sevenz.SevenZArchiveEntry
@@ -89,6 +90,7 @@ class SevenZSessionManager(
         targetEntryName: String,
         password: String?,
         lookahead: Int = 0,
+        allowRewind: Boolean = true,
         onEntryExtracted: (name: String, stream: InputStream) -> Unit
     ): Boolean {
         val session = getSession(file, password)
@@ -112,6 +114,9 @@ class SevenZSessionManager(
 
             // If target is behind current cursor, solid stream cannot seek backwards -> reset to start
             if (targetIdx <= session.currentEntryIndex) {
+                if (!allowRewind) {
+                    return@withLock false
+                }
                 session.reset()
             }
 
@@ -121,6 +126,7 @@ class SevenZSessionManager(
             val discardBuffer = ByteArray(32 * 1024)
 
             while (true) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val entry = currentSz.nextEntry ?: break
                 session.currentEntryIndex++
 
@@ -151,7 +157,7 @@ class SevenZSessionManager(
                     } else if (!isDir) {
                         currentSz.getInputStream(entry).use { stream ->
                             while (stream.read(discardBuffer) != -1) {
-                                // discard
+                                // fast discard non-image entries
                             }
                         }
                     }
@@ -195,7 +201,8 @@ class SevenZSessionManager(
         targetSizePx: Int,
         password: String?,
         thumbnailDiskCache: ThumbnailDiskCache,
-        lookahead: Int = 0
+        lookahead: Int = 0,
+        allowRewind: Boolean = true
     ): File? = extractThumbnailResult(
         file = file,
         targetEntryName = targetEntryName,
@@ -203,7 +210,8 @@ class SevenZSessionManager(
         password = password,
         thumbnailDiskCache = thumbnailDiskCache,
         lookahead = lookahead,
-        keepBitmapInMemory = false
+        keepBitmapInMemory = false,
+        allowRewind = allowRewind
     )?.file
 
     /**
@@ -223,7 +231,8 @@ class SevenZSessionManager(
         password: String?,
         thumbnailDiskCache: ThumbnailDiskCache,
         lookahead: Int = 0,
-        keepBitmapInMemory: Boolean = false
+        keepBitmapInMemory: Boolean = false,
+        allowRewind: Boolean = true
     ): ThumbnailResult? {
         val session = getSession(file, password)
 
@@ -246,6 +255,9 @@ class SevenZSessionManager(
 
             // If target is behind current cursor, solid stream cannot seek backwards -> reset to start
             if (targetIdx <= session.currentEntryIndex) {
+                if (!allowRewind) {
+                    return@withLock null
+                }
                 com.watchpicture.app.util.AppLog.w("7zSession", "Stream rewind reset for $targetEntryName (cursor=${session.currentEntryIndex} -> target=$targetIdx)")
                 session.reset()
             }
@@ -256,6 +268,7 @@ class SevenZSessionManager(
             val discardBuffer = ByteArray(32 * 1024)
 
             while (true) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
                 val entry = currentSz.nextEntry ?: break
                 session.currentEntryIndex++
 
@@ -287,7 +300,7 @@ class SevenZSessionManager(
                         } else {
                             currentSz.getInputStream(entry).use { stream ->
                                 while (stream.read(discardBuffer) != -1) {
-                                    // discard
+                                    // fast discard
                                 }
                             }
                         }

@@ -49,6 +49,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
     override fun onCreate() {
         super.onCreate()
         instance = this
+        org.apache.commons.compress.archivers.sevenz.CachedAES256SHA256Decoder.install()
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
             val stackTrace = android.util.Log.getStackTraceString(e)

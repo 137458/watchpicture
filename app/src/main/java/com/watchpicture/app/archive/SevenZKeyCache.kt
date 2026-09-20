@@ -84,7 +84,12 @@ object SevenZKeyCache {
             }
             k
         } else {
-            sha256Password(passwordBytes, numCyclesPower, salt)
+            val nativeKey = if (Native7z.isAvailable) {
+                runCatching {
+                    Native7z.nativeDeriveKey(passwordBytes, salt, numCyclesPower)
+                }.getOrNull()
+            } else null
+            nativeKey ?: sha256Password(passwordBytes, numCyclesPower, salt)
         }
 
         lock.withLock {
