@@ -55,20 +55,24 @@ fun BackdropEffectScope.lens(
     val scaledRefractionAmount = refractionAmount / sf
     val scaledRadii = FloatArray(radii.size) { (radii[it] / sf).coerceAtLeast(0f) }
 
-    runtimeShaderEffect(
-        key = key,
-        shaderString = shaderString,
-        uniformShaderName = "content",
-    ) {
-        setFloatUniform("size", scaledSizeW, scaledSizeH)
-        setFloatUniform("offset", -scaledPadding, -scaledPadding)
-        setFloatUniform("cornerRadii", scaledRadii)
-        setFloatUniform("refractionHeight", scaledRefractionHeight)
-        setFloatUniform("refractionAmount", -scaledRefractionAmount)
-        setFloatUniform("depthEffect", if (depthEffect) 1f else 0f)
-        if (dispersionEnabled) {
-            setFloatUniform("chromaticAberration", chromaticAberration)
+    try {
+        runtimeShaderEffect(
+            key = key,
+            shaderString = shaderString,
+            uniformShaderName = "content",
+        ) {
+            setFloatUniform("size", scaledSizeW, scaledSizeH)
+            setFloatUniform("offset", -scaledPadding, -scaledPadding)
+            setFloatUniform("cornerRadii", scaledRadii)
+            setFloatUniform("refractionHeight", scaledRefractionHeight)
+            setFloatUniform("refractionAmount", -scaledRefractionAmount)
+            setFloatUniform("depthEffect", if (depthEffect) 1f else 0f)
+            if (dispersionEnabled) {
+                setFloatUniform("chromaticAberration", chromaticAberration)
+            }
         }
+    } catch (_: Throwable) {
+        // Fallback gracefully without lens shader if compiling fails on device driver
     }
 }
 

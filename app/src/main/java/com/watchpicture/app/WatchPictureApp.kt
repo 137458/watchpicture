@@ -35,7 +35,20 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
         instance = this
         val defaultHandler = Thread.getDefaultUncaughtExceptionHandler()
         Thread.setDefaultUncaughtExceptionHandler { t, e ->
-            android.util.Log.e("WatchPictureCrash", "Uncaught exception in thread ${t.name}: ${e.message}", e)
+            val stackTrace = android.util.Log.getStackTraceString(e)
+            android.util.Log.e("WatchPictureCrash", "Uncaught exception in thread ${t.name}:\n$stackTrace")
+
+            try {
+                val logDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
+                val logFile = java.io.File(logDir, "watchpicture_crash.log")
+                logFile.writeText("Time: ${java.util.Date()}\nThread: ${t.name}\nException:\n$stackTrace\n")
+            } catch (_: Throwable) {
+                try {
+                    val fallbackFile = java.io.File(getExternalFilesDir(null), "watchpicture_crash.log")
+                    fallbackFile.writeText("Time: ${java.util.Date()}\nThread: ${t.name}\nException:\n$stackTrace\n")
+                } catch (_: Throwable) {}
+            }
+
             defaultHandler?.uncaughtException(t, e)
         }
         SingletonImageLoader.setSafe { newImageLoader(this) }
