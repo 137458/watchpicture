@@ -23,7 +23,17 @@ data class PackImage(
  * Resolves the appropriate Coil image model (File, ZipImageSource, or Uri)
  * for thumbnail preview and fullscreen viewing.
  */
-fun PackImage.toImageModel(sessionPassword: String? = null): Any? {
+fun PackImage.toImageModel(
+    sessionPassword: String? = null,
+    passwordStore: com.watchpicture.app.security.SessionPasswordStore? = null
+): Any? {
+    val store = passwordStore
+        ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore }.getOrNull()
+    val resolvedPassword = sessionPassword
+        ?: store?.get(packId)
+        ?: directFilePath?.let { store?.get(it) }
+        ?: store?.lastUsedPassword
+
     val direct = directFilePath?.let { File(it) }
     if (direct != null && direct.exists()) {
         return when {
@@ -32,7 +42,7 @@ fun PackImage.toImageModel(sessionPassword: String? = null): Any? {
             else -> ZipImageSource(
                 zipFile = direct,
                 entryName = entryPath,
-                password = sessionPassword
+                password = resolvedPassword
             )
         }
     }

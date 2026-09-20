@@ -60,4 +60,23 @@ class PackImageModelTest {
         assertEquals("photos/01.jpg", zipSource.entryName)
         assertEquals("secret", zipSource.password)
     }
+
+    @Test
+    fun `resolves zip entry model falling back to passwordStore when sessionPassword is null`() {
+        val zipFile = tempFolder.newFile("archive_locked.zip")
+        val image = PackImage(
+            packId = "pack_locked",
+            entryPath = "01.png",
+            displayName = "01.png",
+            directFilePath = zipFile.absolutePath
+        )
+
+        val store = com.watchpicture.app.security.SessionPasswordStore()
+        store.set("pack_locked", "unlockedPass")
+
+        val model = image.toImageModel(sessionPassword = null, passwordStore = store)
+        assertTrue(model is ZipImageSource)
+        val zipSource = model as ZipImageSource
+        assertEquals("unlockedPass", zipSource.password)
+    }
 }

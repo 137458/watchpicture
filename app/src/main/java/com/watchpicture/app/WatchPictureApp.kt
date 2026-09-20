@@ -51,6 +51,15 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
 
             defaultHandler?.uncaughtException(t, e)
         }
+
+        // Clean up any stale temporary files from previous sessions
+        try {
+            val coilCache = java.io.File(cacheDir, "coil_zip_cache")
+            if (coilCache.exists()) {
+                coilCache.listFiles()?.forEach { it.delete() }
+            }
+        } catch (_: Throwable) {}
+
         SingletonImageLoader.setSafe { newImageLoader(this) }
     }
 

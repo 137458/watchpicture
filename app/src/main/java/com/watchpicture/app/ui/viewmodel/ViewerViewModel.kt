@@ -32,6 +32,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
     private val app = application as WatchPictureApp
     private val zipArchiveManager = app.zipArchiveManager
     private val passwordStore = app.sessionPasswordStore
+    private val archiveFileResolver = app.archiveFileResolver
     private val safManager = SafManager(zipArchiveManager, passwordStore)
     private val naturalOrderComparator = NaturalOrderComparator()
 
@@ -75,6 +76,8 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
                 }
             } else if (file.isFile) {
                 val password = passwordStore.get(packId)
+                    ?: passwordStore.get(file.absolutePath)
+                    ?: passwordStore.lastUsedPassword
                 val entries = zipArchiveManager.getImageEntries(file, password)
                 return entries.map { entry ->
                     PackImage(
@@ -114,6 +117,21 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
                         fileUri = doc.uri.toString()
                     )
                 }
+        }
+
+        // Resolves single archive files (content://...) via ArchiveFileResolver
+        val resolvedPack = kotlinx.coroutines.runBlocking {
+            archiveFileResolver.resolve(app, uri)
+        }
+        if (resolvedPack != null && resolvedPack.directPath != null) {
+            passwordStore.get(packId)?.let { pwd ->
+                passwordStore.set(
+                    resolvedPack.id,
+                    pwd,
+                    aliases = listOfNotNull(resolvedPack.directPath, packId)
+                )
+            }
+            return resolvePackImages(resolvedPack.directPath)
         }
 
         return emptyList()

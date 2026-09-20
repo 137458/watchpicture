@@ -12,11 +12,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okio.buffer
 import okio.source
+import okio.Path.Companion.toOkioPath
+import java.io.File
 import java.util.Locale
 
 /**
  * Custom Coil 3 Fetcher that streams decompressed image bytes directly
- * from ZipArchiveManager without extracting to disk.
+ * from ZipArchiveManager and serves them via an AutoCloseable seekable file source.
  */
 class ZipImageFetcher(
     private val data: ZipImageSource,
@@ -25,23 +27,44 @@ class ZipImageFetcher(
 ) : Fetcher {
 
     override suspend fun fetch(): FetchResult = withContext(Dispatchers.IO) {
+        val password = data.password
+            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.get(data.zipFile.absolutePath) }.getOrNull()
+            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.lastUsedPassword }.getOrNull()
+
         val inputStream = zipArchiveManager.getEntryInputStream(
             file = data.zipFile,
             entryName = data.entryName,
-            password = data.password
+            password = password
         )
 
-        val bufferedSource = inputStream.source().buffer()
-        val mimeType = resolveMimeType(data.entryName)
+        val cacheBase = options.context.cacheDir ?: File(System.getProperty("java.io.tmpdir") ?: ".")
+        val cacheDir = File(cacheBase, "coil_zip_cache").apply { mkdirs() }
+        val tempFile = File.createTempFile("zip_img_", ".tmp", cacheDir)
 
-        SourceFetchResult(
-            source = ImageSource(
-                source = bufferedSource,
-                fileSystem = options.fileSystem
-            ),
-            mimeType = mimeType,
-            dataSource = DataSource.DISK
-        )
+        try {
+            tempFile.outputStream().use { output ->
+                inputStream.use { input ->
+                    input.copyTo(output)
+                }
+            }
+
+            val mimeType = resolveMimeType(data.entryName)
+
+            SourceFetchResult(
+                source = ImageSource(
+                    file = tempFile.toOkioPath(),
+                    fileSystem = options.fileSystem,
+                    closeable = AutoCloseable {
+                        tempFile.delete()
+                    }
+                ),
+                mimeType = mimeType,
+                dataSource = DataSource.DISK
+            )
+        } catch (e: Throwable) {
+            tempFile.delete()
+            throw e
+        }
     }
 
     private fun resolveMimeType(fileName: String): String {

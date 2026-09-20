@@ -5,6 +5,7 @@ import net.lingala.zip4j.exception.ZipException
 import net.lingala.zip4j.model.FileHeader
 import java.io.File
 import java.io.InputStream
+import java.nio.charset.Charset
 import java.util.Locale
 
 /**
@@ -14,6 +15,7 @@ import java.util.Locale
 class ZipArchiveManager {
 
     companion object {
+        private val GBK_CHARSET = Charset.forName("GBK")
         private val SUPPORTED_IMAGE_EXTENSIONS = setOf(
             "jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic", "heif"
         )
@@ -53,60 +55,79 @@ class ZipArchiveManager {
      * Retrieves all valid image entries sorted in human-intuitive natural order.
      */
     fun getImageEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
-        val zip = if (password != null) {
-            ZipFile(file, password.toCharArray())
-        } else {
-            ZipFile(file)
+        fun readEntries(charset: Charset?): List<ArchiveEntryInfo> {
+            val zip = if (password != null) {
+                ZipFile(file, password.toCharArray())
+            } else {
+                ZipFile(file)
+            }
+            if (charset != null) {
+                zip.charset = charset
+            }
+
+            return try {
+                zip.use { z ->
+                    z.fileHeaders
+                        .asSequence()
+                        .filter { !it.isDirectory }
+                        .filter { !isIgnoredFile(it.fileName) }
+                        .filter { isImageFile(it.fileName) }
+                        .map { header ->
+                            ArchiveEntryInfo(
+                                name = header.fileName,
+                                uncompressedSize = header.uncompressedSize,
+                                isEncrypted = header.isEncrypted
+                            )
+                        }
+                        .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+                        .toList()
+                }
+            } catch (_: Exception) {
+                emptyList()
+            }
         }
 
-        return try {
-            zip.use { z ->
-                z.fileHeaders
-                    .asSequence()
-                    .filter { !it.isDirectory }
-                    .filter { !isIgnoredFile(it.fileName) }
-                    .filter { isImageFile(it.fileName) }
-                    .map { header ->
-                        ArchiveEntryInfo(
-                            name = header.fileName,
-                            uncompressedSize = header.uncompressedSize,
-                            isEncrypted = header.isEncrypted
-                        )
-                    }
-                    .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
-                    .toList()
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
+        val entries = readEntries(null)
+        if (entries.isNotEmpty()) return entries
+        val gbkEntries = readEntries(GBK_CHARSET)
+        return if (gbkEntries.isNotEmpty()) gbkEntries else entries
     }
 
     /**
      * Tests whether the provided password can successfully decrypt an encrypted entry in the archive.
      */
     fun verifyPassword(file: File, password: String): Boolean {
-        return try {
-            ZipFile(file, password.toCharArray()).use { zip ->
-                val testHeader = zip.fileHeaders
-                    .asSequence()
-                    .filter { !it.isDirectory }
-                    .filter { !isIgnoredFile(it.fileName) }
-                    .firstOrNull { it.isEncrypted }
-                    ?: zip.fileHeaders.firstOrNull { !it.isDirectory && it.isEncrypted }
-                    ?: zip.fileHeaders.firstOrNull { !it.isDirectory }
-                    ?: return true // No file entries to verify
-
-                val buffer = ByteArray(64)
-                zip.getInputStream(testHeader).use { stream ->
-                    stream.read(buffer) >= 0
+        fun tryVerify(charset: Charset?): Boolean {
+            return try {
+                val zip = ZipFile(file, password.toCharArray())
+                if (charset != null) {
+                    zip.charset = charset
                 }
-                true
+                zip.use { z ->
+                    val testHeader = z.fileHeaders
+                        .asSequence()
+                        .filter { !it.isDirectory }
+                        .filter { !isIgnoredFile(it.fileName) }
+                        .firstOrNull { it.isEncrypted }
+                        ?: z.fileHeaders.firstOrNull { !it.isDirectory && it.isEncrypted }
+                        ?: z.fileHeaders.firstOrNull { !it.isDirectory }
+                        ?: return true // No file entries to verify
+
+                    val buffer = ByteArray(64)
+                    z.getInputStream(testHeader).use { stream ->
+                        stream.read(buffer) >= 0
+                    }
+                    true
+                }
+            } catch (_: ZipException) {
+                false
+            } catch (_: Exception) {
+                false
             }
-        } catch (_: ZipException) {
-            false
-        } catch (_: Exception) {
-            false
         }
+
+        if (tryVerify(null)) return true
+        return tryVerify(GBK_CHARSET)
     }
 
     /**
@@ -114,15 +135,27 @@ class ZipArchiveManager {
      * The returned InputStream is directly backed by the ZipFile entry stream.
      */
     fun getEntryInputStream(file: File, entryName: String, password: String? = null): InputStream {
-        val zip = if (password != null) {
-            ZipFile(file, password.toCharArray())
-        } else {
-            ZipFile(file)
+        val normalized = entryName.replace('\\', '/')
+
+        fun tryOpen(charset: Charset?): InputStream? {
+            val zip = if (password != null) {
+                ZipFile(file, password.toCharArray())
+            } else {
+                ZipFile(file)
+            }
+            if (charset != null) {
+                zip.charset = charset
+            }
+
+            val header = zip.getFileHeader(entryName)
+                ?: zip.getFileHeader(normalized)
+                ?: zip.fileHeaders.firstOrNull { it.fileName.replace('\\', '/') == normalized }
+
+            return header?.let { zip.getInputStream(it) }
         }
 
-        val header = zip.getFileHeader(entryName)
+        return tryOpen(null)
+            ?: tryOpen(GBK_CHARSET)
             ?: throw NoSuchElementException("Entry '$entryName' not found in archive ${file.name}")
-
-        return zip.getInputStream(header)
     }
 }

@@ -8,6 +8,7 @@ import coil3.request.Options
  */
 class ZipImageKeyer : Keyer<ZipImageSource> {
     override fun key(data: ZipImageSource, options: Options): String {
-        return "zip://${data.zipFile.absolutePath}#${data.entryName}"
+        val pwdHash = data.password?.hashCode()?.toString(16) ?: "none"
+        return "zip://${data.zipFile.absolutePath}#${data.entryName}#pwd=$pwdHash"
     }
 }

@@ -117,4 +117,29 @@ class ZipArchiveManagerTest {
         assertTrue("Password verification should succeed even when directory entry is present", manager.verifyPassword(dirEncryptedZip, correctPassword))
         assertFalse("Wrong password should still fail", manager.verifyPassword(dirEncryptedZip, "BadPassword"))
     }
+
+    @Test
+    fun `validates password for standard ZipCrypto encrypted archive`() {
+        val manager = ZipArchiveManager()
+        val zipCryptoFile = tempFolder.newFile("zip_crypto.zip")
+        val cryptoPassword = "CryptoPass@456"
+        ZipFile(zipCryptoFile, cryptoPassword.toCharArray()).use { zip ->
+            val pImg = ZipParameters().apply {
+                isEncryptFiles = true
+                encryptionMethod = EncryptionMethod.ZIP_STANDARD
+                fileNameInZip = "crypto_page.jpg"
+            }
+            zip.addStream(ByteArrayInputStream(testImageBytes), pImg)
+        }
+
+        assertTrue(manager.isEncrypted(zipCryptoFile))
+        assertTrue(manager.verifyPassword(zipCryptoFile, cryptoPassword))
+        assertFalse("Wrong password must fail for ZipCrypto", manager.verifyPassword(zipCryptoFile, "WrongCryptoPass"))
+
+        val entries = manager.getImageEntries(zipCryptoFile, cryptoPassword)
+        assertEquals(1, entries.size)
+        val stream = manager.getEntryInputStream(zipCryptoFile, entries[0].name, cryptoPassword)
+        val bytes = stream.use { it.readBytes() }
+        assertArrayEquals(testImageBytes, bytes)
+    }
 }
