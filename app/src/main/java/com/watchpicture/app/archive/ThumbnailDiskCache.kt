@@ -13,6 +13,11 @@ import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock
 import kotlin.math.max
 
+data class ThumbnailResult(
+    val file: File,
+    val bitmap: Bitmap? = null
+)
+
 /**
  * High-performance, dedicated disk cache for downsampled thumbnails.
  *
@@ -61,34 +66,46 @@ class ThumbnailDiskCache(
         return null
     }
 
+    typealias ThumbnailResult = com.watchpicture.app.archive.ThumbnailResult
+
     fun getOrPut(
         zipFile: File,
         entryName: String,
         targetSizePx: Int,
         password: String?,
         openStream: () -> InputStream
-    ): File {
+    ): File = getOrPutResult(zipFile, entryName, targetSizePx, password, keepBitmapInMemory = false, openStream).file
+
+    fun getOrPutResult(
+        zipFile: File,
+        entryName: String,
+        targetSizePx: Int,
+        password: String?,
+        keepBitmapInMemory: Boolean = false,
+        openStream: () -> InputStream
+    ): ThumbnailResult {
         val cacheKey = computeKey(zipFile, entryName, targetSizePx, password)
         val targetFile = File(directory, "thumb_$cacheKey.webp")
 
         // Fast path
         if (targetFile.exists() && targetFile.length() > 0) {
             targetFile.setLastModified(System.currentTimeMillis())
-            return targetFile
+            return ThumbnailResult(targetFile, null)
         }
 
         val stripeLock = getLockFor(cacheKey)
         stripeLock.withLock {
             if (targetFile.exists() && targetFile.length() > 0) {
                 targetFile.setLastModified(System.currentTimeMillis())
-                return targetFile
+                return ThumbnailResult(targetFile, null)
             }
 
             val tempFile = File(directory, "${targetFile.name}.${System.nanoTime()}.tmp")
+            var memoryBitmap: Bitmap? = null
             try {
                 // Stream and downsample to compact thumbnail
                 openStream().use { input ->
-                    saveDownsampled(input, tempFile, targetSizePx)
+                    memoryBitmap = saveDownsampled(input, tempFile, targetSizePx, keepBitmapInMemory)
                 }
 
                 if (tempFile.exists() && tempFile.length() > 0L) {
@@ -108,14 +125,20 @@ class ThumbnailDiskCache(
                 }
             } catch (e: Throwable) {
                 if (tempFile.exists()) tempFile.delete()
+                memoryBitmap?.recycle()
                 throw e
             }
 
-            return targetFile
+            return ThumbnailResult(targetFile, memoryBitmap)
         }
     }
 
-    private fun saveDownsampled(input: InputStream, targetFile: File, targetSizePx: Int) {
+    private fun saveDownsampled(
+        input: InputStream,
+        targetFile: File,
+        targetSizePx: Int,
+        keepBitmapInMemory: Boolean
+    ): Bitmap? {
         val buffered = if (input.markSupported()) input else java.io.BufferedInputStream(input, 128 * 1024)
         buffered.mark(128 * 1024)
 
@@ -159,7 +182,9 @@ class ThumbnailDiskCache(
                     }
                     bitmap.compress(format, 80, fos)
                 } finally {
-                    bitmap.recycle()
+                    if (!keepBitmapInMemory) {
+                        bitmap.recycle()
+                    }
                 }
             } else {
                 // Fallback direct copy if BitmapFactory fails (e.g. SVG or JVM unit test)
@@ -168,6 +193,8 @@ class ThumbnailDiskCache(
             }
             fos.flush()
         }
+
+        return if (keepBitmapInMemory && bitmap != null && !bitmap.isRecycled) bitmap else null
     }
 
     fun trimToSize() {

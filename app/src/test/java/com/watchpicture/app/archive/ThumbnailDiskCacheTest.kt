@@ -74,4 +74,41 @@ class ThumbnailDiskCacheTest {
         assertTrue(thumbFile.exists())
         assertEquals(largeData.size.toLong(), thumbFile.length())
     }
+
+    @Test
+    fun `getOrPutResult returns ThumbnailResult with valid file`() {
+        val cacheDir = tempFolder.newFolder("thumb_cache_result")
+        val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+
+        val dummyZip = tempFolder.newFile("dummy_result.zip")
+        val entryName = "result_test.jpg"
+        val sampleData = byteArrayOf(10, 20, 30, 40)
+
+        val result1 = cache.getOrPutResult(
+            zipFile = dummyZip,
+            entryName = entryName,
+            targetSizePx = 360,
+            password = null,
+            keepBitmapInMemory = true
+        ) {
+            sampleData.inputStream()
+        }
+
+        assertNotNull(result1.file)
+        assertTrue(result1.file.exists())
+        assertEquals(sampleData.size.toLong(), result1.file.length())
+
+        // Second call hits fast path
+        val result2 = cache.getOrPutResult(
+            zipFile = dummyZip,
+            entryName = entryName,
+            targetSizePx = 360,
+            password = null,
+            keepBitmapInMemory = true
+        ) {
+            throw IllegalStateException("Must hit cache, not open stream")
+        }
+
+        assertEquals(result1.file.absolutePath, result2.file.absolutePath)
+    }
 }

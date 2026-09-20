@@ -93,6 +93,7 @@ class SessionPasswordStore {
         keyAliases.clear()
         explicitlyLockedPacks.clear()
         lastUsedPassword = null
+        com.watchpicture.app.archive.SevenZKeyCache.clear()
     }
 
     fun hasPassword(packId: String): Boolean {

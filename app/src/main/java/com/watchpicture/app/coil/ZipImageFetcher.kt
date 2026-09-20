@@ -1,10 +1,12 @@
 package com.watchpicture.app.coil
 
 import coil3.ImageLoader
+import coil3.asImage
 import coil3.decode.DataSource
 import coil3.decode.ImageSource
 import coil3.fetch.FetchResult
 import coil3.fetch.Fetcher
+import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import com.watchpicture.app.archive.ArchiveDiskCache
@@ -66,21 +68,23 @@ class ZipImageFetcher(
                 )
             }
 
-            val thumbFile = if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
-                extractCoord.extractThumbnailDirect(
+            val thumbResult = if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
+                extractCoord.extractThumbnailDirectResult(
                     file = data.zipFile,
                     entryName = data.entryName,
                     targetSizePx = data.targetSizePx,
                     password = password,
-                    thumbnailDiskCache = thumbCache
+                    thumbnailDiskCache = thumbCache,
+                    keepBitmapInMemory = true
                 )
             } else {
                 val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
-                thumbCache.getOrPut(
+                thumbCache.getOrPutResult(
                     zipFile = data.zipFile,
                     entryName = data.entryName,
                     targetSizePx = data.targetSizePx,
-                    password = password
+                    password = password,
+                    keepBitmapInMemory = true
                 ) {
                     if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
                         java.io.FileInputStream(cachedFull)
@@ -95,9 +99,17 @@ class ZipImageFetcher(
                 }
             }
 
+            if (thumbResult.bitmap != null && !thumbResult.bitmap.isRecycled) {
+                return@withContext ImageFetchResult(
+                    image = thumbResult.bitmap.asImage(),
+                    isSampled = true,
+                    dataSource = DataSource.MEMORY
+                )
+            }
+
             return@withContext SourceFetchResult(
                 source = ImageSource(
-                    file = thumbFile.toOkioPath(),
+                    file = thumbResult.file.toOkioPath(),
                     fileSystem = options.fileSystem
                 ),
                 mimeType = "image/webp",

@@ -95,6 +95,8 @@ fun GalleryViewerScreen(
     val coroutineScope = rememberCoroutineScope()
     var isImmersive by remember { mutableStateOf(false) }
     var isCurrentPageZoomed by remember { mutableStateOf(false) }
+    var sliderScrubbingPage by remember { mutableStateOf<Int?>(null) }
+    var scrubJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     // Toggle system bars for immersive viewing
     val view = LocalView.current
@@ -300,8 +302,9 @@ fun GalleryViewerScreen(
 
                     Spacer(modifier = Modifier.width(6.dp))
 
+                    val currentDisplayPage = (sliderScrubbingPage ?: pagerState.currentPage) + 1
                     Text(
-                        text = "${pagerState.currentPage + 1} / ${images.size}",
+                        text = "$currentDisplayPage / ${images.size}",
                         fontSize = 14.sp,
                         fontWeight = FontWeight.Medium,
                         color = Color.White.copy(alpha = 0.9f)
@@ -323,6 +326,8 @@ fun GalleryViewerScreen(
                         .padding(horizontal = 16.dp, vertical = 16.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
+                    val displayPage = (sliderScrubbingPage ?: pagerState.currentPage) + 1
+
                     // Floating Capsule Control Bar
                     Row(
                         modifier = Modifier
@@ -334,23 +339,37 @@ fun GalleryViewerScreen(
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
                         Text(
-                            text = "${pagerState.currentPage + 1}",
+                            text = "$displayPage",
                             fontSize = 14.sp,
                             fontWeight = FontWeight.Bold,
                             color = Color.White,
                             modifier = Modifier.width(36.dp)
                         )
 
-                        // Miuix Slider for rapid page scrub
+                        // Miuix Slider for rapid page scrub with 200ms debounce
                         Slider(
-                            value = (pagerState.currentPage + 1).toFloat(),
+                            value = displayPage.toFloat(),
                             onValueChange = { newVal ->
                                 val targetPage = (newVal.roundToInt() - 1).coerceIn(0, images.size - 1)
-                                if (targetPage != pagerState.currentPage) {
+                                sliderScrubbingPage = targetPage
+                                scrubJob?.cancel()
+                                scrubJob = coroutineScope.launch {
+                                    kotlinx.coroutines.delay(200)
+                                    if (pagerState.currentPage != targetPage) {
+                                        pagerState.scrollToPage(targetPage)
+                                    }
+                                    sliderScrubbingPage = null
+                                }
+                            },
+                            onValueChangeFinished = {
+                                scrubJob?.cancel()
+                                val targetPage = sliderScrubbingPage
+                                if (targetPage != null && pagerState.currentPage != targetPage) {
                                     coroutineScope.launch {
                                         pagerState.scrollToPage(targetPage)
                                     }
                                 }
+                                sliderScrubbingPage = null
                             },
                             valueRange = 1f..images.size.toFloat().coerceAtLeast(1f),
                             modifier = Modifier

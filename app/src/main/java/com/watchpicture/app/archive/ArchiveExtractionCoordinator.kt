@@ -250,33 +250,50 @@ class ArchiveExtractionCoordinator(
         targetSizePx: Int,
         password: String?,
         thumbnailDiskCache: ThumbnailDiskCache
-    ): File = withContext(ArchiveDispatchers.decompressDispatcher) {
+    ): File = extractThumbnailDirectResult(
+        file = file,
+        entryName = entryName,
+        targetSizePx = targetSizePx,
+        password = password,
+        thumbnailDiskCache = thumbnailDiskCache,
+        keepBitmapInMemory = false
+    ).file
+
+    suspend fun extractThumbnailDirectResult(
+        file: File,
+        entryName: String,
+        targetSizePx: Int,
+        password: String?,
+        thumbnailDiskCache: ThumbnailDiskCache,
+        keepBitmapInMemory: Boolean = false
+    ): ThumbnailResult = withContext(ArchiveDispatchers.decompressDispatcher) {
         // Fast path 1: Instant cache hit in thumbnailDiskCache
         val cachedThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
         if (cachedThumb != null && cachedThumb.exists() && cachedThumb.length() > 0L) {
-            return@withContext cachedThumb
+            return@withContext ThumbnailResult(cachedThumb, null)
         }
 
         // Fast path 2: If full image is already cached in archiveDiskCache, downsample from it
         val cachedFull = archiveDiskCache.get(file, entryName, password)
         if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
-            return@withContext thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) {
+            return@withContext thumbnailDiskCache.getOrPutResult(file, entryName, targetSizePx, password, keepBitmapInMemory) {
                 java.io.FileInputStream(cachedFull)
             }
         }
 
         // Fast path 3: 7z stream session (works for BOTH encrypted and non-encrypted 7z!)
         if (ZipArchiveManager.isSevenZFile(file)) {
-            val thumb = sevenZSessionManager.extractThumbnail(
+            val thumbResult = sevenZSessionManager.extractThumbnailResult(
                 file = file,
                 targetEntryName = entryName,
                 targetSizePx = targetSizePx,
                 password = password,
                 thumbnailDiskCache = thumbnailDiskCache,
-                lookahead = if (powerThermalManager?.isThrottled == true) 0 else 2
+                lookahead = if (powerThermalManager?.isThrottled == true) 0 else 2,
+                keepBitmapInMemory = keepBitmapInMemory
             )
-            if (thumb != null && thumb.exists() && thumb.length() > 0L) {
-                return@withContext thumb
+            if (thumbResult != null && thumbResult.file.exists() && thumbResult.file.length() > 0L) {
+                return@withContext thumbResult
             }
         }
 
@@ -284,10 +301,10 @@ class ArchiveExtractionCoordinator(
         mutex.withLock {
             val recheckThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
             if (recheckThumb != null && recheckThumb.exists() && recheckThumb.length() > 0L) {
-                return@withLock recheckThumb
+                return@withLock ThumbnailResult(recheckThumb, null)
             }
 
-            thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) {
+            thumbnailDiskCache.getOrPutResult(file, entryName, targetSizePx, password, keepBitmapInMemory) {
                 zipArchiveManager.getEntryInputStream(file, entryName, password)
             }
         }

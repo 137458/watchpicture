@@ -119,6 +119,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
                     zipArchiveManager.handlePool.closeAll()
                     archiveDiskCache.trimToSize()
                     thumbnailDiskCache.trimToSize()
+                    com.watchpicture.app.archive.SevenZKeyCache.clear()
                 }
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
                     // UI moved to background: halve Coil memory cache and close idle handles to survive LMK
@@ -143,6 +144,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
         try {
             SingletonImageLoader.get(this).memoryCache?.clear()
             zipArchiveManager.handlePool.closeAll()
+            com.watchpicture.app.archive.SevenZKeyCache.clear()
         } catch (_: Throwable) {}
     }
 

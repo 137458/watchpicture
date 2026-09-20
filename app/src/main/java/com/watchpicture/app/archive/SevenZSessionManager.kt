@@ -196,7 +196,35 @@ class SevenZSessionManager(
         password: String?,
         thumbnailDiskCache: ThumbnailDiskCache,
         lookahead: Int = 0
-    ): File? {
+    ): File? = extractThumbnailResult(
+        file = file,
+        targetEntryName = targetEntryName,
+        targetSizePx = targetSizePx,
+        password = password,
+        thumbnailDiskCache = thumbnailDiskCache,
+        lookahead = lookahead,
+        keepBitmapInMemory = false
+    )?.file
+
+    /**
+     * Directly decodes and stores a downsampled WebP thumbnail into [thumbnailDiskCache]
+     * using the active forward 7z stream session.
+     *
+     * Optionally returns the in-memory downsampled [android.graphics.Bitmap] via [ThumbnailResult]
+     * to eliminate disk decode overhead for first-time display.
+     *
+     * Opportunistically caches intermediate images encountered before [targetEntryName]
+     * into [thumbnailDiskCache], turning O(N^2) seek penalty into an optimal O(N) linear pass.
+     */
+    suspend fun extractThumbnailResult(
+        file: File,
+        targetEntryName: String,
+        targetSizePx: Int,
+        password: String?,
+        thumbnailDiskCache: ThumbnailDiskCache,
+        lookahead: Int = 0,
+        keepBitmapInMemory: Boolean = false
+    ): ThumbnailResult? {
         val session = getSession(file, password)
 
         return session.lock.withLock {
@@ -222,7 +250,7 @@ class SevenZSessionManager(
             }
 
             val currentSz = session.sevenZ ?: return@withLock null
-            var resultFile: File? = null
+            var result: ThumbnailResult? = null
             var lookaheadRemaining = lookahead
             val discardBuffer = ByteArray(32 * 1024)
 
@@ -237,7 +265,13 @@ class SevenZSessionManager(
                 if (isTarget) {
                     if (!isDir) {
                         currentSz.getInputStream(entry).use { stream ->
-                            resultFile = thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
+                            result = thumbnailDiskCache.getOrPutResult(
+                                zipFile = file,
+                                entryName = entryName,
+                                targetSizePx = targetSizePx,
+                                password = password,
+                                keepBitmapInMemory = keepBitmapInMemory
+                            ) { stream }
                         }
                     }
                 } else if (session.currentEntryIndex < targetIdx) {
@@ -272,12 +306,12 @@ class SevenZSessionManager(
                     }
                 }
 
-                if (resultFile != null && lookaheadRemaining <= 0) {
+                if (result != null && lookaheadRemaining <= 0) {
                     break
                 }
             }
 
-            resultFile
+            result
         }
     }
 
