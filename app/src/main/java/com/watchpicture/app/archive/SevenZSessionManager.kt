@@ -67,6 +67,18 @@ class SevenZSessionManager(
         return try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
     }
 
+    private fun getSession(file: File, password: String?): Session {
+        val key = getSessionKey(file)
+        return sessions.compute(key) { _, existing ->
+            if (existing != null && existing.password == password) {
+                existing
+            } else {
+                existing?.close()
+                Session(file, password)
+            }
+        }!!
+    }
+
     /**
      * Extracts target entry and optionally subsequent lookahead entries sequentially.
      * Advances the stream cursor forward without rewinding. If a backward request occurs,
@@ -79,8 +91,7 @@ class SevenZSessionManager(
         lookahead: Int = 0,
         onEntryExtracted: (name: String, stream: InputStream) -> Unit
     ): Boolean {
-        val key = getSessionKey(file)
-        val session = sessions.computeIfAbsent(key) { Session(file, password) }
+        val session = getSession(file, password)
 
         return session.lock.withLock {
             session.lastAccessTime = System.currentTimeMillis()
@@ -107,6 +118,7 @@ class SevenZSessionManager(
             val currentSz = session.sevenZ ?: return@withLock false
             var targetFound = false
             var lookaheadRemaining = lookahead
+            val discardBuffer = ByteArray(32 * 1024)
 
             while (true) {
                 val entry = currentSz.nextEntry ?: break
@@ -134,6 +146,12 @@ class SevenZSessionManager(
                         val stream = currentSz.getInputStream(entry)
                         onEntryExtracted(entryName, stream)
                         lookaheadRemaining--
+                    } else if (!isDir) {
+                        currentSz.getInputStream(entry).use { stream ->
+                            while (stream.read(discardBuffer) != -1) {
+                                // discard
+                            }
+                        }
                     }
                 }
 
@@ -144,6 +162,135 @@ class SevenZSessionManager(
 
             targetFound
         }
+    }
+
+    /**
+     * Extracts a thumbnail entry and optional lookahead entries sequentially within the active session,
+     * downsampling directly into [ThumbnailDiskCache] without dumping full-resolution images to flash.
+     */
+    suspend fun extractThumbnail(
+        file: File,
+        targetEntryName: String,
+        targetSizePx: Int,
+        password: String?,
+        thumbnailDiskCache: ThumbnailDiskCache,
+        lookahead: Int = 2
+    ): File? {
+        val session = getSession(file, password)
+
+        return session.lock.withLock {
+            session.lastAccessTime = System.currentTimeMillis()
+            session.openIfNeeded()
+            val sz = session.sevenZ ?: return@withLock null
+
+            val normalizedTarget = targetEntryName.replace('\\', '/')
+            val nfcTarget = java.text.Normalizer.normalize(normalizedTarget, java.text.Normalizer.Form.NFC)
+
+            val targetIdx = session.entries.indexOfFirst {
+                val candidate = it.name.replace('\\', '/')
+                it.name == targetEntryName ||
+                        it.name == normalizedTarget ||
+                        candidate == normalizedTarget ||
+                        java.text.Normalizer.normalize(candidate, java.text.Normalizer.Form.NFC) == nfcTarget
+            }
+            if (targetIdx < 0) return@withLock null
+
+            // If target is behind current cursor, solid stream cannot seek backwards -> reset to start
+            if (targetIdx <= session.currentEntryIndex) {
+                session.reset()
+            }
+
+            val currentSz = session.sevenZ ?: return@withLock null
+            var resultFile: File? = null
+            var lookaheadRemaining = lookahead
+            val discardBuffer = ByteArray(32 * 1024)
+
+            while (true) {
+                val entry = currentSz.nextEntry ?: break
+                session.currentEntryIndex++
+
+                val isDir = entry.isDirectory
+                val entryName = entry.name
+                val isTarget = (session.currentEntryIndex == targetIdx)
+
+                if (isTarget) {
+                    if (!isDir) {
+                        currentSz.getInputStream(entry).use { stream ->
+                            resultFile = thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
+                        }
+                    }
+                } else if (session.currentEntryIndex < targetIdx) {
+                    if (!isDir) {
+                        currentSz.getInputStream(entry).use { stream ->
+                            while (stream.read(discardBuffer) != -1) {
+                                // discard
+                            }
+                        }
+                    }
+                } else if (session.currentEntryIndex > targetIdx && lookaheadRemaining > 0) {
+                    if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                        currentSz.getInputStream(entry).use { stream ->
+                            thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
+                        }
+                        lookaheadRemaining--
+                    } else if (!isDir) {
+                        currentSz.getInputStream(entry).use { stream ->
+                            while (stream.read(discardBuffer) != -1) {
+                                // discard
+                            }
+                        }
+                    }
+                }
+
+                if (resultFile != null && lookaheadRemaining <= 0) {
+                    break
+                }
+            }
+
+            resultFile
+        }
+    }
+
+    /**
+     * Pre-warms the session and verifies whether the password can open the archive.
+     * Returns true if session is opened successfully and kept warm in memory.
+     */
+    fun prewarmSession(file: File, password: String?): Boolean {
+        val key = getSessionKey(file)
+        val session = getSession(file, password)
+        return try {
+            session.openIfNeeded()
+            session.sevenZ != null
+        } catch (_: Throwable) {
+            sessions.remove(key)?.close()
+            false
+        }
+    }
+
+    /**
+     * Returns the pre-parsed image entry list from the active warm session if available.
+     */
+    fun getEntries(file: File, password: String?): List<ArchiveEntryInfo>? {
+        val key = getSessionKey(file)
+        val session = sessions[key] ?: return null
+        if (session.password != password) return null
+        if (session.entries.isEmpty()) return null
+
+        val naturalOrderComparator = NaturalOrderComparator()
+        return session.entries
+            .asSequence()
+            .filter { !it.isDirectory }
+            .filter { !ZipArchiveManager.isIgnoredFile(it.name) }
+            .filter { ZipArchiveManager.isImageFile(it.name) }
+            .map { entry ->
+                ArchiveEntryInfo(
+                    name = entry.name,
+                    uncompressedSize = entry.size,
+                    isEncrypted = entry.contentMethods?.any { it.method == org.apache.commons.compress.archivers.sevenz.SevenZMethod.AES256SHA256 } == true
+                )
+            }
+            .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+            .toList()
     }
 
     /**

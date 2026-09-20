@@ -24,7 +24,7 @@ class ArchiveExtractionCoordinator(
     private val zipArchiveManager: ZipArchiveManager,
     private val archiveDiskCache: ArchiveDiskCache,
     private val powerThermalManager: PowerThermalManager? = null,
-    val sevenZSessionManager: SevenZSessionManager = SevenZSessionManager()
+    val sevenZSessionManager: SevenZSessionManager = zipArchiveManager.sevenZManager.sessionManager
 ) {
     companion object {
         // Number of subsequent entries to greedily extract while the 7z stream is already open
@@ -39,13 +39,13 @@ class ArchiveExtractionCoordinator(
     }
 
     /**
-     * Extracts a high-priority entry (currently requested by user viewport) and returns
-     * the cached File on disk. If already cached, returns immediately in 0ms without acquiring locks.
+     * Extracts a single entry from [file] on demand with full disk caching and opportunistic lookahead.
+     * Guarantees single-threaded execution per archive to avoid multi-thread solid decompressor conflicts.
      */
-    suspend fun extractHighPriority(
+    suspend fun extract(
         file: File,
         entryName: String,
-        password: String?
+        password: String? = null
     ): File = withContext(ArchiveDispatchers.decompressDispatcher) {
         // Fast path 1: Instant 0ms disk cache hit
         val cached = archiveDiskCache.get(file, entryName, password)
@@ -70,6 +70,16 @@ class ArchiveExtractionCoordinator(
         }
     }
 
+    /**
+     * Extracts a high-priority entry (currently requested by user viewport) and returns
+     * the cached File on disk. If already cached, returns immediately in 0ms without acquiring locks.
+     */
+    suspend fun extractHighPriority(
+        file: File,
+        entryName: String,
+        password: String?
+    ): File = extract(file, entryName, password)
+
     private fun extractZipEntry(file: File, entryName: String, password: String?): File {
         return archiveDiskCache.getOrPut(file, entryName, password) {
             zipArchiveManager.getEntryInputStream(file, entryName, password)
@@ -91,8 +101,8 @@ class ArchiveExtractionCoordinator(
             }
         }
 
-        // Fast path 2: Native C/C++ libarchive JNI with direct zero-copy write
-        if (LibArchiveExtractor.isAvailable) {
+        // Fast path 2: Native C/C++ libarchive JNI with direct zero-copy write (only for unencrypted archives as libarchive lacks 7z AES)
+        if (LibArchiveExtractor.isAvailable && password.isNullOrEmpty()) {
             val nativeSuccess = LibArchiveExtractor.extractDirectWithOpportunisticCache(
                 file = file,
                 targetEntryName = targetEntryName,
@@ -255,6 +265,21 @@ class ArchiveExtractionCoordinator(
             }
         }
 
+        // Fast path 3: 7z stream session (works for BOTH encrypted and non-encrypted 7z!)
+        if (ZipArchiveManager.isSevenZFile(file)) {
+            val thumb = sevenZSessionManager.extractThumbnail(
+                file = file,
+                targetEntryName = entryName,
+                targetSizePx = targetSizePx,
+                password = password,
+                thumbnailDiskCache = thumbnailDiskCache,
+                lookahead = if (powerThermalManager?.isThrottled == true) 0 else 2
+            )
+            if (thumb != null && thumb.exists() && thumb.length() > 0L) {
+                return@withContext thumb
+            }
+        }
+
         val mutex = getLockFor(file)
         mutex.withLock {
             val recheckThumb = thumbnailDiskCache.get(file, entryName, targetSizePx, password)
@@ -288,6 +313,34 @@ class ArchiveExtractionCoordinator(
         }
         if (uncached.isEmpty()) return@withContext
 
+        if (ZipArchiveManager.isSevenZFile(file)) {
+            var count = 0
+            val total = uncached.size
+            for (target in uncached) {
+                if (powerThermalManager?.isThrottled == true) break
+                val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
+                if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
+                    count++
+                    onProgress?.invoke(count, total)
+                    continue
+                }
+                runCatching {
+                    sevenZSessionManager.extractThumbnail(
+                        file = file,
+                        targetEntryName = target,
+                        targetSizePx = targetSizePx,
+                        password = password,
+                        thumbnailDiskCache = thumbnailDiskCache,
+                        lookahead = 0
+                    )
+                }
+                count++
+                onProgress?.invoke(count, total)
+                kotlinx.coroutines.yield() // Yield so interactive UI requests get top priority!
+            }
+            return@withContext
+        }
+
         val mutex = getLockFor(file)
         mutex.withLock {
             if (powerThermalManager?.isThrottled == true) return@withLock
@@ -298,30 +351,14 @@ class ArchiveExtractionCoordinator(
 
             var count = 0
             val total = targets.size
-
-            if (ZipArchiveManager.isSevenZFile(file)) {
+            for (name in targets) {
+                if (powerThermalManager?.isThrottled == true) break
                 runCatching {
-                    zipArchiveManager.extractSequentialEntries(file, targets, password) { name, stream ->
-                        if (powerThermalManager?.isThrottled == true) {
-                            return@extractSequentialEntries
-                        }
-                        runCatching {
-                            thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) { stream }
-                            count++
-                            onProgress?.invoke(count, total)
-                        }
+                    thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
+                        zipArchiveManager.getEntryInputStream(file, name, password)
                     }
-                }
-            } else {
-                for (name in targets) {
-                    if (powerThermalManager?.isThrottled == true) break
-                    runCatching {
-                        thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
-                            zipArchiveManager.getEntryInputStream(file, name, password)
-                        }
-                        count++
-                        onProgress?.invoke(count, total)
-                    }
+                    count++
+                    onProgress?.invoke(count, total)
                 }
             }
         }

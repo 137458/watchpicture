@@ -123,4 +123,46 @@ class SevenZSessionManagerTest {
         shortTimeoutManager.reapIdleSessions()
         assertEquals("Session should be reaped after idle timeout", 0, shortTimeoutManager.activeSessionCount)
     }
+
+    @Test
+    fun `prewarmSession and getEntries keep archive warm in memory`() {
+        val warmed = sessionManager.prewarmSession(solid7z, password = null)
+        assertTrue("prewarmSession must succeed", warmed)
+        assertEquals(1, sessionManager.activeSessionCount)
+
+        val entries = sessionManager.getEntries(solid7z, password = null)
+        assertNotNull("getEntries must return pre-parsed list", entries)
+        assertEquals(4, entries?.size)
+        assertEquals("00.jpg", entries?.get(0)?.name)
+        assertEquals("01.jpg", entries?.get(1)?.name)
+        assertEquals("02.jpg", entries?.get(2)?.name)
+        assertEquals("03.jpg", entries?.get(3)?.name)
+    }
+
+    @Test
+    fun `extractThumbnail generates thumbnail and skips intermediate entries in memory`() = runBlocking {
+        val thumbDir = tempFolder.newFolder("session_thumb_dir")
+        val thumbCache = ThumbnailDiskCache(thumbDir)
+
+        // Request thumbnail for 02.jpg directly
+        val thumb = sessionManager.extractThumbnail(
+            file = solid7z,
+            targetEntryName = "02.jpg",
+            targetSizePx = 100,
+            password = null,
+            thumbnailDiskCache = thumbCache,
+            lookahead = 1
+        )
+
+        assertNotNull("Thumbnail file should be returned", thumb)
+        assertTrue(thumb?.exists() == true && thumb.length() > 0L)
+
+        // Verify lookahead 1 cached 03.jpg
+        val lookaheadThumb = thumbCache.get(solid7z, "03.jpg", 100, password = null)
+        assertNotNull("Lookahead thumbnail for 03.jpg should be cached", lookaheadThumb)
+
+        // Invariant: Intermediate 00.jpg and 01.jpg must NOT have been saved as full-res files to archiveDiskCache
+        assertNull(archiveDiskCache.get(solid7z, "00.jpg", password = null))
+        assertNull(archiveDiskCache.get(solid7z, "01.jpg", password = null))
+    }
 }

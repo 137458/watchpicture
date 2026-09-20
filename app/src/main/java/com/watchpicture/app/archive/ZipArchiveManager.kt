@@ -13,7 +13,7 @@ import java.util.Locale
  * Strictly avoids extracting archives to disk; delivers entries as memory streams.
  */
 class ZipArchiveManager(
-    private val sevenZManager: SevenZArchiveManager = SevenZArchiveManager(),
+    val sevenZManager: SevenZArchiveManager = SevenZArchiveManager(),
     val handlePool: ArchiveHandlePool = ArchiveHandlePool()
 ) {
 

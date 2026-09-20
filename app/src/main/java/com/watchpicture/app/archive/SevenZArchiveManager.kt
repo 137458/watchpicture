@@ -14,7 +14,9 @@ import java.util.Locale
  * Supports standard 7z archives as well as AES-256 encrypted archives
  * (both content encryption and header/metadata encryption).
  */
-class SevenZArchiveManager {
+class SevenZArchiveManager(
+    val sessionManager: SevenZSessionManager = SevenZSessionManager()
+) {
 
     companion object {
         private val naturalOrderComparator = NaturalOrderComparator()
@@ -71,6 +73,19 @@ class SevenZArchiveManager {
     fun getImageEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
         if (!isValidSevenZArchive(file)) return emptyList()
 
+        if (!password.isNullOrEmpty()) {
+            val cachedEntries = sessionManager.getEntries(file, password)
+            if (cachedEntries != null) {
+                return cachedEntries
+            }
+            if (sessionManager.prewarmSession(file, password)) {
+                val warmed = sessionManager.getEntries(file, password)
+                if (warmed != null) {
+                    return warmed
+                }
+            }
+        }
+
         if (password.isNullOrEmpty() && Native7z.isAvailable) {
             val session = Native7zArchiveSession.open(file.absolutePath)
             if (session != null) {
@@ -126,33 +141,30 @@ class SevenZArchiveManager {
     fun verifyPassword(file: File, password: String): Boolean {
         if (!isValidSevenZArchive(file)) return false
 
-        return try {
-            SevenZFile.builder().setFile(file).setPassword(password).get().use { sevenZ ->
-                val hasEncryptedEntries = sevenZ.entries.any { isEntryEncrypted(it) }
-                if (!hasEncryptedEntries) {
-                    return true
-                }
-
-                val targetEntry = sevenZ.entries.firstOrNull { !it.isDirectory && it.hasStream() && isEntryEncrypted(it) }
-                    ?: return true
-
-                try {
-                    sevenZ.getInputStream(targetEntry).use { stream ->
-                        val buffer = ByteArray(64)
-                        stream.read(buffer) >= 0
+        if (sessionManager.prewarmSession(file, password)) {
+            val entries = sessionManager.getEntries(file, password)
+            val encryptedEntry = entries?.firstOrNull { it.isEncrypted }
+            if (encryptedEntry != null) {
+                val valid = runCatching {
+                    var ok = false
+                    kotlinx.coroutines.runBlocking {
+                        sessionManager.extractSequential(file, encryptedEntry.name, password, lookahead = 0) { _, stream ->
+                            val buf = ByteArray(64)
+                            ok = stream.read(buf) >= 0
+                        }
                     }
-                    true
-                } catch (_: OutOfMemoryError) {
-                    System.gc()
-                    true
+                    ok
+                }.getOrDefault(false)
+
+                if (!valid) {
+                    sessionManager.closeSession(file)
+                    return false
                 }
             }
-        } catch (_: OutOfMemoryError) {
-            System.gc()
-            false
-        } catch (_: Exception) {
-            false
+            return true
         }
+
+        return false
     }
 
     /**
