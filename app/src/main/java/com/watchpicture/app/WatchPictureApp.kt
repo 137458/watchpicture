@@ -95,7 +95,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             }
             .memoryCache {
                 coil3.memory.MemoryCache.Builder()
-                    .maxSizePercent(context, 0.40)
+                    .maxSizePercent(context, 0.20)
                     .build()
             }
             .diskCache {
@@ -115,26 +115,29 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             when {
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL ||
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_COMPLETE -> {
-                    // Extreme memory pressure: flush all memory caches, file handles, and trim disk caches
+                    // Extreme memory pressure: flush all memory caches, file handles, 7z sessions, and trim disk caches
                     imageLoader.memoryCache?.clear()
                     zipArchiveManager.handlePool.closeAll()
+                    zipArchiveManager.sevenZManager.sessionManager.closeAll()
                     archiveDiskCache.trimToSize()
                     thumbnailDiskCache.trimToSize()
                     com.watchpicture.app.archive.SevenZKeyCache.clear()
                 }
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
-                    // UI moved to background: halve Coil memory cache and close idle handles to survive LMK
+                    // UI moved to background: halve Coil memory cache and close idle handles/7z buffers to survive LMK
                     val memCache = imageLoader.memoryCache
                     if (memCache != null) {
                         memCache.trimToSize(memCache.maxSize / 2)
                     }
                     zipArchiveManager.handlePool.closeAll()
+                    zipArchiveManager.sevenZManager.sessionManager.closeAll()
                 }
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
                     val memCache = imageLoader.memoryCache
                     if (memCache != null) {
                         memCache.trimToSize(memCache.maxSize / 2)
                     }
+                    zipArchiveManager.sevenZManager.sessionManager.reapIdleSessions()
                 }
             }
         } catch (_: Throwable) {}
@@ -145,6 +148,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
         try {
             SingletonImageLoader.get(this).memoryCache?.clear()
             zipArchiveManager.handlePool.closeAll()
+            zipArchiveManager.sevenZManager.sessionManager.closeAll()
             com.watchpicture.app.archive.SevenZKeyCache.clear()
         } catch (_: Throwable) {}
     }

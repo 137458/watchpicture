@@ -127,6 +127,16 @@ fun GalleryViewerScreen(
         }
     }
 
+    DisposableEffect(packId) {
+        onDispose {
+            val app = WatchPictureApp.instance
+            val file = java.io.File(packId)
+            if (file.exists() && com.watchpicture.app.archive.ZipArchiveManager.isSevenZFile(file)) {
+                app.archiveExtractionCoordinator.sevenZSessionManager.purgeCache(file)
+            }
+        }
+    }
+
     val images = uiState.images
 
     Box(

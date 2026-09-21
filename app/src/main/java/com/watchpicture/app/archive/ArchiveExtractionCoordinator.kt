@@ -53,6 +53,30 @@ class ArchiveExtractionCoordinator(
         isSweepPaused = false
     }
 
+    private val purgeJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
+
+    /**
+     * Schedules a delayed purge of native solid block cache for [file] (default 3 seconds of inactivity).
+     * Prevents large 700MB+ solid decompression buffers from residing in RAM during photo viewing.
+     */
+    fun scheduleCachePurge(file: File, delayMs: Long = 3_000L) {
+        val path = try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
+        purgeJobs[path]?.cancel()
+        purgeJobs[path] = kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
+            kotlinx.coroutines.delay(delayMs)
+            sevenZSessionManager.purgeCache(file)
+            purgeJobs.remove(path)
+        }
+    }
+
+    /**
+     * Cancels any pending purge for [file] (called when new extraction starts).
+     */
+    fun cancelCachePurge(file: File) {
+        val path = try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
+        purgeJobs.remove(path)?.cancel()
+    }
+
     /**
      * Cancels any currently executing background thumbnail sweep.
      */
@@ -90,11 +114,16 @@ class ArchiveExtractionCoordinator(
                 return@withLock recheck
             }
 
-            if (ZipArchiveManager.isSevenZFile(file)) {
+            cancelCachePurge(file)
+            val result = if (ZipArchiveManager.isSevenZFile(file)) {
                 extractSevenZWithOpportunisticCache(file, entryName, password)
             } else {
                 extractZipEntry(file, entryName, password)
             }
+            if (ZipArchiveManager.isSevenZFile(file)) {
+                scheduleCachePurge(file, 3_000L)
+            }
+            result
         }
     }
 
@@ -384,36 +413,41 @@ class ArchiveExtractionCoordinator(
 
             var count = 0
             val total = sortedUncached.size
-            for (target in sortedUncached) {
-                if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
-                if (powerThermalManager?.isThrottled == true) break
+            try {
+                for (target in sortedUncached) {
+                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
+                    if (powerThermalManager?.isThrottled == true) break
 
-                // Cooperative yield while foreground requests are in flight
-                while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
-                    kotlinx.coroutines.delay(80)
-                }
-                if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
+                    // Cooperative yield while foreground requests are in flight
+                    while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
+                        kotlinx.coroutines.delay(80)
+                    }
+                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
 
-                val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
-                if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
+                    val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
+                    if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
+                        count++
+                        onProgress?.invoke(count, total)
+                        continue
+                    }
+                    runCatching {
+                        sevenZSessionManager.extractThumbnail(
+                            file = file,
+                            targetEntryName = target,
+                            targetSizePx = targetSizePx,
+                            password = password,
+                            thumbnailDiskCache = thumbnailDiskCache,
+                            lookahead = 0,
+                            allowRewind = true
+                        )
+                    }
                     count++
                     onProgress?.invoke(count, total)
-                    continue
+                    kotlinx.coroutines.yield() // Yield so interactive UI requests get top priority!
                 }
-                runCatching {
-                    sevenZSessionManager.extractThumbnail(
-                        file = file,
-                        targetEntryName = target,
-                        targetSizePx = targetSizePx,
-                        password = password,
-                        thumbnailDiskCache = thumbnailDiskCache,
-                        lookahead = 0,
-                        allowRewind = true
-                    )
-                }
-                count++
-                onProgress?.invoke(count, total)
-                kotlinx.coroutines.yield() // Yield so interactive UI requests get top priority!
+            } finally {
+                // Immediately reclaim the 700MB+ solid decompression buffer after sweep completes or cancels!
+                sevenZSessionManager.purgeCache(file)
             }
             return@withContext
         }

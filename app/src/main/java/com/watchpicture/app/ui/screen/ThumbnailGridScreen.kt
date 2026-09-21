@@ -78,6 +78,17 @@ fun ThumbnailGridScreen(
         viewModel.loadImages(packId)
     }
 
+    androidx.compose.runtime.DisposableEffect(packId) {
+        onDispose {
+            val app = WatchPictureApp.instance
+            app.archiveExtractionCoordinator.cancelBackgroundSweep()
+            val file = File(packId)
+            if (file.exists() && ZipArchiveManager.isSevenZFile(file)) {
+                app.archiveExtractionCoordinator.sevenZSessionManager.purgeCache(file)
+            }
+        }
+    }
+
     LaunchedEffect(uiState.images, packId) {
         val file = File(packId)
         if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && uiState.images.isNotEmpty()) {

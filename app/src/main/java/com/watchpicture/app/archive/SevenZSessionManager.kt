@@ -37,7 +37,13 @@ class SevenZSessionManager(
         var lastAccessTime: Long = System.currentTimeMillis()
 
         fun openIfNeeded() {
-            if (!nativeFailed && nativeSession == null && sevenZ == null) {
+            if (nativeSession != null && !nativeFailed) {
+                return
+            }
+            if (sevenZ != null) {
+                return
+            }
+            if (!nativeFailed && nativeSession == null) {
                 if (Native7z.isAvailable) {
                     try {
                         val ns = Native7zArchiveSession.open(file.absolutePath, password)
@@ -80,6 +86,10 @@ class SevenZSessionManager(
             if (sevenZ == null) {
                 openJavaSevenZ()
             }
+        }
+
+        fun purgeCache() {
+            runCatching { nativeSession?.purgeCache() }
         }
 
         fun reset() {
@@ -367,8 +377,7 @@ class SevenZSessionManager(
 
                         return@withLock result
                     } else {
-                        com.watchpicture.app.util.AppLog.w("7zSession", "Native extractThumbnailResult failed for $targetEntryName, smoothly falling back to Java session")
-                        session.markNativeFailed()
+                        com.watchpicture.app.util.AppLog.w("7zSession", "Native extractThumbnailResult returned null for $targetEntryName")
                     }
                 }
             }
@@ -486,7 +495,7 @@ class SevenZSessionManager(
                     if (ok && destination.exists() && destination.length() > 0L) {
                         return@withLock true
                     } else {
-                        session.markNativeFailed()
+                        com.watchpicture.app.util.AppLog.w("7zSession", "Native extractToFile failed for $targetEntryName")
                     }
                 }
             }
@@ -708,6 +717,14 @@ class SevenZSessionManager(
             s.close()
         }
         sessions.clear()
+    }
+
+    /**
+     * Purges native solid block cache for the given file to reclaim native memory immediately.
+     */
+    fun purgeCache(file: File) {
+        val key = getSessionKey(file)
+        sessions[key]?.purgeCache()
     }
 
     /**
