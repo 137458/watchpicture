@@ -88,6 +88,9 @@ struct Native7zArchive {
 };
 
 static void throwIOException(JNIEnv *env, const char *message) {
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
     jclass cls = env->FindClass("java/io/IOException");
     if (cls) {
         env->ThrowNew(cls, message);
@@ -95,6 +98,9 @@ static void throwIOException(JNIEnv *env, const char *message) {
 }
 
 static void throwUnsupportedException(JNIEnv *env, const char *message) {
+    if (env->ExceptionCheck()) {
+        env->ExceptionClear();
+    }
     jclass cls = env->FindClass("java/lang/UnsupportedOperationException");
     if (cls) {
         env->ThrowNew(cls, message);
@@ -250,12 +256,18 @@ Java_com_watchpicture_app_archive_Native7z_nativeGetEntries(
 
     jclass entryClass = env->FindClass("com/watchpicture/app/archive/Native7zEntry");
     if (!entryClass) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
         throwIOException(env, "Native7zEntry class not found");
         return nullptr;
     }
 
     jmethodID entryCtor = env->GetMethodID(entryClass, "<init>", "(ILjava/lang/String;JZJ)V");
     if (!entryCtor) {
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+        }
         throwIOException(env, "Native7zEntry constructor not found");
         return nullptr;
     }

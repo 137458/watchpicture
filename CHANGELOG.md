@@ -3,6 +3,7 @@
 ## [未发布]
 
 ### 修复
+- 修复了 Release 构建开启 R8 混淆后 `Native7zEntry` 构造方法与字段被剥离优化，导致 C++ JNI `nativeGetEntries` 反射调用抛出 `NoSuchMethodError` 并触发 ART `SIGABRT` 闪退的问题；添加 `@Keep` 注解并建立 `proguard-rules.pro` 永久保活 JNI 交互类与序列化模型，并在 native C++ 抛出异常前主动清理 Pending Exception 防御 ART 异常中断。
 - 修复了 `SevenZSessionManager.closeSession/closeAll/reapIdleSessions` 在未持有会话互斥锁的情况下对仍在执行 native 解压的会话调用 `close()` 的并发竞态，关闭路径统一在会话锁内执行并幂等化，杜绝 native 句柄释放后再次访问导致的崩溃。
 - 修复了 `ArchiveHandlePool` 加密 zip 句柄池以 `password.hashCode()` 作为密码凭据导致不同密码哈希碰撞时复用错误句柄、解密返回损坏数据的缺陷，改为以完整密码字符串参与句柄键并校验一致性。
 - 修复了 `ArchiveExtractionCoordinator.purgeCache/scheduleCachePurge` 不持会话锁执行 `nativePurgeBlockCache`，与并发 native 提取形成 solid 块缓存读写竞态的问题，purge 移入会话锁内执行并消除取消竞态窗口。

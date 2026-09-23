@@ -1,5 +1,6 @@
 package com.watchpicture.app.archive
 
+import androidx.annotation.Keep
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
@@ -8,6 +9,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /**
  * Metadata for an entry inside a 7z archive parsed by the native 7-Zip C SDK.
  */
+@Keep
 data class Native7zEntry(
     val index: Int,
     val path: String,
@@ -19,6 +21,7 @@ data class Native7zEntry(
 /**
  * JNI bindings to the official 7-Zip ANSI-C LZMA SDK engine.
  */
+@Keep
 object Native7z {
     @Volatile
     private var libraryLoaded: Boolean? = null

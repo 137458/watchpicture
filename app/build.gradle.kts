@@ -44,11 +44,8 @@ android {
             isMinifyEnabled = true
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt")
-                // NOTE: the project currently has no app-level proguard-rules.pro file.
-                // R8 auto-applies consumer proguard rules bundled by each library AAR
-                // (miuix, coil, zip4j, commons-compress, kotlinx-serialization), so
-                // reflection-heavy code stays intact without a custom keep rules file.
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
             )
         }
         debug {
