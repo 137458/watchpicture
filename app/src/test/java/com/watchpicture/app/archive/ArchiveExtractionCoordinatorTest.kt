@@ -246,4 +246,70 @@ class ArchiveExtractionCoordinatorTest {
         assertNotNull(thumb)
         assertTrue(thumb.exists())
     }
+
+    @Test
+    fun `pauseBackgroundSweep with multiple concurrent callers stays paused until all resume`() {
+        val coordinator = ArchiveExtractionCoordinator(zipManager, archiveDiskCache)
+        assertFalse(coordinator.isSweepPaused)
+
+        coordinator.pauseBackgroundSweep()
+        assertTrue(coordinator.isSweepPaused)
+
+        coordinator.pauseBackgroundSweep()
+        assertTrue(coordinator.isSweepPaused)
+
+        coordinator.resumeBackgroundSweep()
+        assertTrue("isSweepPaused should still be true because one caller is still paused", coordinator.isSweepPaused)
+
+        coordinator.resumeBackgroundSweep()
+        assertFalse("isSweepPaused should be false after all callers resume", coordinator.isSweepPaused)
+    }
+
+    @Test
+    fun `extractThumbnailDirectResult on solid 7z accepts in-memory thumbnail result when file does not exist yet`() = runBlocking {
+        val thumbDir = tempFolder.newFolder("thumb_mem_direct")
+        val thumbCache = ThumbnailDiskCache(thumbDir)
+
+        val pendingFile = File(thumbDir, "pending_disk_flush.webp")
+        assertFalse("Pending file must not exist yet", pendingFile.exists())
+
+        val unsafeField = sun.misc.Unsafe::class.java.getDeclaredField("theUnsafe").apply { isAccessible = true }
+        val unsafe = unsafeField.get(null) as sun.misc.Unsafe
+        val testBitmap = unsafe.allocateInstance(android.graphics.Bitmap::class.java) as android.graphics.Bitmap
+
+        val mockSevenZManager = object : SevenZSessionManager() {
+            override suspend fun extractThumbnailResult(
+                file: File,
+                targetEntryName: String,
+                targetSizePx: Int,
+                password: String?,
+                thumbnailDiskCache: ThumbnailDiskCache,
+                lookahead: Int,
+                keepBitmapInMemory: Boolean,
+                allowRewind: Boolean
+            ): ThumbnailResult {
+                return ThumbnailResult(file = pendingFile, bitmap = testBitmap)
+            }
+        }
+
+        val coordinator = ArchiveExtractionCoordinator(
+            zipArchiveManager = zipManager,
+            archiveDiskCache = archiveDiskCache,
+            sevenZSessionManager = mockSevenZManager
+        )
+
+        val result = coordinator.extractThumbnailDirectResult(
+            file = solid7z,
+            entryName = "01_page.jpg",
+            targetSizePx = 100,
+            password = null,
+            thumbnailDiskCache = thumbCache,
+            keepBitmapInMemory = true
+        )
+
+        assertSame("Must return the in-memory bitmap from sevenZSessionManager directly", testBitmap, result.bitmap)
+    }
 }
+
+
+

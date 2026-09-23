@@ -90,7 +90,7 @@ fun ThumbnailGridScreen(
             app.archiveExtractionCoordinator.cancelBackgroundSweep()
             val file = File(packId)
             if (file.exists() && ZipArchiveManager.isSevenZFile(file)) {
-                app.archiveExtractionCoordinator.sevenZSessionManager.purgeCache(file)
+                app.archiveExtractionCoordinator.scheduleCachePurge(file)
             }
         }
     }
@@ -99,37 +99,51 @@ fun ThumbnailGridScreen(
         val file = File(packId)
         if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && uiState.images.isNotEmpty()) {
             val app = WatchPictureApp.instance
-            snapshotFlow {
-                lazyGridState.isScrollInProgress to lazyGridState.firstVisibleItemIndex
-            }
-                .distinctUntilChanged()
-                .collectLatest { (isScrolling, firstIndex) ->
-                    if (isScrolling) {
-                        app.archiveExtractionCoordinator.pauseBackgroundSweep()
-                    } else {
-                        // Delay background sweep by 600ms to allow visible viewport thumbnails to load without CPU contention
-                        kotlinx.coroutines.delay(600)
-                        app.archiveExtractionCoordinator.resumeBackgroundSweep()
+            var isScrollPaused = false
+            try {
+                snapshotFlow {
+                    lazyGridState.isScrollInProgress to lazyGridState.firstVisibleItemIndex
+                }
+                    .distinctUntilChanged()
+                    .collectLatest { (isScrolling, firstIndex) ->
+                        if (isScrolling) {
+                            if (!isScrollPaused) {
+                                isScrollPaused = true
+                                app.archiveExtractionCoordinator.pauseBackgroundSweep()
+                            }
+                        } else {
+                            if (isScrollPaused) {
+                                isScrollPaused = false
+                                app.archiveExtractionCoordinator.resumeBackgroundSweep()
+                            }
+                            // Delay background sweep by 600ms to allow visible viewport thumbnails to load without CPU contention
+                            kotlinx.coroutines.delay(600)
 
-                        val totalSize = uiState.images.size
-                        if (totalSize > 0) {
-                            val lastIndex = lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstIndex
-                            val start = (firstIndex - 30).coerceAtLeast(0)
-                            val end = (lastIndex + 30).coerceAtMost(totalSize - 1)
-                            if (start <= end) {
-                                val sublist = uiState.images.subList(start, end + 1)
-                                val entryNames = sublist.map { it.entryPath }
-                                app.archiveExtractionCoordinator.startBatchThumbnailSweep(
-                                    file = file,
-                                    entryNames = entryNames,
-                                    targetSizePx = 360,
-                                    password = sessionPassword,
-                                    thumbnailDiskCache = app.thumbnailDiskCache
-                                )
+                            val totalSize = uiState.images.size
+                            if (totalSize > 0) {
+                                val lastIndex = lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstIndex
+                                val start = (firstIndex - 30).coerceAtLeast(0)
+                                val end = (lastIndex + 30).coerceAtMost(totalSize - 1)
+                                if (start <= end) {
+                                    val sublist = uiState.images.subList(start, end + 1)
+                                    val entryNames = sublist.map { it.entryPath }
+                                    app.archiveExtractionCoordinator.startBatchThumbnailSweep(
+                                        file = file,
+                                        entryNames = entryNames,
+                                        targetSizePx = 360,
+                                        password = sessionPassword,
+                                        thumbnailDiskCache = app.thumbnailDiskCache
+                                    )
+                                }
                             }
                         }
                     }
+            } finally {
+                if (isScrollPaused) {
+                    isScrollPaused = false
+                    app.archiveExtractionCoordinator.resumeBackgroundSweep()
                 }
+            }
         }
     }
 

@@ -17,7 +17,7 @@ import java.util.concurrent.ConcurrentHashMap
  * by keeping an open forward stream session. Sequential next-page requests advance O(1)
  * directly in the active stream instead of rewinding to byte 0 and re-decompressing.
  */
-class SevenZSessionManager(
+open class SevenZSessionManager(
     private val idleTimeoutMs: Long = DEFAULT_IDLE_TIMEOUT_MS
 ) {
     companion object {
@@ -399,7 +399,7 @@ class SevenZSessionManager(
      * Opportunistically caches intermediate images encountered before [targetEntryName]
      * into [thumbnailDiskCache], turning O(N^2) seek penalty into an optimal O(N) linear pass.
      */
-    suspend fun extractThumbnailResult(
+    open suspend fun extractThumbnailResult(
         file: File,
         targetEntryName: String,
         targetSizePx: Int,
