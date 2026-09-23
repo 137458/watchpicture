@@ -9,6 +9,7 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
 import java.io.FileOutputStream
+import java.nio.ByteBuffer
 
 class ThumbnailDiskCacheTest {
 
@@ -130,5 +131,64 @@ class ThumbnailDiskCacheTest {
         assertTrue(res.file.exists())
         assertEquals(payload.size.toLong(), res.file.length())
         assertArrayEquals(payload, res.file.readBytes())
+    }
+
+    @Test
+    fun `elastic fallback returns existing size when requested size is missing`() {
+        val cacheDir = tempFolder.newFolder("thumb_fallback")
+        val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+
+        val dummyZip = tempFolder.newFile("dummy_fallback.zip")
+        val entryName = "page_01.jpg"
+        val sampleData = byteArrayOf(11, 22, 33, 44)
+
+        // Store size 360
+        val file360 = cache.getOrPut(dummyZip, entryName, 360, password = null) {
+            sampleData.inputStream()
+        }
+        assertNotNull(file360)
+        assertTrue(file360.exists())
+
+        // Request size 720 which has not been extracted: must return the 360 thumbnail as elastic fallback
+        val fallbackHit = cache.get(dummyZip, entryName, 720, password = null)
+        assertNotNull("Requesting 720 should return existing 360 thumbnail as elastic fallback", fallbackHit)
+        assertEquals(file360.absolutePath, fallbackHit?.absolutePath)
+
+        // Requesting an uncached entry must return null
+        val miss = cache.get(dummyZip, "uncached_page.jpg", 720, password = null)
+        org.junit.Assert.assertNull("Uncached entry should return null", miss)
+    }
+
+    @Test
+    fun `getOrPutResultFromByteBuffer stores and retrieves DirectByteBuffer payload without heap array`() {
+        val cacheDir = tempFolder.newFolder("thumb_direct_buf")
+        val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+
+        val dummyZip = tempFolder.newFile("dummy_direct.zip")
+        val entryName = "native_entry.jpg"
+
+        val rawBytes = byteArrayOf(5, 4, 3, 2, 1)
+        val directBuffer = ByteBuffer.allocateDirect(rawBytes.size)
+        directBuffer.put(rawBytes)
+        directBuffer.flip()
+
+        val res = cache.getOrPutResultFromByteBuffer(
+            zipFile = dummyZip,
+            entryName = entryName,
+            targetSizePx = 360,
+            password = null,
+            keepBitmapInMemory = false,
+            buffer = directBuffer
+        )
+
+        assertNotNull(res.file)
+        assertTrue(res.file.exists())
+        assertEquals(rawBytes.size.toLong(), res.file.length())
+        assertArrayEquals(rawBytes, res.file.readBytes())
+
+        // Fast path hit
+        val hit = cache.get(dummyZip, entryName, 360, password = null)
+        assertNotNull(hit)
+        assertEquals(res.file.absolutePath, hit?.absolutePath)
     }
 }

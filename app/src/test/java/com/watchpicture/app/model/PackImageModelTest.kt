@@ -44,6 +44,25 @@ class PackImageModelTest {
     }
 
     @Test
+    fun `resolves downsampled thumbnail ZipImageSource for directory when isThumbnail is true`() {
+        val folder = tempFolder.newFolder("album_thumb")
+        val image = PackImage(
+            packId = "pack1",
+            entryPath = "sample.png",
+            displayName = "sample.png",
+            directFilePath = folder.absolutePath
+        )
+
+        val model = image.toImageModel(isThumbnail = true, targetSizePx = 360)
+        assertTrue(model is ZipImageSource)
+        val source = model as ZipImageSource
+        assertEquals(folder.absolutePath, source.zipFile.absolutePath)
+        assertEquals("sample.png", source.entryName)
+        assertTrue(source.isThumbnail)
+        assertEquals(360, source.targetSizePx)
+    }
+
+    @Test
     fun `resolves zip entry model when directFilePath points to zip archive`() {
         val zipFile = tempFolder.newFile("archive.zip")
         val image = PackImage(

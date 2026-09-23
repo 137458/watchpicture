@@ -43,7 +43,19 @@ fun PackImage.toImageModel(
     val direct = directFilePath?.let { File(it) }
     if (direct != null && direct.exists()) {
         return when {
-            direct.isDirectory -> File(direct, entryPath)
+            direct.isDirectory -> {
+                if (isThumbnail) {
+                    ZipImageSource(
+                        zipFile = direct,
+                        entryName = entryPath,
+                        password = null,
+                        isThumbnail = true,
+                        targetSizePx = targetSizePx
+                    )
+                } else {
+                    File(direct, entryPath)
+                }
+            }
             ZipArchiveManager.isImageFile(direct.name) -> direct
             else -> ZipImageSource(
                 zipFile = direct,

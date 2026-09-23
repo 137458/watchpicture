@@ -475,6 +475,44 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToBytes(
     return byteArray;
 }
 
+extern "C" JNIEXPORT jobject JNICALL
+Java_com_watchpicture_app_archive_Native7z_nativeExtractToDirectBuffer(
+    JNIEnv *env,
+    jclass /* clazz */,
+    jlong handle,
+    jint fileIndex
+) {
+    if (!handle || fileIndex < 0) {
+        return nullptr;
+    }
+
+    auto *archive = reinterpret_cast<Native7zArchive *>(handle);
+
+    size_t offset = 0;
+    size_t outSizeProcessed = 0;
+
+    std::lock_guard<std::mutex> lock(archive->mutex);
+    SRes res = SzArEx_Extract(
+        &archive->db,
+        &archive->lookStream.vt,
+        static_cast<UInt32>(fileIndex),
+        &archive->blockIndex,
+        &archive->outBuffer,
+        &archive->outBufferSize,
+        &offset,
+        &outSizeProcessed,
+        &g_Alloc,
+        &g_Alloc
+    );
+
+    if (res != SZ_OK || !archive->outBuffer) {
+        LOGE("SzArEx_Extract failed for index %d with error %d", fileIndex, res);
+        return nullptr;
+    }
+
+    return env->NewDirectByteBuffer(archive->outBuffer + offset, static_cast<jlong>(outSizeProcessed));
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_watchpicture_app_archive_Native7z_nativePurgeBlockCache(
     JNIEnv * /* env */,

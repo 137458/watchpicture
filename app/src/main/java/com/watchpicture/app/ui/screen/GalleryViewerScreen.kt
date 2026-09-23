@@ -459,13 +459,25 @@ private fun ZoomableImage(
             onDispose { lease?.close() }
         }
 
-        val currentModel = activeFile ?: imageModel
-        val fullRequest = remember(currentModel) {
-            coil3.request.ImageRequest.Builder(context)
-                .data(currentModel)
-                .crossfade(200)
-                .precision(coil3.size.Precision.EXACT)
-                .build()
+        val fullRequest = remember(activeFile) {
+            if (activeFile != null) {
+                val entryName = activeFile.name.lowercase()
+                val hasAlpha = entryName.endsWith(".png") || entryName.endsWith(".webp") || entryName.endsWith(".gif")
+                val config = if (android.os.Build.VERSION.SDK_INT >= 26) {
+                    android.graphics.Bitmap.Config.HARDWARE
+                } else if (hasAlpha) {
+                    android.graphics.Bitmap.Config.ARGB_8888
+                } else {
+                    android.graphics.Bitmap.Config.RGB_565
+                }
+                coil3.request.ImageRequest.Builder(context)
+                    .data(activeFile)
+                    .bitmapConfig(config)
+                    .precision(coil3.size.Precision.EXACT)
+                    .build()
+            } else {
+                null
+            }
         }
 
         Box(
@@ -476,11 +488,18 @@ private fun ZoomableImage(
         ) {
             // Immediate preview base layer: prevents black screen while full resolution loads
             val thumbModel = remember(image, sessionPassword) {
-                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 720)
+                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
             }
             val thumbRequest = remember(thumbModel) {
+                val entryName = when (thumbModel) {
+                    is com.watchpicture.app.coil.ZipImageSource -> thumbModel.entryName
+                    is java.io.File -> thumbModel.name
+                    else -> ""
+                }.lowercase()
+                val hasAlpha = entryName.endsWith(".png") || entryName.endsWith(".webp") || entryName.endsWith(".gif")
                 coil3.request.ImageRequest.Builder(context)
                     .data(thumbModel)
+                    .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
                     .precision(coil3.size.Precision.INEXACT)
                     .build()
             }
@@ -492,14 +511,16 @@ private fun ZoomableImage(
                 modifier = Modifier.fillMaxSize()
             )
 
-            // High-resolution interactive ZoomableAsyncImage is always active for consistent gestures and display
-            me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
-                model = fullRequest,
-                contentDescription = image.displayName,
-                state = zoomableState,
-                onClick = { onSingleTap() },
-                modifier = Modifier.fillMaxSize()
-            )
+            // High-resolution interactive ZoomableAsyncImage is only activated when resolvedFile is ready
+            if (fullRequest != null) {
+                me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage(
+                    model = fullRequest,
+                    contentDescription = image.displayName,
+                    state = zoomableState,
+                    onClick = { onSingleTap() },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
     }
 }

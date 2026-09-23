@@ -8,7 +8,6 @@ import com.watchpicture.app.archive.ZipArchiveManager
 import com.watchpicture.app.coil.ZipImageFetcher
 import com.watchpicture.app.coil.ZipImageKeyer
 import com.watchpicture.app.security.SessionPasswordStore
-import okio.Path.Companion.toOkioPath
 
 class WatchPictureApp : Application(), SingletonImageLoader.Factory {
 
@@ -75,6 +74,10 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             if (coilCache.exists()) {
                 coilCache.listFiles()?.forEach { it.delete() }
             }
+            val legacyDiskCache = java.io.File(cacheDir, "coil_disk_cache")
+            if (legacyDiskCache.exists()) {
+                legacyDiskCache.deleteRecursively()
+            }
         } catch (_: Throwable) {}
 
         SingletonImageLoader.setSafe { newImageLoader(this) }
@@ -95,13 +98,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             }
             .memoryCache {
                 coil3.memory.MemoryCache.Builder()
-                    .maxSizePercent(context, 0.20)
-                    .build()
-            }
-            .diskCache {
-                coil3.disk.DiskCache.Builder()
-                    .directory(context.cacheDir.resolve("coil_disk_cache").toOkioPath())
-                    .maxSizeBytes(256L * 1024 * 1024)
+                    .maxSizePercent(context, 0.40)
                     .build()
             }
             .build()

@@ -34,6 +34,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
+import coil3.request.bitmapConfig
 import com.watchpicture.app.model.DirectoryPack
 import com.watchpicture.app.model.PackItem
 import com.watchpicture.app.model.ZipPack
@@ -116,8 +117,23 @@ fun PackCard(
                     }
 
                     if (imageModel != null) {
+                        val context = androidx.compose.ui.platform.LocalContext.current
+                        val request = remember<coil3.request.ImageRequest>(imageModel) {
+                            val entryName = when (imageModel) {
+                                is com.watchpicture.app.coil.ZipImageSource -> imageModel.entryName
+                                is java.io.File -> imageModel.name
+                                else -> ""
+                            }.lowercase()
+                            val hasAlpha = entryName.endsWith(".png") || entryName.endsWith(".webp") || entryName.endsWith(".gif")
+                            coil3.request.ImageRequest.Builder(context)
+                                .data(imageModel)
+                                .size(360, 360)
+                                .precision(coil3.size.Precision.INEXACT)
+                                .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
+                                .build()
+                        }
                         AsyncImage(
-                            model = imageModel,
+                            model = request,
                             contentDescription = pack.name,
                             contentScale = ContentScale.Crop,
                             modifier = Modifier.fillMaxSize()

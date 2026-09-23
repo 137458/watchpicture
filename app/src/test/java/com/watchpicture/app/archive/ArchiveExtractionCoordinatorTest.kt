@@ -182,4 +182,68 @@ class ArchiveExtractionCoordinatorTest {
 
         coordinator.resumeBackgroundSweep()
     }
+
+    @Test
+    fun `extractHighPriority does not extract lookahead entries beyond target entry`() = runBlocking {
+        val coordinator = ArchiveExtractionCoordinator(zipManager, archiveDiskCache)
+
+        val file1 = coordinator.extractHighPriority(solid7z, "01_page.jpg", password = null)
+        assertArrayEquals(testBytes1, file1.readBytes())
+
+        val cached2 = archiveDiskCache.get(solid7z, "02_page.jpg", password = null)
+        assertNull("Subsequent entry 02_page.jpg should NOT be extracted when lookahead is 0", cached2)
+    }
+
+    @Test
+    fun `startBatchThumbnailSweep works on normal directory pack with cooling pulse`() = runBlocking {
+        val dir = tempFolder.newFolder("batch_dir")
+        val sampleBytes = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0, 10, 74, 70, 73, 70)
+        val entryNames = (0 until 7).map { "photo_$it.jpg" }
+        for (name in entryNames) {
+            File(dir, name).writeBytes(sampleBytes)
+        }
+
+        val thumbDir = tempFolder.newFolder("thumb_batch_dir_cache")
+        val thumbCache = ThumbnailDiskCache(thumbDir)
+        val coordinator = ArchiveExtractionCoordinator(zipManager, archiveDiskCache)
+
+        var progressCalls = 0
+        coordinator.startBatchThumbnailSweep(
+            file = dir,
+            entryNames = entryNames,
+            targetSizePx = 100,
+            password = null,
+            thumbnailDiskCache = thumbCache
+        ) { completed, total ->
+            progressCalls++
+            assertEquals(7, total)
+        }
+
+        assertEquals(7, progressCalls)
+        for (name in entryNames) {
+            val thumb = thumbCache.get(dir, name, 100, password = null)
+            assertNotNull("Thumbnail for $name in directory must exist", thumb)
+        }
+    }
+
+    @Test
+    fun `extractThumbnailDirect handles local directory files directly`() = runBlocking {
+        val dir = tempFolder.newFolder("local_dir")
+        val sampleFile = File(dir, "pic.jpg")
+        sampleFile.writeBytes(byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0, 10, 74, 70, 73, 70))
+
+        val thumbDir = tempFolder.newFolder("thumb_local_dir_cache")
+        val thumbCache = ThumbnailDiskCache(thumbDir)
+        val coordinator = ArchiveExtractionCoordinator(zipManager, archiveDiskCache)
+
+        val thumb = coordinator.extractThumbnailDirect(
+            file = dir,
+            entryName = "pic.jpg",
+            targetSizePx = 100,
+            password = null,
+            thumbnailDiskCache = thumbCache
+        )
+        assertNotNull(thumb)
+        assertTrue(thumb.exists())
+    }
 }

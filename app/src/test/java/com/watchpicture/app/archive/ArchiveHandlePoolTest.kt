@@ -1,5 +1,6 @@
 package com.watchpicture.app.archive
 
+import kotlinx.coroutines.async
 import net.lingala.zip4j.ZipFile
 import net.lingala.zip4j.model.ZipParameters
 import org.junit.Assert.assertArrayEquals
@@ -83,5 +84,79 @@ class ArchiveHandlePoolTest {
 
         pool.close(zipFile1)
         assertEquals(0, pool.activeNativeHandleCount)
+    }
+
+    @Test
+    fun `concurrent reads on encrypted zip using handle pool do not corrupt or crash`() = kotlinx.coroutines.runBlocking {
+        val encZip = tempFolder.newFile("enc_test.zip")
+        val password = "SecretPassword123"
+        val bytes1 = ByteArray(100_000) { (it % 251).toByte() }
+        val bytes2 = ByteArray(100_000) { ((it + 37) % 251).toByte() }
+        val bytes3 = ByteArray(100_000) { ((it + 89) % 251).toByte() }
+
+        ZipFile(encZip, password.toCharArray()).use { zip ->
+            val p1 = ZipParameters().apply {
+                isEncryptFiles = true
+                encryptionMethod = net.lingala.zip4j.model.enums.EncryptionMethod.AES
+                aesKeyStrength = net.lingala.zip4j.model.enums.AesKeyStrength.KEY_STRENGTH_256
+                fileNameInZip = "file1.bin"
+            }
+            zip.addStream(ByteArrayInputStream(bytes1), p1)
+
+            val p2 = ZipParameters().apply {
+                isEncryptFiles = true
+                encryptionMethod = net.lingala.zip4j.model.enums.EncryptionMethod.AES
+                aesKeyStrength = net.lingala.zip4j.model.enums.AesKeyStrength.KEY_STRENGTH_256
+                fileNameInZip = "file2.bin"
+            }
+            zip.addStream(ByteArrayInputStream(bytes2), p2)
+
+            val p3 = ZipParameters().apply {
+                isEncryptFiles = true
+                encryptionMethod = net.lingala.zip4j.model.enums.EncryptionMethod.AES
+                aesKeyStrength = net.lingala.zip4j.model.enums.AesKeyStrength.KEY_STRENGTH_256
+                fileNameInZip = "file3.bin"
+            }
+            zip.addStream(ByteArrayInputStream(bytes3), p3)
+        }
+
+        val pool = ArchiveHandlePool(maxPoolSize = 2)
+
+        val tasks = (0 until 9).map { idx ->
+            async(kotlinx.coroutines.Dispatchers.IO) {
+                val (fileName, expected) = when (idx % 3) {
+                    0 -> "file1.bin" to bytes1
+                    1 -> "file2.bin" to bytes2
+                    else -> "file3.bin" to bytes3
+                }
+                val stream = pool.openEncryptedEntryStream(encZip, fileName, password)
+                assertNotNull("Stream must not be null for $fileName", stream)
+                val readData = stream!!.use { it.readBytes() }
+                assertArrayEquals("Data mismatch in concurrent read of $fileName", expected, readData)
+            }
+        }
+
+        tasks.forEach { it.await() }
+        assertEquals(1, pool.activeEncryptedHandleCount)
+        pool.closeAll()
+        assertEquals(0, pool.activeEncryptedHandleCount)
+    }
+
+    @Test
+    fun `supports directory stream reading in openNativeEntryStream and openEncryptedEntryStream`() {
+        val dir = tempFolder.newFolder("local_folder")
+        val sampleFile = File(dir, "photo.jpg")
+        val sampleData = byteArrayOf(10, 20, 30, 40)
+        sampleFile.writeBytes(sampleData)
+
+        val pool = ArchiveHandlePool(maxPoolSize = 2)
+
+        val nativeStream = pool.openNativeEntryStream(dir, "photo.jpg")
+        assertNotNull(nativeStream)
+        assertArrayEquals(sampleData, nativeStream!!.use { it.readBytes() })
+
+        val encStream = pool.openEncryptedEntryStream(dir, "photo.jpg", "dummyPassword")
+        assertNotNull(encStream)
+        assertArrayEquals(sampleData, encStream!!.use { it.readBytes() })
     }
 }

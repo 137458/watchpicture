@@ -20,6 +20,7 @@ class ArchiveHandlePool(
 ) {
     companion object {
         const val DEFAULT_MAX_POOL_SIZE = 4
+        const val DEFAULT_MAX_INSTANCES_PER_ARCHIVE = 4
     }
 
     private val lock = ReentrantLock()
@@ -37,10 +38,110 @@ class ArchiveHandlePool(
         val password: String
     )
 
-    private data class EncryptedHandle(
-        val zip4jFile: Zip4jFile,
-        val lastModified: Long
-    )
+    private class EncryptedHandle(
+        val file: File,
+        val password: String,
+        val lastModified: Long,
+        private val maxInstances: Int = DEFAULT_MAX_INSTANCES_PER_ARCHIVE
+    ) {
+        private val handleLock = ReentrantLock()
+        private val idleInstances = ArrayDeque<Zip4jFile>()
+        private val allInstances = mutableSetOf<Zip4jFile>()
+        private var isClosed = false
+
+        fun borrow(charset: Charset?): Zip4jFile? = handleLock.withLock {
+            if (isClosed) return null
+            val instance = idleInstances.removeFirstOrNull() ?: run {
+                try {
+                    val newZip = Zip4jFile(file, password.toCharArray()).apply {
+                        if (charset != null) this.charset = charset
+                    }
+                    allInstances.add(newZip)
+                    newZip
+                } catch (_: Exception) {
+                    return null
+                }
+            }
+            if (charset != null && instance.charset != charset) {
+                instance.charset = charset
+            }
+            instance
+        }
+
+        fun release(instance: Zip4jFile) = handleLock.withLock {
+            if (isClosed || idleInstances.size >= maxInstances) {
+                allInstances.remove(instance)
+                runCatching { instance.close() }
+            } else {
+                idleInstances.addLast(instance)
+            }
+        }
+
+        fun close() = handleLock.withLock {
+            isClosed = true
+            for (instance in allInstances) {
+                runCatching { instance.close() }
+            }
+            idleInstances.clear()
+            allInstances.clear()
+        }
+    }
+
+    private class PooledZip4jInputStream(
+        private val delegate: InputStream,
+        private val lockTarget: Any,
+        private val onClose: () -> Unit
+    ) : InputStream() {
+        private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
+
+        override fun read(): Int = synchronized(lockTarget) {
+            if (closed.get()) throw java.io.IOException("Stream closed")
+            delegate.read()
+        }
+
+        override fun read(b: ByteArray): Int = synchronized(lockTarget) {
+            if (closed.get()) throw java.io.IOException("Stream closed")
+            delegate.read(b, 0, b.size)
+        }
+
+        override fun read(b: ByteArray, off: Int, len: Int): Int = synchronized(lockTarget) {
+            if (closed.get()) throw java.io.IOException("Stream closed")
+            delegate.read(b, off, len)
+        }
+
+        override fun skip(n: Long): Long = synchronized(lockTarget) {
+            if (closed.get()) throw java.io.IOException("Stream closed")
+            delegate.skip(n)
+        }
+
+        override fun available(): Int = synchronized(lockTarget) {
+            if (closed.get()) 0 else delegate.available()
+        }
+
+        override fun mark(readlimit: Int) = synchronized(lockTarget) {
+            delegate.mark(readlimit)
+        }
+
+        override fun reset() = synchronized(lockTarget) {
+            delegate.reset()
+        }
+
+        override fun markSupported(): Boolean = synchronized(lockTarget) {
+            delegate.markSupported()
+        }
+
+        override fun close() {
+            if (closed.compareAndSet(false, true)) {
+                try {
+                    synchronized(lockTarget) {
+                        delegate.close()
+                    }
+                } finally {
+                    onClose()
+                }
+            }
+        }
+    }
 
     private val nativePool = object : LinkedHashMap<String, NativeHandle>(maxPoolSize, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, NativeHandle>?): Boolean {
@@ -55,7 +156,7 @@ class ArchiveHandlePool(
     private val encryptedPool = object : LinkedHashMap<EncryptedHandleKey, EncryptedHandle>(maxPoolSize, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<EncryptedHandleKey, EncryptedHandle>?): Boolean {
             if (size > maxPoolSize && eldest != null) {
-                runCatching { eldest.value.zip4jFile.close() }
+                runCatching { eldest.value.close() }
                 return true
             }
             return false
@@ -69,7 +170,8 @@ class ArchiveHandlePool(
         get() = lock.withLock { encryptedPool.size }
 
     /**
-     * Obtains an InputStream for an entry using native C++ zlib-backed java.util.zip.ZipFile.
+     * Obtains an InputStream for an entry using native C++ zlib-backed java.util.zip.ZipFile,
+     * or directly from a local directory if file is a directory.
      * Returns null if entry is not found or file cannot be opened.
      */
     fun openNativeEntryStream(
@@ -77,6 +179,27 @@ class ArchiveHandlePool(
         entryName: String,
         charset: Charset? = null
     ): InputStream? {
+        if (file.isDirectory) {
+            val cleanName = entryName.trimStart('/', '\\')
+            val target = File(file, cleanName)
+            val normalized = cleanName.replace('\\', '/')
+            val resolved = if (target.exists() && target.isFile) {
+                target
+            } else {
+                val alt = File(file, normalized)
+                if (alt.exists() && alt.isFile) alt else null
+            }
+            return if (resolved != null) {
+                try {
+                    java.io.FileInputStream(resolved)
+                } catch (_: Exception) {
+                    null
+                }
+            } else {
+                null
+            }
+        }
+
         val path = file.absolutePath
         val lastModified = file.lastModified()
 
@@ -117,7 +240,10 @@ class ArchiveHandlePool(
     }
 
     /**
-     * Obtains an InputStream for an entry in an encrypted ZIP using Zip4j.
+     * Obtains an InputStream for an entry in an encrypted ZIP using Zip4j,
+     * or directly from a local directory if file is a directory.
+     * Each concurrent stream borrows an isolated Zip4jFile instance from the handle's object pool
+     * and synchronizes read access to eliminate underlying RandomAccessFile pointer collision.
      */
     fun openEncryptedEntryStream(
         file: File,
@@ -125,42 +251,51 @@ class ArchiveHandlePool(
         password: String,
         charset: Charset? = null
     ): InputStream? {
+        if (file.isDirectory) {
+            return openNativeEntryStream(file, entryName, charset)
+        }
+
         val path = file.absolutePath
         val lastModified = file.lastModified()
         val key = EncryptedHandleKey(path, password)
 
-        // Same reasoning as openNativeEntryStream: keep handle lookup and stream
-        // acquisition under the lock so a concurrent put()/eviction cannot close
-        // this handle in between.
-        return lock.withLock {
+        val handle = lock.withLock {
             val existing = encryptedPool[key]
-            val handle = if (existing != null && existing.lastModified == lastModified) {
+            if (existing != null && existing.lastModified == lastModified) {
                 existing
             } else {
-                existing?.let { runCatching { it.zip4jFile.close() } }
-                val newZip = try {
-                    Zip4jFile(file, password.toCharArray()).apply {
-                        if (charset != null) this.charset = charset
-                    }
-                } catch (_: Exception) {
-                    return@withLock null
-                }
-                val created = EncryptedHandle(newZip, lastModified)
+                existing?.close()
+                val created = EncryptedHandle(file, password, lastModified)
                 encryptedPool[key] = created
                 created
             }
+        }
 
+        val zip4jInstance = handle.borrow(charset) ?: return null
+
+        val stream = try {
             val normalized = entryName.replace('\\', '/')
-            val header = handle.zip4jFile.getFileHeader(entryName)
-                ?: handle.zip4jFile.getFileHeader(normalized)
-                ?: handle.zip4jFile.fileHeaders.firstOrNull { it.fileName.replace('\\', '/') == normalized }
-                ?: return@withLock null
+            val header = zip4jInstance.getFileHeader(entryName)
+                ?: zip4jInstance.getFileHeader(normalized)
+                ?: zip4jInstance.fileHeaders.firstOrNull { it.fileName.replace('\\', '/') == normalized }
 
-            try {
-                handle.zip4jFile.getInputStream(header)
-            } catch (_: Exception) {
-                null
+            if (header == null) {
+                handle.release(zip4jInstance)
+                return null
             }
+            zip4jInstance.getInputStream(header)
+        } catch (_: Exception) {
+            handle.release(zip4jInstance)
+            return null
+        }
+
+        if (stream == null) {
+            handle.release(zip4jInstance)
+            return null
+        }
+
+        return PooledZip4jInputStream(stream, zip4jInstance) {
+            handle.release(zip4jInstance)
         }
     }
 
@@ -176,7 +311,7 @@ class ArchiveHandlePool(
             val keysToRemove = encryptedPool.keys.filter { it.path == path }
             for (k in keysToRemove) {
                 encryptedPool.remove(k)?.let {
-                    runCatching { it.zip4jFile.close() }
+                    runCatching { it.close() }
                 }
             }
         }
@@ -192,7 +327,7 @@ class ArchiveHandlePool(
             }
             nativePool.clear()
             for (h in encryptedPool.values) {
-                runCatching { h.zip4jFile.close() }
+                runCatching { h.close() }
             }
             encryptedPool.clear()
         }

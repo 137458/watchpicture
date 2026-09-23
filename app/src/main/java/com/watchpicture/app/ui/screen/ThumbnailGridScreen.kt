@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -26,6 +27,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.snapshotFlow
+import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.distinctUntilChanged
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -72,6 +76,7 @@ fun ThumbnailGridScreen(
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val scrollBehavior = MiuixScrollBehavior()
+    val lazyGridState = rememberLazyGridState()
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     val sessionPassword = remember(packId) { passwordStore.get(packId) }
 
@@ -90,20 +95,41 @@ fun ThumbnailGridScreen(
         }
     }
 
-    LaunchedEffect(uiState.images, packId) {
+    LaunchedEffect(uiState.images, packId, sessionPassword) {
         val file = File(packId)
         if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && uiState.images.isNotEmpty()) {
-            // Delay background sweep by 800ms to allow visible viewport thumbnails to load without CPU contention
-            kotlinx.coroutines.delay(800)
             val app = WatchPictureApp.instance
-            val entryNames = uiState.images.map { it.entryPath }
-            app.archiveExtractionCoordinator.startBatchThumbnailSweep(
-                file = file,
-                entryNames = entryNames,
-                targetSizePx = 360,
-                password = sessionPassword,
-                thumbnailDiskCache = app.thumbnailDiskCache
-            )
+            snapshotFlow {
+                lazyGridState.isScrollInProgress to lazyGridState.firstVisibleItemIndex
+            }
+                .distinctUntilChanged()
+                .collectLatest { (isScrolling, firstIndex) ->
+                    if (isScrolling) {
+                        app.archiveExtractionCoordinator.pauseBackgroundSweep()
+                    } else {
+                        // Delay background sweep by 600ms to allow visible viewport thumbnails to load without CPU contention
+                        kotlinx.coroutines.delay(600)
+                        app.archiveExtractionCoordinator.resumeBackgroundSweep()
+
+                        val totalSize = uiState.images.size
+                        if (totalSize > 0) {
+                            val lastIndex = lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstIndex
+                            val start = (firstIndex - 30).coerceAtLeast(0)
+                            val end = (lastIndex + 30).coerceAtMost(totalSize - 1)
+                            if (start <= end) {
+                                val sublist = uiState.images.subList(start, end + 1)
+                                val entryNames = sublist.map { it.entryPath }
+                                app.archiveExtractionCoordinator.startBatchThumbnailSweep(
+                                    file = file,
+                                    entryNames = entryNames,
+                                    targetSizePx = 360,
+                                    password = sessionPassword,
+                                    thumbnailDiskCache = app.thumbnailDiskCache
+                                )
+                            }
+                        }
+                    }
+                }
         }
     }
 
@@ -205,6 +231,7 @@ fun ThumbnailGridScreen(
 
                 else -> {
                     LazyVerticalGrid(
+                        state = lazyGridState,
                         columns = GridCells.Adaptive(minSize = 110.dp),
                         contentPadding = PaddingValues(6.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
@@ -259,24 +286,12 @@ private fun ThumbnailItem(
             }.lowercase()
             val hasAlpha = entryName.endsWith(".png") || entryName.endsWith(".webp") || entryName.endsWith(".gif")
 
-            val builder = coil3.request.ImageRequest.Builder(context)
+            coil3.request.ImageRequest.Builder(context)
                 .data(model)
                 .size(360, 360)
                 .precision(coil3.size.Precision.INEXACT)
                 .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
-
-            val thumbKey = when (model) {
-                is com.watchpicture.app.coil.ZipImageSource -> {
-                    val pwdHash = model.password?.hashCode()?.toString(16) ?: "none"
-                    "zip://${model.zipFile.absolutePath}#${model.entryName}#pwd=$pwdHash#thumb#sz=360"
-                }
-                is java.io.File -> "thumb:file://${model.absolutePath}#sz=360"
-                else -> null
-            }
-            if (thumbKey != null) {
-                builder.memoryCacheKey(thumbKey)
-            }
-            builder.build()
+                .build()
         } else {
             null
         }

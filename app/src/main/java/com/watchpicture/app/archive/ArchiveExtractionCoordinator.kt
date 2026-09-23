@@ -32,8 +32,13 @@ class ArchiveExtractionCoordinator(
     val sevenZSessionManager: SevenZSessionManager = zipArchiveManager.sevenZManager.sessionManager
 ) {
     companion object {
-        // Number of subsequent entries to greedily extract while the 7z stream is already open
-        private const val SOLID_LOOKAHEAD_WINDOW = 3
+        // Disabled coordinator lookahead window to prevent background coroutines from contending for decompression locks.
+        // Lookahead is handled by the viewer viewport layer on a per-page debounced basis.
+        private const val SOLID_LOOKAHEAD_WINDOW = 0
+
+        // Batch sweep cooling interval and delay to avoid SoC thermal throttling
+        private const val BATCH_COOLING_INTERVAL = 5
+        private const val BATCH_COOLING_DELAY_MS = 32L
 
         // How long to keep the native 7z solid block cache alive after the last extraction.
         // Sequential paging reuses the same solid block; purging too aggressively (e.g. 3s) forces
@@ -369,6 +374,23 @@ class ArchiveExtractionCoordinator(
             }
         }
 
+        // Fast path 3: If target is in a local directory, read directly without archive mutex
+        if (file.isDirectory) {
+            val cleanName = entryName.trimStart('/', '\\')
+            val directEntry = File(file, cleanName)
+            val resolved = if (directEntry.exists() && directEntry.isFile) {
+                directEntry
+            } else {
+                val alt = File(file, cleanName.replace('\\', '/'))
+                if (alt.exists() && alt.isFile) alt else null
+            }
+            if (resolved != null) {
+                return@withContext thumbnailDiskCache.getOrPutResult(file, entryName, targetSizePx, password, keepBitmapInMemory) {
+                    java.io.FileInputStream(resolved)
+                }
+            }
+        }
+
         // Yield background sweep to immediately free the session lock and CPU cores for foreground viewport rendering
         pauseBackgroundSweep()
         try {
@@ -440,6 +462,7 @@ class ArchiveExtractionCoordinator(
             }
 
             var count = 0
+            var consecutiveGenerated = 0
             val total = sortedUncached.size
             try {
                 for (target in sortedUncached) {
@@ -455,6 +478,7 @@ class ArchiveExtractionCoordinator(
                     val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
                     if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
                         count++
+                        consecutiveGenerated = 0
                         onProgress?.invoke(count, total)
                         continue
                     }
@@ -470,8 +494,13 @@ class ArchiveExtractionCoordinator(
                         )
                     }
                     count++
+                    consecutiveGenerated++
                     onProgress?.invoke(count, total)
                     kotlinx.coroutines.yield() // Yield so interactive UI requests get top priority!
+                    if (consecutiveGenerated >= BATCH_COOLING_INTERVAL) {
+                        consecutiveGenerated = 0
+                        kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
+                    }
                 }
             } finally {
                 // Don't purge immediately after the sweep: the user typically jumps straight into the
@@ -491,6 +520,7 @@ class ArchiveExtractionCoordinator(
             if (targets.isEmpty()) return@withLock
 
             var count = 0
+            var consecutiveGenerated = 0
             val total = targets.size
             for (name in targets) {
                 if (powerThermalManager?.isThrottled == true) break
@@ -507,9 +537,14 @@ class ArchiveExtractionCoordinator(
                         zipArchiveManager.getEntryInputStream(file, name, password)
                     }
                     count++
+                    consecutiveGenerated++
                     onProgress?.invoke(count, total)
                 }
                 kotlinx.coroutines.yield()
+                if (consecutiveGenerated >= BATCH_COOLING_INTERVAL) {
+                    consecutiveGenerated = 0
+                    kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
+                }
             }
         }
     }

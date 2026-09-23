@@ -67,6 +67,9 @@ object Native7z {
     external fun nativeExtractToBytes(handle: Long, fileIndex: Int): ByteArray?
 
     @JvmStatic
+    external fun nativeExtractToDirectBuffer(handle: Long, fileIndex: Int): java.nio.ByteBuffer?
+
+    @JvmStatic
     external fun nativePurgeBlockCache(handle: Long)
 
     @JvmStatic
@@ -142,6 +145,14 @@ class Native7zArchiveSession private constructor(
     fun extractToBytes(fileIndex: Int): ByteArray? {
         if (closed.get()) return null
         return Native7z.nativeExtractToBytes(handle, fileIndex)
+    }
+
+    /**
+     * Extracts an entry directly to a direct [java.nio.ByteBuffer] pointing to native solid block memory.
+     */
+    fun extractToDirectBuffer(fileIndex: Int): java.nio.ByteBuffer? {
+        if (closed.get()) return null
+        return Native7z.nativeExtractToDirectBuffer(handle, fileIndex)
     }
 
     /**

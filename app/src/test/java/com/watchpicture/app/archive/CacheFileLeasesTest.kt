@@ -81,13 +81,16 @@ class CacheFileLeasesTest {
         val cache = ArchiveDiskCache(cacheDir, maxSizeBytes = 70)
 
         val block = ByteArray(30) { 1 }
+        val now = System.currentTimeMillis()
         val f1 = cache.getOrPut(dummyZip, "1.jpg", null) { ByteArrayInputStream(block) }
-        Thread.sleep(20)
+        f1.setLastModified(now - 3000)
         val f2 = cache.getOrPut(dummyZip, "2.jpg", null) { ByteArrayInputStream(block) }
+        f2.setLastModified(now - 1500)
 
         // Lease the oldest file; the trim triggered by the third write must skip it.
         val lease = CacheFileLeases.acquire(f1.absolutePath)
         val f3 = cache.getOrPut(dummyZip, "3.jpg", null) { ByteArrayInputStream(block) }
+        f3.setLastModified(now)
         assertTrue("Leased (oldest) file must survive eviction", f1.exists())
         assertTrue("Newly written file must exist", f3.exists())
         assertFalse("Oldest unleased file must be evicted", f2.exists())
@@ -106,12 +109,15 @@ class CacheFileLeasesTest {
         val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 70)
 
         val data = ByteArray(30) { it.toByte() }
+        val now = System.currentTimeMillis()
         val f1 = cache.getOrPut(dummyZip, "1.jpg", 360, null) { data.inputStream() }
-        Thread.sleep(20)
+        f1.setLastModified(now - 3000)
         val f2 = cache.getOrPut(dummyZip, "2.jpg", 360, null) { data.inputStream() }
+        f2.setLastModified(now - 1500)
 
         val lease = CacheFileLeases.acquire(f1.absolutePath)
         val f3 = cache.getOrPut(dummyZip, "3.jpg", 360, null) { data.inputStream() }
+        f3.setLastModified(now)
         assertTrue("Leased thumbnail must survive trim", f1.exists())
         assertTrue(f3.exists())
         assertFalse("Oldest unleased thumbnail must be evicted", f2.exists())

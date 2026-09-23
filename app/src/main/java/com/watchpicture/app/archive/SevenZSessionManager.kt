@@ -209,6 +209,33 @@ class SevenZSessionManager(
             if (native != null && !session.nativeFailed) {
                 val targetEntry = native.findEntry(targetEntryName)
                 if (targetEntry != null) {
+                    val directBuffer = native.extractToDirectBuffer(targetEntry.index)
+                    if (directBuffer != null) {
+                        ByteBufferInputStream(directBuffer).use { stream ->
+                            onEntryExtracted(targetEntry.path, stream)
+                        }
+
+                        if (lookahead > 0) {
+                            val nextEntries = native.entries
+                                .asSequence()
+                                .filter { it.index > targetEntry.index && !it.isDirectory }
+                                .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .take(lookahead)
+                                .toList()
+
+                            for (next in nextEntries) {
+                                val nextBuffer = native.extractToDirectBuffer(next.index)
+                                if (nextBuffer != null) {
+                                    ByteBufferInputStream(nextBuffer).use { stream ->
+                                        onEntryExtracted(next.path, stream)
+                                    }
+                                }
+                            }
+                        }
+                        return@withLock true
+                    }
+
                     val bytes = native.extractToBytes(targetEntry.index)
                     if (bytes != null) {
                         java.io.ByteArrayInputStream(bytes).use { stream ->
@@ -392,6 +419,46 @@ class SevenZSessionManager(
             if (native != null && !session.nativeFailed) {
                 val targetEntry = native.findEntry(targetEntryName)
                 if (targetEntry != null) {
+                    val directBuffer = native.extractToDirectBuffer(targetEntry.index)
+                    if (directBuffer != null) {
+                        val result = thumbnailDiskCache.getOrPutResultFromByteBuffer(
+                            zipFile = file,
+                            entryName = targetEntryName,
+                            targetSizePx = targetSizePx,
+                            password = password,
+                            keepBitmapInMemory = keepBitmapInMemory,
+                            buffer = directBuffer
+                        )
+
+                        if (lookahead > 0) {
+                            val nextEntries = native.entries
+                                .asSequence()
+                                .filter { it.index > targetEntry.index && !it.isDirectory }
+                                .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
+                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .take(lookahead)
+                                .toList()
+
+                            for (next in nextEntries) {
+                                if (thumbnailDiskCache.get(file, next.path, targetSizePx, password) == null) {
+                                    val nextBuffer = native.extractToDirectBuffer(next.index)
+                                    if (nextBuffer != null) {
+                                        thumbnailDiskCache.getOrPutResultFromByteBuffer(
+                                            zipFile = file,
+                                            entryName = next.path,
+                                            targetSizePx = targetSizePx,
+                                            password = password,
+                                            keepBitmapInMemory = false,
+                                            buffer = nextBuffer
+                                        ).lease?.close()
+                                    }
+                                }
+                            }
+                        }
+
+                        return@withLock result
+                    }
+
                     val bytes = native.extractToBytes(targetEntry.index)
                     if (bytes != null) {
                         val result = thumbnailDiskCache.getOrPutResultFromBytes(
