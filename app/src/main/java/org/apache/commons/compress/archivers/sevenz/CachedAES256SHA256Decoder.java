@@ -59,8 +59,9 @@ public class CachedAES256SHA256Decoder extends AbstractCoder {
         private final Coder coder;
         private final String archiveName;
         private final byte[] passwordBytes;
-        private boolean isInitialized;
-        private CipherInputStream cipherInputStream;
+        private volatile boolean isInitialized;
+        private volatile CipherInputStream cipherInputStream;
+        private boolean closed;
 
         private CachedAES256DecoderInputStream(
                 final InputStream in,
@@ -115,7 +116,11 @@ public class CachedAES256SHA256Decoder extends AbstractCoder {
         }
 
         @Override
-        public void close() throws IOException {
+        public synchronized void close() throws IOException {
+            if (closed) {
+                return;
+            }
+            closed = true;
             if (cipherInputStream != null) {
                 cipherInputStream.close();
             } else {

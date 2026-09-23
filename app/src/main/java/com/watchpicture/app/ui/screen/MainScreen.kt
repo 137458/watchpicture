@@ -16,7 +16,6 @@ import androidx.compose.material.icons.filled.Collections
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -27,6 +26,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
@@ -59,8 +59,8 @@ fun MainScreen(
     val packViewModel: PackViewModel = viewModel()
     val updateManager = remember { UpdateManager(context) }
 
-    val autoCheckUpdate by prefsRepo.autoCheckUpdateFlow.collectAsState(initial = true)
-    val ignoredVersion by prefsRepo.ignoredVersionFlow.collectAsState(initial = null)
+    val autoCheckUpdate by prefsRepo.autoCheckUpdateFlow.collectAsStateWithLifecycle(initialValue = true)
+    val ignoredVersion by prefsRepo.ignoredVersionFlow.collectAsStateWithLifecycle(initialValue = null)
 
     var availableUpdate by remember { mutableStateOf<UpdateCheckResult?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -100,12 +100,12 @@ fun MainScreen(
     val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
 
     val powerThermalManager = WatchPictureApp.instance.powerThermalManager
-    val throttleLevel by powerThermalManager.throttleLevel.collectAsState()
+    val throttleLevel by powerThermalManager.throttleLevel.collectAsStateWithLifecycle()
     val isThrottled = throttleLevel == com.watchpicture.app.archive.PowerThermalManager.ThrottleLevel.THROTTLED
 
-    val isShaderSupported = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isRuntimeShaderSupported() && !isThrottled
+    val shaderCapable = Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && isRuntimeShaderSupported()
     val surfaceColor = MiuixTheme.colorScheme.surface
-    val floatingBackdrop = if (isShaderSupported) {
+    val floatingBackdrop = if (shaderCapable) {
         rememberLayerBackdrop {
             drawRect(surfaceColor)
             drawContent()
@@ -163,7 +163,11 @@ fun MainScreen(
                         }
                     },
                     backdrop = floatingBackdrop,
-                    mode = if (isShaderSupported) FloatingBottomBarMode.LiquidGlass else FloatingBottomBarMode.Blur,
+                    mode = when {
+                        !shaderCapable -> FloatingBottomBarMode.Blur
+                        isThrottled -> FloatingBottomBarMode.Blur
+                        else -> FloatingBottomBarMode.LiquidGlass
+                    },
                 )
             }
         }
@@ -181,7 +185,8 @@ fun MainScreen(
                 coroutineScope.launch {
                     prefsRepo.saveIgnoredVersion(ver)
                 }
-            }
+            },
+            externalScope = coroutineScope,
         )
     }
 }

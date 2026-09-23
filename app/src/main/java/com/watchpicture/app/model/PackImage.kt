@@ -31,10 +31,14 @@ fun PackImage.toImageModel(
 ): Any? {
     val store = passwordStore
         ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore }.getOrNull()
+    // Only the pack's own canonical password participates here. The global
+    // lastUsedPassword fallback is deliberately excluded: it may belong to another
+    // pack and would pollute cache keys (ZipImageKeyer / ArchiveDiskCache.computeKey).
+    // It is used solely by PackViewModel's auto-unlock, which stores the verified
+    // password under the pack id before this path is reached.
     val resolvedPassword = sessionPassword
         ?: store?.get(packId)
         ?: directFilePath?.let { store?.get(it) }
-        ?: store?.lastUsedPassword
 
     val direct = directFilePath?.let { File(it) }
     if (direct != null && direct.exists()) {

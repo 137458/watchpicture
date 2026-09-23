@@ -10,10 +10,13 @@ import coil3.fetch.ImageFetchResult
 import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import com.watchpicture.app.archive.ArchiveDiskCache
+import com.watchpicture.app.archive.CacheFileLeases
 import com.watchpicture.app.archive.ZipArchiveManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okio.Path.Companion.toOkioPath
+import java.io.File
+import java.io.IOException
 import java.util.Locale
 
 /**
@@ -41,9 +44,10 @@ class ZipImageFetcher(
 
     override suspend fun fetch(): FetchResult = withContext(decompressDispatcher) {
         val t0 = System.currentTimeMillis()
+        // Cache keys must derive from the pack's own canonical password only. The global
+        // lastUsedPassword is intentionally not used here (it may belong to another pack).
         val password = data.password
             ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.get(data.zipFile.absolutePath) }.getOrNull()
-            ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore.lastUsedPassword }.getOrNull()
 
         val mimeType = resolveMimeType(data.entryName)
 
@@ -59,15 +63,20 @@ class ZipImageFetcher(
         if (data.isThumbnail && thumbCache != null) {
             val existingThumb = thumbCache.get(data.zipFile, data.entryName, data.targetSizePx, password)
             if (existingThumb != null) {
-                com.watchpicture.app.util.AppLog.i("Thumbnail", "Disk hit for ${data.entryName} in ${System.currentTimeMillis() - t0}ms")
-                return@withContext SourceFetchResult(
-                    source = ImageSource(
-                        file = existingThumb.toOkioPath(),
-                        fileSystem = options.fileSystem
-                    ),
-                    mimeType = "image/webp",
-                    dataSource = DataSource.DISK
-                )
+                val thumbLease = leaseVerified(existingThumb)
+                if (thumbLease != null) {
+                    com.watchpicture.app.util.AppLog.i("Thumbnail", "Disk hit for ${data.entryName} in ${System.currentTimeMillis() - t0}ms")
+                    return@withContext SourceFetchResult(
+                        source = ImageSource(
+                            file = existingThumb.toOkioPath(),
+                            fileSystem = options.fileSystem,
+                            closeable = thumbLease
+                        ),
+                        mimeType = resolveFileMimeType(existingThumb),
+                        dataSource = DataSource.DISK
+                    )
+                }
+                // Evicted in the race window between the cache lookup and here -> re-extract below.
             }
 
             val thumbResult = if (extractCoord != null && ZipArchiveManager.isSevenZFile(data.zipFile)) {
@@ -104,14 +113,11 @@ class ZipImageFetcher(
             val elapsed = System.currentTimeMillis() - t0
             if (thumbResult.bitmap != null && !thumbResult.bitmap.isRecycled) {
                 com.watchpicture.app.util.AppLog.i("Thumbnail", "Memory bypass for ${data.entryName} in ${elapsed}ms")
-                val keyStr = "zip://${data.zipFile.absolutePath}#${data.entryName}#pwd=${password?.hashCode()?.toString(16) ?: "none"}#thumb#sz=${data.targetSizePx}"
-                runCatching {
-                    val memCache = coil3.SingletonImageLoader.get(options.context).memoryCache
-                    memCache?.set(
-                        coil3.memory.MemoryCache.Key(keyStr),
-                        coil3.memory.MemoryCache.Value(image = thumbResult.bitmap.asImage())
-                    )
-                }
+                // The decoded Bitmap is returned as an ImageFetchResult; Coil's EngineInterceptor
+                // automatically writes it to the memory cache under the request's memory cache key
+                // (which matches ZipImageKeyer), so a manual memory-cache write here is redundant.
+                // The disk file is not handed to Coil, so release its freshly-acquired lease now.
+                thumbResult.lease?.close()
                 return@withContext ImageFetchResult(
                     image = thumbResult.bitmap.asImage(),
                     isSampled = true,
@@ -119,13 +125,20 @@ class ZipImageFetcher(
                 )
             }
 
+            val thumbFile = thumbResult.file
+            // getOrPutResult already handed ownership of the lease (acquired before returning so the
+            // just-written file cannot be evicted by a concurrent trim). Fall back to acquiring here
+            // for coordinator fast-paths that return the file without a lease.
+            val thumbFileLease = thumbResult.lease ?: leaseVerified(thumbFile)
+                ?: throw IOException("Thumbnail extraction produced no file for '${data.entryName}'")
             com.watchpicture.app.util.AppLog.i("Thumbnail", "Disk extracted for ${data.entryName} in ${elapsed}ms")
             return@withContext SourceFetchResult(
                 source = ImageSource(
-                    file = thumbResult.file.toOkioPath(),
-                    fileSystem = options.fileSystem
+                    file = thumbFile.toOkioPath(),
+                    fileSystem = options.fileSystem,
+                    closeable = thumbFileLease
                 ),
-                mimeType = "image/webp",
+                mimeType = resolveFileMimeType(thumbFile),
                 dataSource = DataSource.DISK
             )
         }
@@ -148,10 +161,13 @@ class ZipImageFetcher(
                 }
             }
 
+            val cachedFileLease = leaseVerified(cachedFile)
+                ?: throw IOException("Cached entry evicted before decode: '${data.entryName}'")
             return@withContext SourceFetchResult(
                 source = ImageSource(
                     file = cachedFile.toOkioPath(),
-                    fileSystem = options.fileSystem
+                    fileSystem = options.fileSystem,
+                    closeable = cachedFileLease
                 ),
                 mimeType = mimeType,
                 dataSource = DataSource.DISK
@@ -180,6 +196,18 @@ class ZipImageFetcher(
         )
     }
 
+    /**
+     * Acquires a lease on [file] and verifies it still exists. Returns null (releasing the lease)
+     * when the file was evicted in the race window between the cache lookup and here, so the
+     * caller can re-extract instead of handing Coil a dead path.
+     */
+    private fun leaseVerified(file: File): java.io.Closeable? {
+        val lease = CacheFileLeases.acquire(file.absolutePath)
+        if (file.exists() && file.length() > 0L) return lease
+        lease.close()
+        return null
+    }
+
     private fun resolveMimeType(fileName: String): String {
         return when (fileName.substringAfterLast('.', "").lowercase(Locale.ROOT)) {
             "jpg", "jpeg", "jfif", "pjpeg", "pjp" -> "image/jpeg"
@@ -194,6 +222,35 @@ class ZipImageFetcher(
             "ico" -> "image/x-icon"
             else -> "image/jpeg"
         }
+    }
+
+    /**
+     * Sniffs the real on-disk encoding of a cached thumbnail file by its magic bytes.
+     *
+     * [com.watchpicture.app.archive.ThumbnailDiskCache] always names the file `*.webp`, but the
+     * actual content is WebP (API 30+), JPEG (API < 30), or the raw original entry bytes when the
+     * source could not be downsampled. Reporting a MIME type that matches the real content keeps
+     * Coil's decoder selection correct. Falls back to "image/webp" when the format is unknown.
+     */
+    private fun resolveFileMimeType(file: File): String {
+        return runCatching {
+            val header = ByteArray(12)
+            val read = java.io.FileInputStream(file).use { it.read(header) }
+            when {
+                read >= 3 && header[0] == 0xFF.toByte() && header[1] == 0xD8.toByte() && header[2] == 0xFF.toByte() ->
+                    "image/jpeg"
+                read >= 8 && header[0] == 0x89.toByte() && header[1] == 0x50.toByte() &&
+                    header[2] == 0x4E.toByte() && header[3] == 0x47.toByte() -> "image/png"
+                read >= 12 && header[0] == 0x52.toByte() && header[1] == 0x49.toByte() &&
+                    header[2] == 0x46.toByte() && header[3] == 0x46.toByte() &&
+                    header[8] == 0x57.toByte() && header[9] == 0x45.toByte() &&
+                    header[10] == 0x42.toByte() && header[11] == 0x50.toByte() -> "image/webp"
+                read >= 4 && header[0] == 0x47.toByte() && header[1] == 0x49.toByte() &&
+                    header[2] == 0x46.toByte() && header[3] == 0x38.toByte() -> "image/gif"
+                read >= 2 && header[0] == 0x42.toByte() && header[1] == 0x4D.toByte() -> "image/bmp"
+                else -> "image/webp"
+            }
+        }.getOrDefault("image/webp")
     }
 
     class Factory(

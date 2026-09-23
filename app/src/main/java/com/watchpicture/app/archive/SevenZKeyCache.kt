@@ -20,6 +20,11 @@ object SevenZKeyCache {
 
     private const val MAX_CACHE_SIZE = 256
 
+    // 7-Zip caps numCyclesPower at 24 (kNumCyclesPowerMax). The 7z header field is
+    // 6 bits wide, so a malicious archive can declare e.g. 62 -> 2^62 iterations,
+    // hanging the CPU indefinitely (DoS). Clamp to the spec maximum.
+    private const val MAX_CYCLES_POWER = 24
+
     data class Stats(
         val hitCount: Long,
         val missCount: Long
@@ -60,9 +65,19 @@ object SevenZKeyCache {
         salt: ByteArray,
         numCyclesPower: Int
     ): ByteArray {
+        // Clamp at the entry so the native path and the CacheKey never see an absurd iteration
+        // count. 63 is a special "no-iteration" sentinel (direct salt+password key), kept as-is;
+        // anything above the spec max of 24 is clamped to defeat a malicious archive declaring
+        // e.g. 62 -> ~2^62 PBKDF2 iterations = CPU DoS.
+        val cyclesPower = if (numCyclesPower == 63) {
+            63
+        } else {
+            numCyclesPower.coerceAtMost(MAX_CYCLES_POWER)
+        }
+
         val pwdHash = Arrays.hashCode(passwordBytes)
         val saltHash = computeSaltHash(salt)
-        val key = CacheKey(pwdHash, saltHash, numCyclesPower)
+        val key = CacheKey(pwdHash, saltHash, cyclesPower)
 
         lock.withLock {
             val existing = lruMap[key]
@@ -75,7 +90,7 @@ object SevenZKeyCache {
         misses.incrementAndGet()
 
         // Derive key using standard 7z PBKDF2
-        val derivedKey = if (numCyclesPower == 63) {
+        val derivedKey = if (cyclesPower == 63) {
             val k = ByteArray(32)
             System.arraycopy(salt, 0, k, 0, salt.size.coerceAtMost(32))
             val pwdLen = passwordBytes.size.coerceAtMost(32 - salt.size.coerceAtMost(32))
@@ -86,10 +101,10 @@ object SevenZKeyCache {
         } else {
             val nativeKey = if (Native7z.isAvailable) {
                 runCatching {
-                    Native7z.nativeDeriveKey(passwordBytes, salt, numCyclesPower)
+                    Native7z.nativeDeriveKey(passwordBytes, salt, cyclesPower)
                 }.getOrNull()
             } else null
-            nativeKey ?: sha256Password(passwordBytes, numCyclesPower, salt)
+            nativeKey ?: sha256Password(passwordBytes, cyclesPower, salt)
         }
 
         lock.withLock {
@@ -105,7 +120,9 @@ object SevenZKeyCache {
     fun sha256Password(password: ByteArray, numCyclesPower: Int, salt: ByteArray): ByteArray {
         val digest = MessageDigest.getInstance("SHA-256")
         val counter = ByteArray(8)
-        val cycles = 1L shl numCyclesPower
+        // Guard against absurd iteration counts declared by malicious archives.
+        val effectiveCyclesPower = numCyclesPower.coerceIn(0, MAX_CYCLES_POWER)
+        val cycles = 1L shl effectiveCyclesPower
         for (i in 0L until cycles) {
             digest.update(salt)
             digest.update(password)

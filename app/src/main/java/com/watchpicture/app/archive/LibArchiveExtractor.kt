@@ -70,6 +70,8 @@ object LibArchiveExtractor {
                 var targetFound = false
                 var lookaheadRemaining = maxLookahead
                 val buffer = ByteBuffer.allocateDirect(64 * 1024)
+                // Reused across every writeToStream call to avoid per-64KB-block allocation churn.
+                val bytes = ByteArray(64 * 1024)
 
                 while (true) {
                     val entryHandle = Archive.readNextHeader(archive)
@@ -94,10 +96,10 @@ object LibArchiveExtractor {
                                 buffer.clear()
                                 Archive.readData(archive, buffer)
                                 buffer.flip()
-                                if (!buffer.hasRemaining()) break
-                                val bytes = ByteArray(buffer.remaining())
-                                buffer.get(bytes)
-                                outputStream.write(bytes)
+                                val remaining = buffer.remaining()
+                                if (remaining == 0) break
+                                buffer.get(bytes, 0, remaining)
+                                outputStream.write(bytes, 0, remaining)
                             }
                             outputStream.flush()
                         }

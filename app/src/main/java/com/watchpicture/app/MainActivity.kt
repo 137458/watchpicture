@@ -34,6 +34,11 @@ class MainActivity : ComponentActivity(), NavigationEventDispatcherOwner {
         handleIntent(intent)
     }
 
+    override fun onDestroy() {
+        super.onDestroy()
+        eventDispatcher.dispose()
+    }
+
     private fun handleIntent(intent: android.content.Intent?) {
         if (intent?.action == android.content.Intent.ACTION_VIEW) {
             intent.data?.let { uri ->

@@ -3,6 +3,37 @@
 ## [未发布]
 
 ### 修复
+- 修复了 `SevenZSessionManager.closeSession/closeAll/reapIdleSessions` 在未持有会话互斥锁的情况下对仍在执行 native 解压的会话调用 `close()` 的并发竞态，关闭路径统一在会话锁内执行并幂等化，杜绝 native 句柄释放后再次访问导致的崩溃。
+- 修复了 `ArchiveHandlePool` 加密 zip 句柄池以 `password.hashCode()` 作为密码凭据导致不同密码哈希碰撞时复用错误句柄、解密返回损坏数据的缺陷，改为以完整密码字符串参与句柄键并校验一致性。
+- 修复了 `ArchiveExtractionCoordinator.purgeCache/scheduleCachePurge` 不持会话锁执行 `nativePurgeBlockCache`，与并发 native 提取形成 solid 块缓存读写竞态的问题，purge 移入会话锁内执行并消除取消竞态窗口。
+- 修复了 7z lookahead 预读任务使用独立 CoroutineScope 启动、无法随会话关闭取消且脱离 per-archive 互斥锁的问题，纳入调用方协程取消传播。
+- 修复了 `ArchiveDiskCache.putDirectSuspend` 在条带锁外执行完整解压导致同 key 并发线程重复解压与缓存尺寸重复计数虚高、误触发提前淘汰的缺陷。
+- 修复了 `ArchiveDiskCache` 命中缓存更新 mtime 未持锁与 `trimToSize` 并发导致"刚命中即被误判最旧而淘汰"的问题，mtime 更新移入锁内。
+- 修复了 `SevenZKeyCache` 7z 密钥派生迭代次数仅在 Java 回退路径 clamp、native 路径可被恶意归档 2^62 次 PBKDF2 CPU 挂死的问题，入口统一收敛迭代次数。
+- 修复了 `Coil ZipImageKeyer` 内存缓存 key 未含归档文件版本（lastModified），同路径文件替换后内存缓存仍命中旧图、与磁盘缓存不一致的问题。
+- 修复了 `ZipArchiveManager.tryOpen` 回退路径每次 new ZipFile 从不 close 导致中文/非常规路径每次解码泄漏一个原生文件描述符的问题，句柄所有权随流转移并正确释放。
+- 修复了 `ThumbnailDiskCache.saveDownsampled` 用 `readBytes()` 将完整原图字节读入堆导致网格并发加载时堆瞬时膨胀的 OOM 隐患，改为 64KB 头前缀 + inJustDecodeBounds 采样 + 流式降采样。
+- 修复了 `ThumbnailDiskCache` 容量计数初值 -1 与重启后存量文件未计入基线、trim 与写入并发计漂移的问题，启动时重算基线并统一互斥。
+- 修复了缩略图落盘后租约获取过晚、trim 可删除刚生成文件浪费完整解压的竞态窗口，以及 `ZipImageMapper` 返回磁盘文件未获取租约可能被淘汰导致空图的问题。
+- 修复了 `ZipArchiveManager.extractSequentialEntries` 静默吞掉 IO/解压异常导致损坏条目无声跳过的问题。
+- 修复了 `passwordStore.remove()` 后 `lastUsedPassword` 残留导致跨包自动解锁可能用错口令的隐私残留问题，并统一会话口令多 map 更新的原子性。
+- 修复了 `CachedAES256SHA256Decoder` close() 无同步读取非 volatile 字段的数据竞争与 double-close 安全。
+- 修复了设置页"添加新密码"输入框未做明文掩码、密码本明文 chip 常驻展示的屏幕偷窥风险，与密码弹窗掩码策略对齐。
+- 修复了 `PackViewModel.openSingleArchive/onPackClicked` 自动解锁路径缺少异常兜底、SAF 权限失效抛出 SecurityException 导致未捕获协程异常崩溃的问题。
+- 修复了搜索/排序在 Compose 重组时于主线程同步过滤+排序造成输入的顿的问题，下沉为协程管线 StateFlow（120ms 防抖 + Default 调度）。
+
+### 安全
+- 密码本明文落盘改为 AndroidKeyStore 派生 AES-GCM 对称密钥加密后持久化，兼容旧明文自动迁移，杜绝 root/备份窃取密码。
+- 修复了 `SafManager` 直接路径解析未校验 `..` 路径穿越、可越权读取授权目录之外文件的问题，增加路径归一化与卷名白名单校验。
+- `UpdateManager.downloadApk` 增加下载字节数与预期尺寸的比对校验，降低 DNS/传输层被劫持时静默安装恶意包的暴露面。
+
+### 优化
+- 图片管线的磁盘缓存路径在回退窗口内尽早获取租约，与缓存淘汰的 `isLeased` 检查同步，避免刚生成的缩略图被环淘汰白解压。
+- `LibArchiveExtractor` 每 64KB 分块重复分配字节数组改为方法级复用缓冲，降低大图解压的 GC 频率。
+- release 构建开启 R8 minify（资源收缩），NDK ABI 缩减为 arm64-v8a + armeabi-v7a，APK 体积下降约 1/3。
+- `AppLog` 按 BuildConfig.DEBUG 分级输出，release 仅保留必要 ERROR，降低日志噪音与路径元信息常驻。
+
+### 修复
 - 修复了 7z 固实压缩解压缓冲区（`Native7zArchive::outBuffer`，占用约 600MB~700MB 物理内存）解压后常驻 C 堆从不释放导致的物理内存峰值突破 1.6GB 触发系统 LMKD（低内存杀进程）强制闪退缺陷；在批量缩略图扫描完成、大图提取空闲超时及离开画廊/图包页面时立即触发 `purgeCache()`，瞬间归还数百兆 C 堆物理内存。
 - 修复了 `SevenZSessionManager.openIfNeeded()` 在 Native 会话已有效打开的情况下未直接返回、意外继续进入 Java `SevenZFile` 实例化逻辑导致 Native 与 Java 在 JVM 堆双重驻留的严重内存泄露问题。
 - 修复了单张图片解压或缩略图生成失败时错误触发 `markNativeFailed()` 导致整个 Native 会话被永久报废降级至 Java 流式扫描引发后续图片 $O(N^2)$ 级联重新解压与卡死的缺陷。

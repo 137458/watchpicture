@@ -35,6 +35,7 @@ import com.watchpicture.app.R
 import com.watchpicture.app.update.UpdateCheckResult
 import com.watchpicture.app.update.UpdateManager
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
@@ -69,9 +70,13 @@ fun UpdateDialog(
     onDismiss: () -> Unit,
     onUpdate: (url: String) -> Unit = {},
     onIgnore: ((version: String) -> Unit)? = null,
+    externalScope: CoroutineScope? = null,
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
+    // “后台下载”需要比弹窗组合树更长的生命周期：优先使用调用方传入的 scope，
+    // 未传入时退回组件内部 scope（此时弹窗移除会取消下载）。
+    val internalScope = rememberCoroutineScope()
+    val coroutineScope = externalScope ?: internalScope
     val updateManager = remember { UpdateManager(context) }
 
     var downloadJob by remember { mutableStateOf<Job?>(null) }

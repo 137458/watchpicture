@@ -15,10 +15,17 @@ import com.watchpicture.app.model.ZipPack
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.storage.SafManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -99,6 +106,26 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
 
     private val _uiState = MutableStateFlow(PackListUiState())
     val uiState: StateFlow<PackListUiState> = _uiState.asStateFlow()
+
+    /**
+     * Search/sort pipeline computed off the main thread with debounce so that
+     * typing a search query never blocks recomposition with full-list filtering.
+     */
+    @OptIn(FlowPreview::class)
+    val displayedPacksFlow: StateFlow<List<PackItem>> = combine(
+        _uiState.map { it.packs },
+        _uiState.map { it.searchQuery },
+        _uiState.map { it.sortOption }
+    ) { packs, query, sort ->
+        PackSorter.sort(PackFilter.filter(packs, query), sort)
+    }
+        .debounce(120)
+        .flowOn(Dispatchers.Default)
+        .stateIn(
+            viewModelScope,
+            SharingStarted.WhileSubscribed(5000),
+            initialValue = _uiState.value.displayedPacks
+        )
 
     init {
         // Restore preferences on startup
@@ -210,7 +237,18 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
 
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true, errorMessage = null) }
-            val pack = archiveFileResolver.resolve(app, uri)
+            val pack = try {
+                archiveFileResolver.resolve(app, uri)
+            } catch (e: Exception) {
+                com.watchpicture.app.util.AppLog.e("OpenArchive", "resolve failed for $pathOrName", e)
+                _uiState.update {
+                    it.copy(
+                        isLoading = false,
+                        errorMessage = "无法打开该压缩包：${e.localizedMessage ?: "读取失败"}"
+                    )
+                }
+                return@launch
+            }
             if (pack == null) {
                 val isApk = com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(pathOrName)
                 _uiState.update {
@@ -266,8 +304,14 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                         viewModelScope.launch {
                             val t0 = System.currentTimeMillis()
                             com.watchpicture.app.util.AppLog.i("PackClick", "Verifying lastUsedPassword for ${pack.name}...")
-                            val isValid = withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
-                                zipArchiveManager.verifyPassword(targetFile, lastPwd)
+                            val isValid = try {
+                                withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
+                                    zipArchiveManager.verifyPassword(targetFile, lastPwd)
+                                }
+                            } catch (e: Exception) {
+                                com.watchpicture.app.util.AppLog.e("PackClick", "Auto-unlock verify failed for ${pack.name}", e)
+                                promptPasswordDialog(pack)
+                                return@launch
                             }
                             val elapsed = System.currentTimeMillis() - t0
                             com.watchpicture.app.util.AppLog.i("PackClick", "Password verify for ${pack.name}: isValid=$isValid in ${elapsed}ms")
@@ -278,6 +322,65 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                                     pack.uriString
                                 ).distinct()
                                 passwordStore.set(pack.id, lastPwd, aliases = aliases)
+
+                                // Refresh the pack's list entry (cover + item count) so the card
+                                // re-renders as unlocked — PackCard derives isLocked from
+                                // passwordStore.get(pack.id), which is only re-read on recomposition.
+                                val entries = try {
+                                    withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
+                                        zipArchiveManager.getImageEntries(targetFile, lastPwd)
+                                    }
+                                } catch (e: Exception) {
+                                    com.watchpicture.app.util.AppLog.e("PackClick", "Auto-unlock entries failed for ${pack.name}", e)
+                                    promptPasswordDialog(pack)
+                                    return@launch
+                                }
+                                val updatedPack = pack.copy(
+                                    itemCount = entries.size,
+                                    coverImage = entries.firstOrNull()?.let { entry ->
+                                        PackImage(
+                                            packId = pack.id,
+                                            entryPath = entry.name,
+                                            displayName = entry.name.substringAfterLast('/'),
+                                            isEncrypted = entry.isEncrypted,
+                                            directFilePath = targetFile.absolutePath,
+                                            fileUri = pack.uriString
+                                        )
+                                    } ?: pack.coverImage
+                                )
+                                // The same file can appear twice in the list (scanned folder entry
+                                // and standalone import) with different ids. Unlock every copy and
+                                // register each copy's id as a password alias so PackCard shows all
+                                // of them as unlocked.
+                                val siblingIds = mutableListOf<String>()
+                                val matchesPack = { item: PackItem ->
+                                    item.id == pack.id ||
+                                        (pack.directPath != null && item.directPath == pack.directPath)
+                                }
+                                _uiState.update { state ->
+                                    siblingIds += state.standalonePacks.filter(matchesPack).map { it.id }
+                                    siblingIds += state.scannedPacks.filter(matchesPack).map { it.id }
+                                    state.copy(
+                                        standalonePacks = state.standalonePacks.map {
+                                            if (matchesPack(it)) {
+                                                updatedPack.copy(id = it.id, uriString = it.uriString, name = it.name)
+                                            } else it
+                                        },
+                                        scannedPacks = state.scannedPacks.map {
+                                            if (matchesPack(it)) {
+                                                updatedPack.copy(id = it.id, uriString = it.uriString, name = it.name)
+                                            } else it
+                                        }
+                                    )
+                                }
+                                if (siblingIds.isNotEmpty()) {
+                                    passwordStore.set(
+                                        pack.id,
+                                        lastPwd,
+                                        aliases = (aliases + siblingIds).distinct()
+                                    )
+                                }
+
                                 onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
                                 return@launch
                             } else {
@@ -347,9 +450,12 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
 
         viewModelScope.launch {
             _uiState.update { it.copy(isVerifyingPassword = true, passwordError = null) }
+            val t0 = System.currentTimeMillis()
+            com.watchpicture.app.util.AppLog.i("Unlock", "Verifying password for ${targetFile.name}")
             val isValid = withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
                 zipArchiveManager.verifyPassword(targetFile, password)
             }
+            com.watchpicture.app.util.AppLog.i("Unlock", "verify=${isValid} in ${System.currentTimeMillis() - t0}ms")
 
             if (isValid) {
                 if (saveToBook) {
@@ -366,7 +472,11 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                 passwordStore.set(targetPack.id, password, aliases = aliases)
 
                 // Update item count and cover after unlocking
-                val entries = zipArchiveManager.getImageEntries(targetFile, password)
+                val t1 = System.currentTimeMillis()
+                val entries = withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
+                    zipArchiveManager.getImageEntries(targetFile, password)
+                }
+                com.watchpicture.app.util.AppLog.i("Unlock", "entries=${entries.size} in ${System.currentTimeMillis() - t1}ms (total ${System.currentTimeMillis() - t0}ms)")
                 val updatedCover = entries.firstOrNull()?.let { entry ->
                     PackImage(
                         packId = targetPack.id,

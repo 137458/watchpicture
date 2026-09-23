@@ -225,7 +225,27 @@ class ZipArchiveManager(
                             java.text.Normalizer.normalize(candidate, java.text.Normalizer.Form.NFC) == nfcNormalized
                 }
 
-            return header?.let { zip.getInputStream(it) }
+            val stream = header?.let { zip.getInputStream(it) }
+                ?: run {
+                    // No matching header: the ZipFile must still be closed to avoid leaking a native FD.
+                    zip.close()
+                    return null
+                }
+
+            // Transfer ZipFile ownership to the caller: closing the returned stream also closes
+            // the ZipFile, so the FD backing of this fallback stream is always released on close.
+            return object : java.io.FilterInputStream(stream) {
+                private var closed = false
+                override fun close() {
+                    if (closed) return
+                    closed = true
+                    try {
+                        super.close()
+                    } finally {
+                        zip.close()
+                    }
+                }
+            }
         }
 
         val hasChinese = entryName.any { it in '\u4e00'..'\u9fa5' }

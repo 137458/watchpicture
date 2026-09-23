@@ -10,16 +10,20 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.watchpicture.app.BuildConfig
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
@@ -46,6 +50,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.clip
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.foundation.background
 import androidx.compose.ui.graphics.Color
 import top.yukonga.miuix.kmp.theme.MiuixTheme
@@ -71,14 +77,15 @@ fun SettingsScreen(
     val passwordBookRepo = WatchPictureApp.instance.passwordBookRepository
     val updateManager = remember { UpdateManager(context) }
 
-    val readingMode by prefsRepo.readingModeFlow.collectAsState(initial = ReadingMode.LTR)
-    val sortOption by prefsRepo.sortOptionFlow.collectAsState(initial = SortOption.NAME_ASC)
-    val savedPasswords by passwordBookRepo.passwordsFlow.collectAsState(initial = emptyList())
-    val autoSavePassword by passwordBookRepo.autoSavePasswordFlow.collectAsState(initial = true)
+    val readingMode by prefsRepo.readingModeFlow.collectAsStateWithLifecycle(initialValue = ReadingMode.LTR)
+    val sortOption by prefsRepo.sortOptionFlow.collectAsStateWithLifecycle(initialValue = SortOption.NAME_ASC)
+    val savedPasswords by passwordBookRepo.passwordsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val autoSavePassword by passwordBookRepo.autoSavePasswordFlow.collectAsStateWithLifecycle(initialValue = true)
 
     var showReadingModeDialog by remember { mutableStateOf(false) }
     var showPasswordBookDialog by remember { mutableStateOf(false) }
     var newPasswordInput by remember { mutableStateOf("") }
+    var showPlainSavedPasswords by remember { mutableStateOf(false) }
 
     Scaffold(
         topBar = {
@@ -89,7 +96,9 @@ fun SettingsScreen(
         }
     ) { innerPadding ->
         LazyColumn(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .nestedScroll(scrollBehavior.nestedScrollConnection),
             contentPadding = PaddingValues(
                 top = innerPadding.calculateTopPadding() + 8.dp,
                 bottom = innerPadding.calculateBottomPadding() + contentPadding.calculateBottomPadding() + 24.dp,
@@ -266,6 +275,29 @@ fun SettingsScreen(
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier.fillMaxWidth()
                     ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "点击密码即可显示",
+                                style = MiuixTheme.textStyles.footnote1,
+                                color = MiuixTheme.colorScheme.onSurfaceSecondary
+                            )
+                            IconButton(
+                                onClick = { showPlainSavedPasswords = !showPlainSavedPasswords },
+                                modifier = Modifier.size(28.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (showPlainSavedPasswords) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                    contentDescription = if (showPlainSavedPasswords) "隐藏所有密码" else "显示所有密码",
+                                    tint = MiuixTheme.colorScheme.onSurfaceSecondary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+
                         savedPasswords.forEach { pwd ->
                             Row(
                                 modifier = Modifier
@@ -277,7 +309,7 @@ fun SettingsScreen(
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                                 Text(
-                                    text = pwd,
+                                    text = if (showPlainSavedPasswords) pwd else "•".repeat(pwd.length),
                                     style = MiuixTheme.textStyles.body1,
                                     color = MiuixTheme.colorScheme.onSurface,
                                     modifier = Modifier.weight(1f)
@@ -293,7 +325,7 @@ fun SettingsScreen(
                                     Icon(
                                         imageVector = Icons.Default.Delete,
                                         contentDescription = "删除此密码",
-                                        tint = Color(0xFFE53935),
+                                        tint = MiuixTheme.colorScheme.error,
                                         modifier = Modifier.size(18.dp)
                                     )
                                 }
@@ -316,6 +348,8 @@ fun SettingsScreen(
                         label = "添加新密码…",
                         useLabelAsPlaceholder = true,
                         singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
                         modifier = Modifier.weight(1f)
                     )
                     Button(
@@ -351,7 +385,7 @@ fun SettingsScreen(
                             colors = ButtonDefaults.buttonColors(),
                             modifier = Modifier.weight(1f)
                         ) {
-                            Text("清空全部", color = Color(0xFFE53935))
+                            Text("清空全部", color = MiuixTheme.colorScheme.error)
                         }
                     }
 

@@ -17,6 +17,7 @@ import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.io.FileOutputStream
+import java.io.IOException
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -97,6 +98,8 @@ class UpdateManager(private val context: Context) {
                     hasUpdate = hasUpdate
                 )
             )
+        } catch (e: CancellationException) {
+            throw e
         } catch (e: Exception) {
             Result.failure(e)
         }
@@ -104,7 +107,8 @@ class UpdateManager(private val context: Context) {
 
     suspend fun downloadApk(
         downloadUrl: String,
-        onProgress: (progress: Float, downloadedBytes: Long, totalBytes: Long) -> Unit
+        onProgress: (progress: Float, downloadedBytes: Long, totalBytes: Long) -> Unit,
+        expectedApkSize: Long = 0L
     ): Result<File> = withContext(Dispatchers.IO) {
         var apkFile: File? = null
         try {
@@ -120,6 +124,11 @@ class UpdateManager(private val context: Context) {
             connection.connectTimeout = 15000
             connection.readTimeout = 30000
             connection.connect()
+
+            val responseCode = connection.responseCode
+            if (responseCode !in 200..299) {
+                throw IOException("下载失败: HTTP $responseCode")
+            }
 
             val totalBytes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
                 connection.contentLengthLong.takeIf { it > 0 } ?: 0L
@@ -141,6 +150,16 @@ class UpdateManager(private val context: Context) {
                     }
                     output.flush()
                 }
+            }
+
+            // We can only guarantee the transport channel (HTTPS) here; the release
+            // APK itself is not cryptographically signed by the app before install.
+            // Verify the byte count so a truncated/mis-sized download is never installed.
+            if (totalBytes > 0 && downloadedBytes != totalBytes) {
+                throw IOException("下载不完整: 期望 $totalBytes 字节，实际 $downloadedBytes 字节")
+            }
+            if (expectedApkSize > 0 && downloadedBytes != expectedApkSize) {
+                throw IOException("下载校验失败: 发布包 $expectedApkSize 字节，实际 $downloadedBytes 字节")
             }
 
             Result.success(targetFile)

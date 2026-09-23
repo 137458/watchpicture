@@ -29,9 +29,12 @@ class ArchiveHandlePool(
         val lastModified: Long
     )
 
+    // The full password (not just an int hash) is part of the key: int hashes collide for
+    // different passwords, which would silently reuse a handle opened with the wrong password
+    // and decrypt/corrupt data.
     private data class EncryptedHandleKey(
         val path: String,
-        val passwordHash: Int
+        val password: String
     )
 
     private data class EncryptedHandle(
@@ -77,9 +80,13 @@ class ArchiveHandlePool(
         val path = file.absolutePath
         val lastModified = file.lastModified()
 
-        val handle = lock.withLock {
+        // Handle lookup AND entry/stream acquisition must happen inside the same
+        // locked section: a concurrent put() may trigger removeEldestEntry() which
+        // closes the eldest handle. If the handle were used outside the lock it
+        // could be closed in between, throwing on a closed handle.
+        return lock.withLock {
             val existing = nativePool[path]
-            if (existing != null && existing.lastModified == lastModified) {
+            val handle = if (existing != null && existing.lastModified == lastModified) {
                 existing
             } else {
                 existing?.let { runCatching { it.zipFile.close() } }
@@ -90,22 +97,22 @@ class ArchiveHandlePool(
                         NativeZipFile(file)
                     }
                 } catch (_: Exception) {
-                    return null
+                    return@withLock null
                 }
                 val created = NativeHandle(newZip, lastModified)
                 nativePool[path] = created
                 created
             }
-        }
 
-        val entry = handle.zipFile.getEntry(entryName)
-            ?: handle.zipFile.getEntry(entryName.replace('\\', '/'))
-            ?: return null
+            val entry = handle.zipFile.getEntry(entryName)
+                ?: handle.zipFile.getEntry(entryName.replace('\\', '/'))
+                ?: return@withLock null
 
-        return try {
-            handle.zipFile.getInputStream(entry)
-        } catch (_: Exception) {
-            null
+            try {
+                handle.zipFile.getInputStream(entry)
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 
@@ -120,11 +127,14 @@ class ArchiveHandlePool(
     ): InputStream? {
         val path = file.absolutePath
         val lastModified = file.lastModified()
-        val key = EncryptedHandleKey(path, password.hashCode())
+        val key = EncryptedHandleKey(path, password)
 
-        val handle = lock.withLock {
+        // Same reasoning as openNativeEntryStream: keep handle lookup and stream
+        // acquisition under the lock so a concurrent put()/eviction cannot close
+        // this handle in between.
+        return lock.withLock {
             val existing = encryptedPool[key]
-            if (existing != null && existing.lastModified == lastModified) {
+            val handle = if (existing != null && existing.lastModified == lastModified) {
                 existing
             } else {
                 existing?.let { runCatching { it.zip4jFile.close() } }
@@ -133,24 +143,24 @@ class ArchiveHandlePool(
                         if (charset != null) this.charset = charset
                     }
                 } catch (_: Exception) {
-                    return null
+                    return@withLock null
                 }
                 val created = EncryptedHandle(newZip, lastModified)
                 encryptedPool[key] = created
                 created
             }
-        }
 
-        val normalized = entryName.replace('\\', '/')
-        val header = handle.zip4jFile.getFileHeader(entryName)
-            ?: handle.zip4jFile.getFileHeader(normalized)
-            ?: handle.zip4jFile.fileHeaders.firstOrNull { it.fileName.replace('\\', '/') == normalized }
-            ?: return null
+            val normalized = entryName.replace('\\', '/')
+            val header = handle.zip4jFile.getFileHeader(entryName)
+                ?: handle.zip4jFile.getFileHeader(normalized)
+                ?: handle.zip4jFile.fileHeaders.firstOrNull { it.fileName.replace('\\', '/') == normalized }
+                ?: return@withLock null
 
-        return try {
-            handle.zip4jFile.getInputStream(header)
-        } catch (_: Exception) {
-            null
+            try {
+                handle.zip4jFile.getInputStream(header)
+            } catch (_: Exception) {
+                null
+            }
         }
     }
 

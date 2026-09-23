@@ -10,6 +10,8 @@ class ZipImageKeyer : Keyer<ZipImageSource> {
     override fun key(data: ZipImageSource, options: Options): String {
         val pwdHash = data.password?.hashCode()?.toString(16) ?: "none"
         val thumbSuffix = if (data.isThumbnail) "#thumb#sz=${data.targetSizePx}" else "#full"
-        return "zip://${data.zipFile.absolutePath}#${data.entryName}#pwd=$pwdHash$thumbSuffix"
+        // Include the archive's file version (lastModified) so that replacing the archive on disk
+        // invalidates stale memory-cache entries, matching the disk-cache key's versioning.
+        return "zip://${data.zipFile.absolutePath}#mod=${data.zipFile.lastModified()}#${data.entryName}#pwd=$pwdHash$thumbSuffix"
     }
 }

@@ -31,6 +31,20 @@ fun App() {
     MiuixTheme(controller = themeController) {
         val backStack = rememberNavBackStack<AppRoute>(AppRoute.Main)
 
+        // miuix-nav requires every entry on the stack to have a unique contentKey. Re-opening the
+        // same pack (e.g. back from its grid, then tapping it again) would push a duplicate
+        // contentKey and crash. Navigate by replacing any existing identical route instead.
+        val navigate: (AppRoute) -> Unit = { route ->
+            if (backStack.lastOrNull() != route) {
+                backStack.removeAll { it == route }
+                backStack.add(route)
+            }
+        }
+
+        // Guarantee each grid / viewer push gets a distinct contentKey even across consecutive
+        // entries of the same pack, since same-key adjacent navigations get deduplicated.
+        val contentSeq = remember { java.util.concurrent.atomic.AtomicInteger() }
+
         BackHandler(enabled = backStack.size > 1) {
             backStack.removeLastOrNull()
         }
@@ -43,7 +57,7 @@ fun App() {
         ) {
             entry<AppRoute.Main> {
                 MainScreen(
-                    onNavigate = { route -> backStack.add(route) }
+                    onNavigate = navigate
                 )
             }
 
@@ -51,7 +65,7 @@ fun App() {
                 val packViewModel: PackViewModel = viewModel()
                 PackListScreen(
                     viewModel = packViewModel,
-                    onNavigate = { route -> backStack.add(route) }
+                    onNavigate = navigate
                 )
             }
 
@@ -61,18 +75,22 @@ fun App() {
                 )
             }
 
-            entry<AppRoute.ThumbnailGrid> { route ->
+            entry<AppRoute.ThumbnailGrid>(
+                contentKey = { route -> "grid#${route.packId}#${contentSeq.getAndIncrement()}" }
+            ) { route ->
                 val viewerViewModel: ViewerViewModel = viewModel()
                 ThumbnailGridScreen(
                     packId = route.packId,
                     title = route.title,
                     viewModel = viewerViewModel,
                     onBack = { backStack.removeLastOrNull() },
-                    onNavigate = { nextRoute -> backStack.add(nextRoute) }
+                    onNavigate = navigate
                 )
             }
 
-            entry<AppRoute.GalleryViewer> { route ->
+            entry<AppRoute.GalleryViewer>(
+                contentKey = { route -> "viewer#${route.packId}#${route.initialIndex}#${contentSeq.getAndIncrement()}" }
+            ) { route ->
                 val viewerViewModel: ViewerViewModel = viewModel()
                 GalleryViewerScreen(
                     packId = route.packId,

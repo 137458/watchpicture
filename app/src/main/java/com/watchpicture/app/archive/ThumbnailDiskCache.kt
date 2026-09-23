@@ -4,9 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
+import java.io.Closeable
 import java.io.File
 import java.io.FileOutputStream
 import java.io.InputStream
+import java.io.SequenceInputStream
 import java.security.MessageDigest
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.locks.ReentrantLock
@@ -15,7 +17,8 @@ import kotlin.math.max
 
 data class ThumbnailResult(
     val file: File,
-    val bitmap: Bitmap? = null
+    val bitmap: Bitmap? = null,
+    val lease: Closeable? = null
 )
 
 /**
@@ -33,6 +36,9 @@ class ThumbnailDiskCache(
         const val DEFAULT_MAX_CACHE_SIZE = 128L * 1024 * 1024 // 128 MB
         private const val STRIPE_COUNT = 64
         private const val BUFFER_SIZE = 32 * 1024
+        // Bounds-only decoding only needs the image header prefix; this bounds the heap held
+        // while resolving dimensions before a sampled (inSampleSize) streaming decode.
+        private const val HEADER_SIZE_BYTES = 64 * 1024
     }
 
     private val stripeLocks = Array(STRIPE_COUNT) { ReentrantLock() }
@@ -42,6 +48,16 @@ class ThumbnailDiskCache(
     init {
         if (!directory.exists()) {
             directory.mkdirs()
+        }
+        // Establish the baseline from pre-existing cache files so LRU accounting is correct from
+        // startup (otherwise trimToSize()'s set() and future addAndGet() would drift). Synchronized
+        // under globalLock to stay mutually exclusive with in-flight writes/trims.
+        globalLock.withLock {
+            currentSizeBytes.set(
+                directory.listFiles()
+                    ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+                    ?.sumOf { it.length() } ?: 0L
+            )
         }
     }
 
@@ -73,7 +89,9 @@ class ThumbnailDiskCache(
         targetSizePx: Int,
         password: String?,
         openStream: () -> InputStream
-    ): File = getOrPutResult(zipFile, entryName, targetSizePx, password, keepBitmapInMemory = false, openStream).file
+    ): File = getOrPutResult(zipFile, entryName, targetSizePx, password, keepBitmapInMemory = false, openStream)
+        .also { it.lease?.close() } // This File-only variant does not hand ownership to a reader.
+        .file
 
     fun getOrPutResult(
         zipFile: File,
@@ -86,15 +104,15 @@ class ThumbnailDiskCache(
         val cacheKey = computeKey(zipFile, entryName, targetSizePx, password)
         val targetFile = File(directory, "thumb_$cacheKey.webp")
 
-        // Fast path
+        // Fast path: hand over a lease so the caller (Coil Fetcher) can safely read post-return.
         if (targetFile.exists() && targetFile.length() > 0) {
-            return ThumbnailResult(targetFile, null)
+            return ThumbnailResult(targetFile, null, CacheFileLeases.acquire(targetFile.absolutePath))
         }
 
         val stripeLock = getLockFor(cacheKey)
-        stripeLock.withLock {
+        return stripeLock.withLock {
             if (targetFile.exists() && targetFile.length() > 0) {
-                return ThumbnailResult(targetFile, null)
+                return@withLock ThumbnailResult(targetFile, null, CacheFileLeases.acquire(targetFile.absolutePath))
             }
 
             val tempFile = File(directory, "${targetFile.name}.${System.nanoTime()}.tmp")
@@ -112,10 +130,11 @@ class ThumbnailDiskCache(
                         tempFile.copyTo(targetFile, overwrite = true)
                         tempFile.delete()
                     }
-                    val added = targetFile.length()
-                    val newTotal = currentSizeBytes.addAndGet(added)
-                    if (newTotal > maxSizeBytes) {
-                        trimToSize()
+                    // Serialize size accounting, lease acquisition and any triggered trim under
+                    // globalLock so a concurrent trimToSize() can neither double-count the add nor
+                    // evict the just-written file in the window before ownership is handed over.
+                    return@withLock withGlobalLockAndLease(targetFile, memoryBitmap) {
+                        currentSizeBytes.addAndGet(targetFile.length())
                     }
                 } else {
                     if (tempFile.exists()) tempFile.delete()
@@ -126,7 +145,26 @@ class ThumbnailDiskCache(
                 throw e
             }
 
-            return ThumbnailResult(targetFile, memoryBitmap)
+            // tempFile was empty (e.g. compress produced 0 bytes): the memory bitmap (if any) is
+            // still returned so a caller can short-circuit to a memory bypass; no lease applies.
+            ThumbnailResult(targetFile, memoryBitmap)
+        }
+    }
+
+    /**
+     * Within [globalLock], updates [currentSizeBytes] via [update], triggers a trim if over budget,
+     * and acquires a lease on [targetFile] before returning so no concurrent trim can evict it in
+     * the window before the caller hands it to a reader. Acquiring inside the lock serializes it
+     * against trimToSize(), which also runs under globalLock.
+     */
+    private fun withGlobalLockAndLease(targetFile: File, bitmap: Bitmap?, update: () -> Unit): ThumbnailResult {
+        globalLock.withLock {
+            update()
+            val lease = CacheFileLeases.acquire(targetFile.absolutePath)
+            if (currentSizeBytes.get() > maxSizeBytes) {
+                trimToSize()
+            }
+            return ThumbnailResult(targetFile, bitmap, lease)
         }
     }
 
@@ -146,13 +184,13 @@ class ThumbnailDiskCache(
         val targetFile = File(directory, "thumb_$cacheKey.webp")
 
         if (targetFile.exists() && targetFile.length() > 0) {
-            return ThumbnailResult(targetFile, null)
+            return ThumbnailResult(targetFile, null, CacheFileLeases.acquire(targetFile.absolutePath))
         }
 
         val stripeLock = getLockFor(cacheKey)
-        stripeLock.withLock {
+        return stripeLock.withLock {
             if (targetFile.exists() && targetFile.length() > 0) {
-                return ThumbnailResult(targetFile, null)
+                return@withLock ThumbnailResult(targetFile, null, CacheFileLeases.acquire(targetFile.absolutePath))
             }
 
             val tempFile = File(directory, "${targetFile.name}.${System.nanoTime()}.tmp")
@@ -167,10 +205,8 @@ class ThumbnailDiskCache(
                         tempFile.copyTo(targetFile, overwrite = true)
                         tempFile.delete()
                     }
-                    val added = targetFile.length()
-                    val newTotal = currentSizeBytes.addAndGet(added)
-                    if (newTotal > maxSizeBytes) {
-                        trimToSize()
+                    return@withLock withGlobalLockAndLease(targetFile, memoryBitmap) {
+                        currentSizeBytes.addAndGet(targetFile.length())
                     }
                 } else {
                     if (tempFile.exists()) tempFile.delete()
@@ -181,7 +217,9 @@ class ThumbnailDiskCache(
                 throw e
             }
 
-            return ThumbnailResult(targetFile, memoryBitmap)
+            // tempFile was empty (e.g. compress produced 0 bytes): the memory bitmap (if any) is
+            // still returned so a caller can short-circuit to a memory bypass; no lease applies.
+            ThumbnailResult(targetFile, memoryBitmap)
         }
     }
 
@@ -246,9 +284,75 @@ class ThumbnailDiskCache(
         targetSizePx: Int,
         keepBitmapInMemory: Boolean
     ): Bitmap? {
-        val bytes = input.readBytes()
-        if (bytes.isEmpty()) return null
-        return saveDownsampledFromBytes(bytes, targetFile, targetSizePx, keepBitmapInMemory)
+        // Prelude the entry: read only a bounded header prefix to cheaply resolve dimensions, then
+        // feed the prefix + the still-open stream to a sampled decode. This avoids loading a 10-20MB
+        // entry into heap (the previous readBytes() could OOM during concurrent grid loading).
+        val head = ByteArray(HEADER_SIZE_BYTES)
+        var headLen = 0
+        while (headLen < head.size) {
+            val n = input.read(head, headLen, head.size - headLen)
+            if (n < 0) break
+            headLen += n
+        }
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        val boundsValid = try {
+            BitmapFactory.decodeByteArray(head, 0, headLen, bounds)
+            bounds.outWidth > 0 && bounds.outHeight > 0
+        } catch (_: Throwable) {
+            false
+        }
+
+        val bitmap: Bitmap? = if (boundsValid) {
+            val maxDim = max(bounds.outWidth, bounds.outHeight)
+            var sampleSize = 1
+            while ((maxDim / (sampleSize * 2)) >= targetSizePx) {
+                sampleSize *= 2
+            }
+            val mime = bounds.outMimeType?.lowercase() ?: ""
+            val hasAlpha = mime.contains("png") || mime.contains("webp") || mime.contains("gif")
+            val decodeOptions = BitmapFactory.Options().apply {
+                inSampleSize = sampleSize
+                inPreferredConfig = if (hasAlpha) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
+            }
+            try {
+                // Reconstruct the full entry for the decoder: buffered header + remaining stream.
+                val full = SequenceInputStream(ByteArrayInputStream(head, 0, headLen), input)
+                BitmapFactory.decodeStream(full, null, decodeOptions)
+            } catch (_: Throwable) {
+                null
+            }
+        } else {
+            null
+        }
+
+        FileOutputStream(targetFile).use { fos ->
+            if (bitmap != null) {
+                try {
+                    val format = if (android.os.Build.VERSION.SDK_INT >= 30) {
+                        Bitmap.CompressFormat.WEBP_LOSSY
+                    } else {
+                        Bitmap.CompressFormat.JPEG
+                    }
+                    bitmap.compress(format, 80, fos)
+                } finally {
+                    if (!keepBitmapInMemory) {
+                        bitmap.recycle()
+                    }
+                }
+            } else {
+                // Undecodable source: mirror the raw entry into the cache, streaming in chunks so
+                // heap stays bounded and bytes are never truncated.
+                fos.write(head, 0, headLen)
+                val buffer = ByteArray(BUFFER_SIZE)
+                var n: Int
+                while (input.read(buffer).also { n = it } != -1) {
+                    fos.write(buffer, 0, n)
+                }
+            }
+            fos.flush()
+        }
+        return if (keepBitmapInMemory && bitmap != null && !bitmap.isRecycled) bitmap else null
     }
 
     fun trimToSize() {
@@ -258,7 +362,9 @@ class ThumbnailDiskCache(
             currentSizeBytes.set(totalSize)
             if (totalSize <= maxSizeBytes) return
 
-            val sorted = files.sortedBy { it.lastModified() }
+            val sorted = files
+                .filter { !CacheFileLeases.isLeased(it.absolutePath) }
+                .sortedBy { it.lastModified() }
             for (file in sorted) {
                 val size = file.length()
                 if (file.delete()) {
@@ -272,8 +378,16 @@ class ThumbnailDiskCache(
 
     fun clearAll() {
         globalLock.withLock {
-            directory.listFiles()?.forEach { it.delete() }
-            currentSizeBytes.set(0L)
+            // Skip files still leased by an in-flight reader; they are cleaned up later.
+            directory.listFiles()?.forEach {
+                if (!CacheFileLeases.isLeased(it.absolutePath)) it.delete()
+            }
+            // Leased files may remain, so recompute the tracked size from disk.
+            currentSizeBytes.set(
+                directory.listFiles()
+                    ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+                    ?.sumOf { it.length() } ?: 0L
+            )
         }
     }
 

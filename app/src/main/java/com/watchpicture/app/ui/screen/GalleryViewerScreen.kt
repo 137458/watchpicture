@@ -33,7 +33,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -55,10 +55,12 @@ import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil3.compose.AsyncImage
 import coil3.request.crossfade
 import coil3.request.bitmapConfig
 import com.watchpicture.app.WatchPictureApp
+import com.watchpicture.app.archive.CacheFileLeases
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.storage.ReadingMode
@@ -88,8 +90,8 @@ fun GalleryViewerScreen(
     viewModel: ViewerViewModel,
     onBack: () -> Unit
 ) {
-    val uiState by viewModel.uiState.collectAsState()
-    val readingMode by viewModel.readingMode.collectAsState(initial = ReadingMode.LTR)
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val readingMode by viewModel.readingMode.collectAsStateWithLifecycle(initialValue = ReadingMode.LTR)
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     val sessionPassword = remember(packId) { passwordStore.get(packId) }
     val coroutineScope = rememberCoroutineScope()
@@ -124,16 +126,6 @@ fun GalleryViewerScreen(
     LaunchedEffect(packId) {
         if (uiState.images.isEmpty()) {
             viewModel.loadImages(packId)
-        }
-    }
-
-    DisposableEffect(packId) {
-        onDispose {
-            val app = WatchPictureApp.instance
-            val file = java.io.File(packId)
-            if (file.exists() && com.watchpicture.app.archive.ZipArchiveManager.isSevenZFile(file)) {
-                app.archiveExtractionCoordinator.sevenZSessionManager.purgeCache(file)
-            }
         }
     }
 
@@ -449,13 +441,23 @@ private fun ZoomableImage(
         }
 
         val zoomableState = me.saket.telephoto.zoomable.rememberZoomableImageState()
-        val zoomFraction: Float? = zoomableState.zoomableState.zoomFraction
-        val isZoomed = (zoomFraction ?: 0f) > 0.02f
+        // 用 derivedStateOf 派生布尔量：缩放过程中 zoomFraction 每帧变化，但仅当跨越阈值时才触发重组。
+        val isZoomed by remember(zoomableState) {
+            derivedStateOf { (zoomableState.zoomableState.zoomFraction ?: 0f) > 0.02f }
+        }
         LaunchedEffect(isZoomed) {
             onZoomChanged(isZoomed)
         }
 
         val activeFile = resolvedFile
+
+        // Hold a lease on the resolved full-resolution cache file while this page is composed, so
+        // ArchiveDiskCache's LRU eviction / cleanup cannot delete it mid-decode. The raw File model
+        // bypasses ZipImageFetcher, so its lease cannot be attached to Coil's ImageSource here.
+        DisposableEffect(activeFile) {
+            val lease = activeFile?.let { CacheFileLeases.acquire(it.absolutePath) }
+            onDispose { lease?.close() }
+        }
 
         val currentModel = activeFile ?: imageModel
         val fullRequest = remember(currentModel) {

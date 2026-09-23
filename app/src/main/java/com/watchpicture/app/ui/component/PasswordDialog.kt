@@ -50,7 +50,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.layout.width
 import androidx.compose.ui.draw.clip
@@ -58,7 +58,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import top.yukonga.miuix.kmp.basic.Switch
 import com.watchpicture.app.WatchPictureApp
-import androidx.compose.runtime.collectAsState
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
  * Miuix-styled password authentication dialog for encrypted picture archives.
@@ -75,10 +75,11 @@ fun PasswordDialog(
 ) {
     var password by remember(show) { mutableStateOf("") }
     var passwordVisible by remember(show) { mutableStateOf(false) }
+    var showSavedPasswordsText by remember(show) { mutableStateOf(false) }
     val context = LocalContext.current
     val passwordBookRepo = WatchPictureApp.instance.passwordBookRepository
-    val savedPasswords by passwordBookRepo.passwordsFlow.collectAsState(initial = emptyList())
-    val autoSavePref by passwordBookRepo.autoSavePasswordFlow.collectAsState(initial = true)
+    val savedPasswords by passwordBookRepo.passwordsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
+    val autoSavePref by passwordBookRepo.autoSavePasswordFlow.collectAsStateWithLifecycle(initialValue = true)
     var saveToBook by remember(show, autoSavePref) { mutableStateOf(autoSavePref) }
 
     // Trigger device vibration when error appears
@@ -109,20 +110,37 @@ fun PasswordDialog(
             )
 
             if (savedPasswords.isNotEmpty()) {
-                Text(
-                    text = "常用密码快捷填充：",
-                    style = MiuixTheme.textStyles.footnote1,
-                    color = MiuixTheme.colorScheme.onSurfaceSecondary
-                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "常用密码快捷填充：",
+                        style = MiuixTheme.textStyles.footnote1,
+                        color = MiuixTheme.colorScheme.onSurfaceSecondary
+                    )
+                    IconButton(
+                        onClick = { showSavedPasswordsText = !showSavedPasswordsText },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (showSavedPasswordsText) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                            contentDescription = if (showSavedPasswordsText) "隐藏已保存的密码" else "显示已保存的密码",
+                            tint = MiuixTheme.colorScheme.onSurfaceSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+                }
                 Spacer(modifier = Modifier.height(6.dp))
                 LazyRow(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    items(
+                    itemsIndexed(
                         items = savedPasswords,
-                        key = { it }
-                    ) { pwd ->
+                        key = { index, _ -> index }
+                    ) { _, pwd ->
                         val isSelected = (password == pwd)
                         val primaryColor = MiuixTheme.colorScheme.primary
                         val onSurfaceColor = MiuixTheme.colorScheme.onSurface
@@ -139,7 +157,7 @@ fun PasswordDialog(
                                 .padding(horizontal = 10.dp, vertical = 6.dp)
                         ) {
                             Text(
-                                text = pwd,
+                                text = if (showSavedPasswordsText) pwd else "•".repeat(pwd.length),
                                 style = MiuixTheme.textStyles.footnote1,
                                 color = if (isSelected) primaryColor else onSurfaceColor,
                                 fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
@@ -234,7 +252,7 @@ fun PasswordDialog(
                 Text(
                     text = errorMessage,
                     style = MiuixTheme.textStyles.footnote1,
-                    color = Color(0xFFE53935),
+                    color = MiuixTheme.colorScheme.error,
                     modifier = Modifier.padding(horizontal = 4.dp)
                 )
             }

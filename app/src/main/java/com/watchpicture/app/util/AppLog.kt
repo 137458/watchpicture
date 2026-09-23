@@ -1,26 +1,34 @@
 package com.watchpicture.app.util
 
 import android.util.Log
+import com.watchpicture.app.BuildConfig
 
 /**
- * High-visibility logger for WatchPicture.
+ * Central logger for WatchPicture.
  *
- * Directs logs through Log.e on commercial HyperOS / Android ROMs to guarantee
- * logs are never pruned or silenced by restrictive system logd daemon filters.
+ * In debug builds it logs at the natural level so development output is readable.
+ * In release builds it only keeps ERROR (and drops d/i/w) to avoid log spamming the
+ * production device and to keep path/pack metadata out of the shipped logs.
  */
 object AppLog {
     private const val TAG = "WatchPicture"
 
     fun d(subtag: String, msg: String) {
-        Log.e(TAG, "[$subtag] $msg")
+        if (BuildConfig.DEBUG) {
+            Log.d(TAG, "[$subtag] $msg")
+        }
     }
 
     fun i(subtag: String, msg: String) {
-        Log.e(TAG, "[$subtag] $msg")
+        if (BuildConfig.DEBUG) {
+            Log.i(TAG, "[$subtag] $msg")
+        }
     }
 
     fun w(subtag: String, msg: String) {
-        Log.e(TAG, "[$subtag] WARN: $msg")
+        if (BuildConfig.DEBUG) {
+            Log.w(TAG, "[$subtag] WARN: $msg")
+        }
     }
 
     fun e(subtag: String, msg: String, tr: Throwable? = null) {

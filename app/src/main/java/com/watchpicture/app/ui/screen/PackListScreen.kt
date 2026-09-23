@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.FolderOpen
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -39,11 +38,13 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.PackItem
@@ -79,7 +80,9 @@ fun PackListScreen(
     onNavigate: (AppRoute) -> Unit,
     contentPadding: PaddingValues = PaddingValues(0.dp),
 ) {
-    val uiState by viewModel.uiState.collectAsState()
+    val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    // Off-main-thread search/sort result; falls back to the memoized getter until first emission.
+    val displayedPacks by viewModel.displayedPacksFlow.collectAsStateWithLifecycle()
     val scrollBehavior = MiuixScrollBehavior()
     val haptic = LocalHapticFeedback.current
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -341,7 +344,7 @@ fun PackListScreen(
                     }
                 }
 
-                uiState.displayedPacks.isEmpty() && uiState.searchQuery.isNotEmpty() -> {
+                displayedPacks.isEmpty() && uiState.searchQuery.isNotEmpty() -> {
                     // No search results
                     Box(
                         modifier = Modifier
@@ -384,10 +387,12 @@ fun PackListScreen(
                         contentPadding = PaddingValues(12.dp),
                         horizontalArrangement = Arrangement.spacedBy(10.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp),
-                        modifier = Modifier.fillMaxSize()
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .nestedScroll(scrollBehavior.nestedScrollConnection)
                     ) {
                         items(
-                            items = uiState.displayedPacks,
+                            items = displayedPacks,
                             key = { it.id }
                         ) { pack ->
                             PackCard(

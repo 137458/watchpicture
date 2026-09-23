@@ -21,7 +21,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
@@ -45,6 +44,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.watchpicture.app.BuildConfig
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
@@ -91,8 +91,8 @@ fun UpdateScreen(
     val topAppBarScrollBehavior = MiuixScrollBehavior()
     val lazyListState = rememberLazyListState()
 
-    val autoCheckUpdate by prefsRepo.autoCheckUpdateFlow.collectAsState(initial = true)
-    val ignoredVersion by prefsRepo.ignoredVersionFlow.collectAsState(initial = null)
+    val autoCheckUpdate by prefsRepo.autoCheckUpdateFlow.collectAsStateWithLifecycle(initialValue = true)
+    val ignoredVersion by prefsRepo.ignoredVersionFlow.collectAsStateWithLifecycle(initialValue = null)
 
     var releaseInfo by remember { mutableStateOf<UpdateCheckResult?>(null) }
     var isChecking by remember { mutableStateOf(false) }
@@ -465,6 +465,7 @@ fun UpdateScreen(
                     prefsRepo.saveIgnoredVersion(ver)
                 }
             },
+            externalScope = coroutineScope,
         )
     }
 }

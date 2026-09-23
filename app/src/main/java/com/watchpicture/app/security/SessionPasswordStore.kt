@@ -1,6 +1,8 @@
 package com.watchpicture.app.security
 
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * In-memory thread-safe storage for session passwords.
@@ -14,6 +16,12 @@ class SessionPasswordStore {
     private val keyAliases = ConcurrentHashMap<String, MutableSet<String>>()
     private val explicitlyLockedPacks = ConcurrentHashMap.newKeySet<String>()
 
+    /**
+     * Guards every multi-map mutation (set/remove/markExplicitlyLocked/clear) so the
+     * alias/self-key state always transitions atomically and stays mutually consistent.
+     */
+    private val lock = ReentrantLock()
+
     @Volatile
     var lastUsedPassword: String? = null
         private set
@@ -25,7 +33,7 @@ class SessionPasswordStore {
         return false
     }
 
-    fun markExplicitlyLocked(packId: String) {
+    fun markExplicitlyLocked(packId: String) = lock.withLock {
         explicitlyLockedPacks.add(packId)
         val canonicalKey = aliasMap[packId] ?: packId
         explicitlyLockedPacks.add(canonicalKey)
@@ -34,7 +42,7 @@ class SessionPasswordStore {
         remove(packId)
     }
 
-    fun unlockExplicitlyLocked(packId: String) {
+    fun unlockExplicitlyLocked(packId: String) = lock.withLock {
         explicitlyLockedPacks.remove(packId)
         val canonicalKey = aliasMap[packId]
         if (canonicalKey != null) {
@@ -53,7 +61,7 @@ class SessionPasswordStore {
         return null
     }
 
-    fun set(packId: String, password: String, aliases: List<String> = emptyList()) {
+    fun set(packId: String, password: String, aliases: List<String> = emptyList()) = lock.withLock {
         unlockExplicitlyLocked(packId)
         for (alias in aliases) {
             unlockExplicitlyLocked(alias)
@@ -71,23 +79,32 @@ class SessionPasswordStore {
         }
     }
 
-    fun remove(packId: String) {
-        cache.remove(packId)
+    fun remove(packId: String) = lock.withLock {
+        val removedPasswords = mutableSetOf<String>()
+
+        cache.remove(packId)?.let { removedPasswords.add(it) }
         val canonicalKey = aliasMap.remove(packId) ?: packId
-        cache.remove(canonicalKey)
+        cache.remove(canonicalKey)?.let { removedPasswords.add(it) }
 
         val associated = keyAliases.remove(canonicalKey)
         associated?.forEach { alias ->
             aliasMap.remove(alias)
-            cache.remove(alias)
+            cache.remove(alias)?.let { removedPasswords.add(it) }
         }
         keyAliases.remove(packId)?.forEach { alias ->
             aliasMap.remove(alias)
-            cache.remove(alias)
+            cache.remove(alias)?.let { removedPasswords.add(it) }
+        }
+
+        // If the removed password was the last-used one, clear it too so a stale
+        // reference can never linger after its credential is revoked.
+        val lastUsed = lastUsedPassword
+        if (lastUsed != null && lastUsed in removedPasswords) {
+            lastUsedPassword = null
         }
     }
 
-    fun clear() {
+    fun clear() = lock.withLock {
         cache.clear()
         aliasMap.clear()
         keyAliases.clear()

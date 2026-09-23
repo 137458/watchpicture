@@ -36,6 +36,36 @@ class SevenZSessionManager(
         var currentEntryIndex: Int = -1
         var lastAccessTime: Long = System.currentTimeMillis()
 
+        /**
+         * Password that has already been proven correct for this session. For solid encrypted
+         * archives, verifying a password decompresses the whole solid block (potentially hundreds
+         * of MB), which is the dominant cost of opening an encrypted pack. Once proven, re-verifying
+         * the same password in the same session (e.g. re-entering a pack) can skip that full block
+         * decompression entirely.
+         */
+        @Volatile
+        var verifiedPassword: String? = null
+
+        /**
+         * Whether this archive encrypts its header. For header-encrypted 7z archives, a successful
+         * [Native7zArchiveSession.open] (i.e. `SzArEx_Open`) only succeeds when the password is
+         * correct, so password verification needs no full solid-block decompression at all.
+         * Null until probed once.
+         */
+        @Volatile
+        var isHeaderEncrypted: Boolean? = null
+
+        // Guards the external final-close path so a session that has been handed off
+        // for closure is closed at most once, even under concurrent close callers.
+        @Volatile
+        private var closeRequested: Boolean = false
+
+        fun markClosed(): Boolean {
+            if (closeRequested) return false
+            closeRequested = true
+            return true
+        }
+
         fun openIfNeeded() {
             if (nativeSession != null && !nativeFailed) {
                 return
@@ -49,6 +79,24 @@ class SevenZSessionManager(
                         val ns = Native7zArchiveSession.open(file.absolutePath, password)
                         if (ns != null && ns.entries.isNotEmpty()) {
                             nativeSession = ns
+                            // Probe header encryption once, using a deliberately wrong password:
+                            // if the header itself is encrypted, SzArEx_Open fails without the correct
+                            // password, proving the password during open. For content-only encryption
+                            // the header opens regardless, so verification must still decompress data.
+                            // Probed via the raw JNI entry point to avoid ERROR-log noise on the
+                            // expected probe failure.
+                            if (isHeaderEncrypted == null && password != null) {
+                                val probeOk = runCatching {
+                                    val probeHandle = Native7z.nativeOpen(file.absolutePath, "invalid-probe-password")
+                                    if (probeHandle != 0L) {
+                                        Native7z.nativeClose(probeHandle)
+                                        true
+                                    } else {
+                                        false
+                                    }
+                                }.getOrDefault(false)
+                                isHeaderEncrypted = !probeOk
+                            }
                             com.watchpicture.app.util.AppLog.d("7zSession", "Native7z session opened for ${file.name} with ${ns.entries.size} entries")
                             return
                         } else {
@@ -108,6 +156,7 @@ class SevenZSessionManager(
             sevenZ = null
             entries = emptyList()
             currentEntryIndex = -1
+            verifiedPassword = null
         }
     }
 
@@ -122,14 +171,19 @@ class SevenZSessionManager(
 
     private fun getSession(file: File, password: String?): Session {
         val key = getSessionKey(file)
-        return sessions.compute(key) { _, existing ->
+        var replaced: Session? = null
+        val session = sessions.compute(key) { _, existing ->
             if (existing != null && existing.password == password) {
                 existing
             } else {
-                existing?.close()
+                replaced = existing
                 Session(file, password)
             }
         }!!
+        // The replaced old session must be closed *outside* the map compute callback so a
+        // high-frequency password switch never blocks other bins' readers/writers behind it.
+        replaced?.let { closeSessionNow(it) }
+        return session
     }
 
     /**
@@ -362,6 +416,8 @@ class SevenZSessionManager(
                                 if (thumbnailDiskCache.get(file, next.path, targetSizePx, password) == null) {
                                     val nextBytes = native.extractToBytes(next.index)
                                     if (nextBytes != null) {
+                                        // Lookahead result is not handed to any reader: release its
+                                        // lease immediately so the file stays evictable.
                                         thumbnailDiskCache.getOrPutResultFromBytes(
                                             zipFile = file,
                                             entryName = next.path,
@@ -369,7 +425,7 @@ class SevenZSessionManager(
                                             password = password,
                                             keepBitmapInMemory = false,
                                             bytes = nextBytes
-                                        )
+                                        ).lease?.close()
                                     }
                                 }
                             }
@@ -435,13 +491,15 @@ class SevenZSessionManager(
                     } else if (session.currentEntryIndex < targetIdx) {
                         if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
                             currentSz.getInputStream(entry).use { stream ->
+                                // Entries walked before the target are prefetched only; their
+                                // lease is released here so premature pins cannot block eviction.
                                 thumbnailDiskCache.getOrPutResult(
                                     zipFile = file,
                                     entryName = entryName,
                                     targetSizePx = targetSizePx,
                                     password = password,
                                     keepBitmapInMemory = false
-                                ) { stream }
+                                ) { stream }.lease?.close()
                             }
                         }
                     } else if (session.currentEntryIndex > targetIdx && lookaheadRemaining > 0) {
@@ -484,7 +542,9 @@ class SevenZSessionManager(
         lookahead: Int = 0
     ): Boolean {
         val session = getSession(file, password)
-        return session.lock.withLock {
+
+        // Only the native fast path is executed while holding session.lock.
+        val nativeExtracted = session.lock.withLock {
             session.lastAccessTime = System.currentTimeMillis()
             session.openIfNeeded()
             val native = session.nativeSession
@@ -499,15 +559,20 @@ class SevenZSessionManager(
                     }
                 }
             }
-
-            // Smooth Java extraction fallback if Native fails or unavailable
-            extractSequential(file, targetEntryName, password, lookahead, allowRewind = true) { _, stream ->
-                java.io.FileOutputStream(destination).use { fos ->
-                    stream.copyTo(fos)
-                }
-            }
-            destination.exists() && destination.length() > 0L
+            false
         }
+        if (nativeExtracted) return true
+
+        // Smooth Java extraction fallback if Native fails or unavailable.
+        // IMPORTANT: must be invoked *outside* session.lock — extractSequential()
+        // calls getSession() returning this same Session and re-acquires its
+        // non-reentrant kotlinx Mutex, which would self-deadlock forever.
+        extractSequential(file, targetEntryName, password, lookahead, allowRewind = true) { _, stream ->
+            java.io.FileOutputStream(destination).use { fos ->
+                stream.copyTo(fos)
+            }
+        }
+        return destination.exists() && destination.length() > 0L
     }
 
     /**
@@ -553,9 +618,19 @@ class SevenZSessionManager(
     /**
      * Quickly probes whether password can decrypt entries using lightweight native verification
      * without extracting full uncompressed images into Java byte arrays.
+     *
+     * Verifying a password on a solid encrypted archive decompresses the whole solid block
+     * (hundreds of MB for a large pack), so once a password is proven for this session we skip
+     * the re-verification and return immediately on subsequent calls with the same password.
      */
     suspend fun verifyPassword(file: File, password: String): Boolean {
         val session = getSession(file, password)
+        // Fast path: this password was already proven for this session (solid block already
+        // decompressed or stream positioned). Re-opening the same pack must not re-pay the cost.
+        if (session.verifiedPassword == password) {
+            session.lastAccessTime = System.currentTimeMillis()
+            return true
+        }
         return try {
             session.lock.withLock {
                 session.lastAccessTime = System.currentTimeMillis()
@@ -568,9 +643,22 @@ class SevenZSessionManager(
                 val native = session.nativeSession
                 if (native != null && !session.nativeFailed) {
                     val encrypted = native.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isImageFile(it.path) }
-                    if (encrypted == null) return@withLock true
+                    if (encrypted == null) {
+                        session.verifiedPassword = password
+                        return@withLock true
+                    }
+                    // Header-encrypted archive: nativeOpen (SzArEx_Open) already proved the password
+                    // by decrypting the header — verifying again would force a full solid-block
+                    // decompression of the whole pack (the observed ~1 minute stall). Skip it.
+                    if (session.isHeaderEncrypted == true) {
+                        session.verifiedPassword = password
+                        return@withLock true
+                    }
                     val ok = native.verifyEntry(encrypted.index)
-                    if (ok) return@withLock true
+                    if (ok) {
+                        session.verifiedPassword = password
+                        return@withLock true
+                    }
                     session.markNativeFailed()
                 }
 
@@ -582,12 +670,19 @@ class SevenZSessionManager(
                     return@withLock false
                 }
                 val sz = session.sevenZ ?: return@withLock false
-                val entry = sz.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isImageFile(it.name) } ?: return@withLock true
+                val entry = sz.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isImageFile(it.name) } ?: run {
+                    session.verifiedPassword = password
+                    return@withLock true
+                }
                 try {
-                    sz.getInputStream(entry).use { stream ->
+                    val ok = sz.getInputStream(entry).use { stream ->
                         val buf = ByteArray(16)
                         stream.read(buf) >= 0
                     }
+                    if (ok) {
+                        session.verifiedPassword = password
+                    }
+                    ok
                 } catch (_: Throwable) {
                     false
                 }
@@ -639,7 +734,7 @@ class SevenZSessionManager(
             session.openIfNeeded()
             session.nativeSession != null || session.sevenZ != null
         } catch (_: Throwable) {
-            sessions.remove(key)?.close()
+            sessions.remove(key)?.let { closeSessionNow(it) }
             false
         }
     }
@@ -690,33 +785,51 @@ class SevenZSessionManager(
     }
 
     /**
-     * Closes the active session for a specific file.
+     * Performs a final, idempotent close of a session that has already been removed from the map.
+     * Acquiring [Session.lock] guarantees we never tear down native/Java handles while an in-flight
+     * extraction coroutine is still using them (native memory would otherwise be freed mid-use).
      */
-    fun closeSession(file: File) {
-        val key = getSessionKey(file)
-        val session = sessions.remove(key) ?: return
+    private fun closeSessionNow(session: Session) {
+        if (!session.markClosed()) return
+        // Never block the UI thread on an actual close even though the session was already
+        // removed from the map; dispatch the (lock-guarded) close to the decompressor instead.
         val isMainThread = try {
             android.os.Looper.myLooper() != null && android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
         } catch (_: Throwable) {
             false
         }
+        val closeUnderLock: suspend () -> Unit = {
+            session.lock.withLock { session.close() }
+        }
         if (isMainThread) {
             kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
-                session.close()
+                closeUnderLock()
             }
         } else {
-            session.close()
+            kotlinx.coroutines.runBlocking {
+                closeUnderLock()
+            }
         }
+    }
+
+    /**
+     * Closes the active session for a specific file.
+     */
+    fun closeSession(file: File) {
+        val key = getSessionKey(file)
+        val session = sessions.remove(key) ?: return
+        closeSessionNow(session)
     }
 
     /**
      * Closes all active sessions.
      */
     fun closeAll() {
-        for (s in sessions.values) {
-            s.close()
-        }
+        val all = sessions.values.toList()
         sessions.clear()
+        for (s in all) {
+            closeSessionNow(s)
+        }
     }
 
     /**
@@ -724,7 +837,28 @@ class SevenZSessionManager(
      */
     fun purgeCache(file: File) {
         val key = getSessionKey(file)
-        sessions[key]?.purgeCache()
+        sessions[key] ?: return
+        // Held under the session lock so purge never races an in-flight native extraction.
+        val isMainThread = try {
+            android.os.Looper.myLooper() != null && android.os.Looper.myLooper() == android.os.Looper.getMainLooper()
+        } catch (_: Throwable) {
+            false
+        }
+        if (isMainThread) {
+            kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
+                purgeCacheUnderLock(key)
+            }
+        } else {
+            kotlinx.coroutines.runBlocking {
+                purgeCacheUnderLock(key)
+            }
+        }
+    }
+
+    private suspend fun purgeCacheUnderLock(key: String) {
+        sessions[key]?.lock?.withLock {
+            sessions[key]?.purgeCache()
+        }
     }
 
     /**
@@ -735,7 +869,7 @@ class SevenZSessionManager(
         val expired = sessions.entries.filter { now - it.value.lastAccessTime > idleTimeoutMs }
         for (e in expired) {
             if (sessions.remove(e.key, e.value)) {
-                e.value.close()
+                closeSessionNow(e.value)
             }
         }
     }

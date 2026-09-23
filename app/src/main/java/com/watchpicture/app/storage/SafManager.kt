@@ -258,14 +258,14 @@ class SafManager(
             if (docId != null) {
                 if (docId.startsWith("primary:")) {
                     val relativePath = docId.removePrefix("primary:")
-                    return File(Environment.getExternalStorageDirectory(), relativePath)
+                    return safeResolve(Environment.getExternalStorageDirectory(), relativePath)
                 } else if (docId.contains(':')) {
                     val parts = docId.split(':', limit = 2)
                     val volumeId = parts[0]
-                    val relativePath = parts.getOrNull(1) ?: ""
-                    val storageFile = File("/storage/$volumeId", relativePath)
-                    if (storageFile.exists()) {
-                        return storageFile
+                    if (isValidVolumeId(volumeId)) {
+                        val relativePath = parts.getOrNull(1) ?: ""
+                        val storageRoot = File("/storage", volumeId)
+                        safeResolve(storageRoot, relativePath)?.let { if (it.exists()) return it }
                     }
                 }
             }
@@ -273,5 +273,39 @@ class SafManager(
             // Ignore resolution errors and return null
         }
         return null
+    }
+
+    /**
+     * Resolves [relative] against [root] while guaranteeing the result stays inside [root].
+     * Rejects traversal segments (".."), absolute-separator injection, and any result that
+     * escapes [root] after normalization. Returns null on offense.
+     */
+    private fun safeResolve(root: File, relative: String): File? {
+        try {
+            // Reject any path that could escape the tree via parent traversal or
+            // separator injection before it reaches the filesystem.
+            if (relative.contains("..") || relative.contains("\\")) {
+                return null
+            }
+            val resolved = File(root, relative)
+            val rootCanonical = root.canonicalPath
+            val targetCanonical = resolved.canonicalPath
+            if (targetCanonical != rootCanonical &&
+                !targetCanonical.startsWith(rootCanonical + File.separator)
+            ) {
+                return null
+            }
+            return resolved
+        } catch (_: Exception) {
+            return null
+        }
+    }
+
+    /**
+     * Volume id must be a plain volume name (letters/digits/underscore/hyphen/dot) so that
+     * "../../" style injection cannot select an arbitrary /storage path.
+     */
+    private fun isValidVolumeId(volumeId: String): Boolean {
+        return volumeId.isNotEmpty() && volumeId.matches(Regex("[A-Za-z0-9_.-]+"))
     }
 }

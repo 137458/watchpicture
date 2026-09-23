@@ -18,7 +18,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
         ndk {
-            abiFilters += setOf("arm64-v8a", "armeabi-v7a", "x86_64", "x86")
+            // Ship only arm ABIs for release-sized binaries; x86/x86_64 are emulator-only.
+            abiFilters += setOf("arm64-v8a", "armeabi-v7a")
         }
     }
 
@@ -40,11 +41,14 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                getDefaultProguardFile("proguard-android-optimize.txt")
+                // NOTE: the project currently has no app-level proguard-rules.pro file.
+                // R8 auto-applies consumer proguard rules bundled by each library AAR
+                // (miuix, coil, zip4j, commons-compress, kotlinx-serialization), so
+                // reflection-heavy code stays intact without a custom keep rules file.
             )
         }
         debug {
@@ -114,7 +118,7 @@ dependencies {
     val miuixVersion = "0.9.4-rc01"
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:$miuixVersion")
-    implementation("top.yukonga.miuix.kmp:miuix-icons-android:$miuixVersion")
+    
     implementation("top.yukonga.miuix.kmp:miuix-squircle-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-blur-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-nav-android:$miuixVersion")

@@ -39,10 +39,8 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
     private val _uiState = MutableStateFlow(ViewerUiState())
     val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
 
-    private val packImagesCache = java.util.concurrent.ConcurrentHashMap<String, List<PackImage>>()
-
     fun loadImages(packId: String) {
-        val cached = packImagesCache[packId]
+        val cached = cachedImageList(packId)
         if (cached != null && cached.isNotEmpty()) {
             com.watchpicture.app.util.AppLog.i("PackImages", "Instant 0ms cache hit for $packId (${cached.size} images)")
             _uiState.update { it.copy(isLoading = false, images = cached, errorMessage = null) }
@@ -56,7 +54,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
                 val images = withContext(Dispatchers.IO) {
                     resolvePackImages(packId)
                 }
-                packImagesCache[packId] = images
+                cacheImageList(packId, images)
                 val elapsed = System.currentTimeMillis() - t0
                 com.watchpicture.app.util.AppLog.i("PackImages", "Resolved ${images.size} entries for $packId in ${elapsed}ms")
                 _uiState.update { it.copy(isLoading = false, images = images) }
@@ -91,7 +89,6 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
             } else if (file.isFile) {
                 val password = passwordStore.get(packId)
                     ?: passwordStore.get(file.absolutePath)
-                    ?: passwordStore.lastUsedPassword
                 val entries = zipArchiveManager.getImageEntries(file, password)
                 return entries.map { entry ->
                     PackImage(
@@ -175,11 +172,37 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
     }
 
     fun lockPack(packId: String) {
-        packImagesCache.remove(packId)
+        removeCachedImageList(packId)
         passwordStore.markExplicitlyLocked(packId)
         val file = File(packId)
         if (file.exists() && file.isFile) {
             app.archiveExtractionCoordinator.closeSession(file)
+        }
+    }
+
+    companion object {
+        // Shared, process-wide LRU for resolved image lists. The thumbnail grid and the fullscreen
+        // viewer each create their own ViewerViewModel, so an instance field would make both
+        // re-scan the same pack; sharing prevents that double resolution.
+        private const val IMAGE_CACHE_MAX = 16
+        private val imageCacheLock = Any()
+        private val imageCache = java.util.LinkedHashMap<String, List<PackImage>>(IMAGE_CACHE_MAX, 0.75f, true)
+
+        private fun cachedImageList(packId: String): List<PackImage>? =
+            synchronized(imageCacheLock) { imageCache[packId] }
+
+        private fun cacheImageList(packId: String, images: List<PackImage>) {
+            synchronized(imageCacheLock) {
+                imageCache[packId] = images
+                // accessOrder=true -> keys iterate from least- to most-recently used.
+                while (imageCache.size > IMAGE_CACHE_MAX) {
+                    imageCache.remove(imageCache.keys.first())
+                }
+            }
+        }
+
+        private fun removeCachedImageList(packId: String) {
+            synchronized(imageCacheLock) { imageCache.remove(packId) }
         }
     }
 }

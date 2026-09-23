@@ -2,6 +2,8 @@ package com.watchpicture.app.archive
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -32,6 +34,15 @@ class ArchiveExtractionCoordinator(
     companion object {
         // Number of subsequent entries to greedily extract while the 7z stream is already open
         private const val SOLID_LOOKAHEAD_WINDOW = 3
+
+        // How long to keep the native 7z solid block cache alive after the last extraction.
+        // Sequential paging reuses the same solid block; purging too aggressively (e.g. 3s) forces
+        // a full re-decompression + AES decryption of the whole solid block on the next page turn,
+        // which is exactly the "decryption takes too long" symptom. 30s keeps normal paging fast;
+        // RAM pressure is handled by WatchPictureApp.onTrimMemory (closing sessions frees the buffer).
+        private const val DEFAULT_PURGE_DELAY_MS = 30_000L
+        // Under thermal/battery throttling, reclaim RAM sooner.
+        private const val THROTTLED_PURGE_DELAY_MS = 3_000L
     }
 
     private val archiveLocks = ConcurrentHashMap<String, Mutex>()
@@ -56,14 +67,18 @@ class ArchiveExtractionCoordinator(
     private val purgeJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
 
     /**
-     * Schedules a delayed purge of native solid block cache for [file] (default 3 seconds of inactivity).
-     * Prevents large 700MB+ solid decompression buffers from residing in RAM during photo viewing.
+     * Schedules a delayed purge of native solid block cache for [file] (default 30 seconds of inactivity).
+     * The buffer is only freed after a long idle, so rapid sequential paging hits the cached solid
+     * block instead of re-decompressing it. On low memory the session is closed outright (frees it).
      */
-    fun scheduleCachePurge(file: File, delayMs: Long = 3_000L) {
+    fun scheduleCachePurge(file: File, delayMs: Long = DEFAULT_PURGE_DELAY_MS) {
         val path = try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
         purgeJobs[path]?.cancel()
         purgeJobs[path] = kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
             kotlinx.coroutines.delay(delayMs)
+            // Re-check cancellation after delay: a cancel() racing with delay resumption must not
+            // proceed to purge (and tear down native cache) while a fresh extraction may be running.
+            currentCoroutineContext().ensureActive()
             sevenZSessionManager.purgeCache(file)
             purgeJobs.remove(path)
         }
@@ -99,9 +114,11 @@ class ArchiveExtractionCoordinator(
         entryName: String,
         password: String? = null
     ): File = withContext(ArchiveDispatchers.decompressDispatcher) {
+        val t0 = System.currentTimeMillis()
         // Fast path 1: Instant 0ms disk cache hit
         val cached = archiveDiskCache.get(file, entryName, password)
         if (cached != null && cached.exists() && cached.length() > 0L) {
+            com.watchpicture.app.util.AppLog.i("Extract", "Disk hit ${entryName} in ${System.currentTimeMillis() - t0}ms")
             return@withContext cached
         }
 
@@ -111,17 +128,25 @@ class ArchiveExtractionCoordinator(
             // Fast path 2: Re-check after acquiring lock (previous extraction might have cached it)
             val recheck = archiveDiskCache.get(file, entryName, password)
             if (recheck != null && recheck.exists() && recheck.length() > 0L) {
+                com.watchpicture.app.util.AppLog.i("Extract", "Disk hit (recheck) ${entryName} in ${System.currentTimeMillis() - t0}ms")
                 return@withLock recheck
             }
 
             cancelCachePurge(file)
-            val result = if (ZipArchiveManager.isSevenZFile(file)) {
+            val is7z = ZipArchiveManager.isSevenZFile(file)
+            val result = if (is7z) {
                 extractSevenZWithOpportunisticCache(file, entryName, password)
             } else {
                 extractZipEntry(file, entryName, password)
             }
-            if (ZipArchiveManager.isSevenZFile(file)) {
-                scheduleCachePurge(file, 3_000L)
+            com.watchpicture.app.util.AppLog.i("Extract", "Extracted ${entryName} in ${System.currentTimeMillis() - t0}ms")
+            if (is7z) {
+                val purgeDelay = if (powerThermalManager?.isThrottled == true) {
+                    THROTTLED_PURGE_DELAY_MS
+                } else {
+                    DEFAULT_PURGE_DELAY_MS
+                }
+                scheduleCachePurge(file, purgeDelay)
             }
             result
         }
@@ -184,6 +209,8 @@ class ArchiveExtractionCoordinator(
                 if (lookahead > 0) {
                     val nextEntries = sevenZSessionManager.getNextImageEntries(file, targetEntryName, password, lookahead)
                     if (nextEntries.isNotEmpty()) {
+                        // Background lookahead on the low-priority dispatcher; cancelled via
+                        // activeSweepJob / purgeJobs management on session close.
                         kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.backgroundSweepDispatcher).launch {
                             for (nextEntry in nextEntries) {
                                 if (archiveDiskCache.get(file, nextEntry, password) == null) {
@@ -317,7 +344,8 @@ class ArchiveExtractionCoordinator(
         password = password,
         thumbnailDiskCache = thumbnailDiskCache,
         keepBitmapInMemory = false
-    ).file
+    ).also { it.lease?.close() } // This File-only variant does not hand ownership to a reader.
+        .file
 
     suspend fun extractThumbnailDirectResult(
         file: File,
@@ -446,8 +474,10 @@ class ArchiveExtractionCoordinator(
                     kotlinx.coroutines.yield() // Yield so interactive UI requests get top priority!
                 }
             } finally {
-                // Immediately reclaim the 700MB+ solid decompression buffer after sweep completes or cancels!
-                sevenZSessionManager.purgeCache(file)
+                // Don't purge immediately after the sweep: the user typically jumps straight into the
+                // viewer, which reuses the same solid block. Delay the reclaim so the first full-res
+                // page stays fast; it will be purged after idle or freed by onTrimMemory.
+                scheduleCachePurge(file)
             }
             return@withContext
         }
@@ -464,6 +494,14 @@ class ArchiveExtractionCoordinator(
             val total = targets.size
             for (name in targets) {
                 if (powerThermalManager?.isThrottled == true) break
+
+                // Cooperative yield while foreground requests (Coil thumbnails / viewer) are in
+                // flight, so interactive decryption gets the CPU instead of this background sweep.
+                while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
+                    kotlinx.coroutines.delay(80)
+                }
+                if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
+
                 runCatching {
                     thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
                         zipArchiveManager.getEntryInputStream(file, name, password)
@@ -471,6 +509,7 @@ class ArchiveExtractionCoordinator(
                     count++
                     onProgress?.invoke(count, total)
                 }
+                kotlinx.coroutines.yield()
             }
         }
     }

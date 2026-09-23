@@ -76,7 +76,11 @@ class ArchiveDiskCache(
         val ext = entryName.substringAfterLast('.', "dat").lowercase()
         val targetFile = File(directory, "$filePrefix$cacheKey.$ext")
         if (targetFile.exists() && targetFile.length() > 0) {
-            targetFile.setLastModified(System.currentTimeMillis())
+            // mtime update must happen inside the stripe lock to stay ordered with trimToSize(),
+            // otherwise a just-hit file could be evicted as LRU in the same instant.
+            getLockFor(cacheKey).withLock {
+                targetFile.setLastModified(System.currentTimeMillis())
+            }
             return targetFile
         }
         return null
@@ -122,7 +126,9 @@ class ArchiveDiskCache(
 
         // Fast path without lock
         if (targetFile.exists() && targetFile.length() > 0) {
-            targetFile.setLastModified(System.currentTimeMillis())
+            getLockFor(cacheKey).withLock {
+                targetFile.setLastModified(System.currentTimeMillis())
+            }
             return targetFile
         }
 
@@ -186,11 +192,19 @@ class ArchiveDiskCache(
         val ext = entryName.substringAfterLast('.', "dat").lowercase()
         val targetFile = File(directory, "$filePrefix$cacheKey.$ext")
 
+        val stripeLock = getLockFor(cacheKey)
+
+        // Fast path without lock (mtime update below happens under the lock to stay LRU-safe).
         if (targetFile.exists() && targetFile.length() > 0) {
-            targetFile.setLastModified(System.currentTimeMillis())
+            stripeLock.withLock {
+                targetFile.setLastModified(System.currentTimeMillis())
+            }
             return targetFile
         }
 
+        // Decompress *outside* the lock: [writer] is suspending and may migrate threads on a
+        // bounded pool, so holding a thread-pinned ReentrantLock across it could deadlock the pool
+        // or crash on unlock() from a different thread.
         val tempFile = File(directory, "${targetFile.name}.${System.nanoTime()}.tmp")
         try {
             writer(tempFile)
@@ -200,8 +214,15 @@ class ArchiveDiskCache(
                 throw IOException("Failed to extract '$entryName': writer produced 0 bytes")
             }
 
-            val stripeLock = getLockFor(cacheKey)
             stripeLock.withLock {
+                // Dedupe concurrent writers for this key: if a peer already renamed the target file
+                // while we were decompressing, reuse it and drop our temp WITHOUT double-counting the
+                // size (previously both writers addAndGet()'d, inflating the size and evicting real LRU).
+                if (targetFile.exists() && targetFile.length() > 0) {
+                    tempFile.delete()
+                    targetFile.setLastModified(System.currentTimeMillis())
+                    return targetFile
+                }
                 if (targetFile.exists()) {
                     targetFile.delete()
                 }
@@ -217,6 +238,7 @@ class ArchiveDiskCache(
                 if (updatedSize > maxSizeBytes) {
                     trimToSize()
                 }
+                return targetFile
             }
         } catch (e: Throwable) {
             if (tempFile.exists()) {
@@ -224,7 +246,6 @@ class ArchiveDiskCache(
             }
             throw e
         }
-        return targetFile
     }
 
     /**
@@ -237,8 +258,11 @@ class ArchiveDiskCache(
             currentSizeBytes.set(totalSize)
             if (totalSize <= maxSizeBytes) return
 
-            // Sort by last modified ascending (LRU)
-            val sorted = files.sortedBy { it.lastModified() }
+            // Sort by last modified ascending (LRU). Files currently leased by an in-flight
+            // reader (e.g. Coil decoding the returned ImageSource) must not be deleted.
+            val sorted = files
+                .filter { !CacheFileLeases.isLeased(it.absolutePath) }
+                .sortedBy { it.lastModified() }
             for (file in sorted) {
                 val size = file.length()
                 if (file.delete()) {
@@ -255,7 +279,9 @@ class ArchiveDiskCache(
      */
     fun clearEncrypted() {
         globalLock.withLock {
-            val files = directory.listFiles()?.filter { it.isFile && it.name.startsWith("enc_") } ?: return
+            val files = directory.listFiles()?.filter {
+                it.isFile && it.name.startsWith("enc_") && !CacheFileLeases.isLeased(it.absolutePath)
+            } ?: return
             var deletedBytes = 0L
             for (file in files) {
                 val len = file.length()
@@ -263,10 +289,8 @@ class ArchiveDiskCache(
                     deletedBytes += len
                 }
             }
-            if (currentSizeBytes.get() >= 0L) {
-                currentSizeBytes.addAndGet(-deletedBytes).coerceAtLeast(0L).also {
-                    if (it < 0L) currentSizeBytes.set(0L)
-                }
+            if (deletedBytes > 0L && currentSizeBytes.get() >= 0L) {
+                currentSizeBytes.updateAndGet { (it - deletedBytes).coerceAtLeast(0L) }
             }
         }
     }
@@ -276,13 +300,31 @@ class ArchiveDiskCache(
      */
     fun clearAll() {
         globalLock.withLock {
-            directory.listFiles()?.forEach { it.delete() }
-            currentSizeBytes.set(0L)
+            // Skip files still leased by an in-flight reader; they are cleaned up later.
+            directory.listFiles()?.forEach {
+                if (!CacheFileLeases.isLeased(it.absolutePath)) it.delete()
+            }
+            // Leased files may remain, so recompute the tracked size from disk.
+            currentSizeBytes.set(
+                directory.listFiles()
+                    ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+                    ?.sumOf { it.length() } ?: 0L
+            )
         }
     }
 
     private fun computeKey(zipFile: File, entryName: String, password: String?): String {
-        val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#${password ?: "none"}"
+        // Embed only a one-way SHA-256 digest of the password, never the plaintext, so the key
+        // material in a heap dump does not leak the credential. Different passwords still map to
+        // distinct keys (preserving per-password cache isolation).
+        val pwdToken = if (password.isNullOrEmpty()) {
+            "none"
+        } else {
+            MessageDigest.getInstance("SHA-256")
+                .digest(password.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        }
+        val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#$pwdToken"
         val md = MessageDigest.getInstance("MD5")
         val bytes = md.digest(raw.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }

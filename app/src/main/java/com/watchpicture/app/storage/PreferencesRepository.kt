@@ -4,11 +4,14 @@ import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.watchpicture.app.model.SortOption
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.map
+import java.io.IOException
 
 val Context.settingsDataStore: DataStore<Preferences> by preferencesDataStore(name = "watchpicture_settings")
 
@@ -32,35 +35,45 @@ class PreferencesRepository(private val context: Context) {
         private val KEY_STANDALONE_ARCHIVES = androidx.datastore.preferences.core.stringSetPreferencesKey("standalone_archives")
     }
 
-    val lastRootUriFlow: Flow<String?> = context.settingsDataStore.data.map { preferences ->
-        preferences[KEY_LAST_ROOT_URI]
-    }
-
-    val sortOptionFlow: Flow<SortOption> = context.settingsDataStore.data.map { preferences ->
-        val raw = preferences[KEY_SORT_OPTION] ?: SortOption.NAME_ASC.name
-        try {
-            SortOption.valueOf(raw)
-        } catch (_: Exception) {
-            SortOption.NAME_ASC
+    val lastRootUriFlow: Flow<String?> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_LAST_ROOT_URI]
         }
-    }
 
-    val readingModeFlow: Flow<ReadingMode> = context.settingsDataStore.data.map { preferences ->
-        val raw = preferences[KEY_READING_MODE] ?: ReadingMode.LTR.name
-        try {
-            ReadingMode.valueOf(raw)
-        } catch (_: Exception) {
-            ReadingMode.LTR
+    val sortOptionFlow: Flow<SortOption> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            val raw = preferences[KEY_SORT_OPTION] ?: SortOption.NAME_ASC.name
+            try {
+                SortOption.valueOf(raw)
+            } catch (_: Exception) {
+                SortOption.NAME_ASC
+            }
         }
-    }
 
-    val autoCheckUpdateFlow: Flow<Boolean> = context.settingsDataStore.data.map { preferences ->
-        preferences[KEY_AUTO_CHECK_UPDATE] ?: true
-    }
+    val readingModeFlow: Flow<ReadingMode> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            val raw = preferences[KEY_READING_MODE] ?: ReadingMode.LTR.name
+            try {
+                ReadingMode.valueOf(raw)
+            } catch (_: Exception) {
+                ReadingMode.LTR
+            }
+        }
 
-    val ignoredVersionFlow: Flow<String?> = context.settingsDataStore.data.map { preferences ->
-        preferences[KEY_IGNORED_VERSION]
-    }
+    val autoCheckUpdateFlow: Flow<Boolean> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_AUTO_CHECK_UPDATE] ?: true
+        }
+
+    val ignoredVersionFlow: Flow<String?> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_IGNORED_VERSION]
+        }
 
     suspend fun saveLastRootUri(uriString: String) {
         context.settingsDataStore.edit { preferences ->
@@ -92,9 +105,11 @@ class PreferencesRepository(private val context: Context) {
         }
     }
 
-    val standaloneArchivesFlow: Flow<Set<String>> = context.settingsDataStore.data.map { preferences ->
-        preferences[KEY_STANDALONE_ARCHIVES] ?: emptySet()
-    }
+    val standaloneArchivesFlow: Flow<Set<String>> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_STANDALONE_ARCHIVES] ?: emptySet()
+        }
 
     suspend fun addStandaloneArchive(uriString: String) {
         context.settingsDataStore.edit { preferences ->
