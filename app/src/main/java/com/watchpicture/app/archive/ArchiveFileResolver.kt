@@ -120,9 +120,9 @@ class ArchiveFileResolver(
 
         val isCbz = lowerName.endsWith(".cbz")
         val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7") || isValidSevenZArchive(file)
-        val isEncrypted = zipArchiveManager.isEncrypted(file)
         val password = cachedPassword ?: passwordStore.get(file.absolutePath)
         val entries = zipArchiveManager.getImageEntries(file, password)
+        val isEncrypted = if (entries.isNotEmpty()) entries.any { it.isEncrypted } else zipArchiveManager.isEncrypted(file)
 
         val fallbackUri = uriString ?: "file://${file.absolutePath}"
         val cover = entries.firstOrNull()?.let { entry ->

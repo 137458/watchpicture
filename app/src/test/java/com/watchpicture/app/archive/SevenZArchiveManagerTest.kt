@@ -146,4 +146,18 @@ class SevenZArchiveManagerTest {
         assertArrayEquals(testImageBytes1, extracted["2_page.jpg"])
         assertArrayEquals(testImageBytes1, extracted["10_page.jpg"])
     }
+
+    @Test
+    fun `getImageEntries prewarms sessionManager even when password is null to avoid redundant archive opens`() {
+        val freshManager = SevenZArchiveManager()
+        assertEquals(0, freshManager.sessionManager.activeSessionCount)
+
+        val entries = freshManager.getImageEntries(plain7z, password = null)
+        assertEquals(3, entries.size)
+        assertEquals(
+            "getImageEntries should keep session warm in sessionManager for subsequent thumbnail/image loads",
+            1,
+            freshManager.sessionManager.activeSessionCount
+        )
+    }
 }

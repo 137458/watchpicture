@@ -49,6 +49,16 @@ class SevenZArchiveManager(
      */
     fun isEncrypted(file: File): Boolean {
         if (!isValidSevenZArchive(file)) return false
+        val existingEntries = sessionManager.getEntries(file, null)
+        if (existingEntries != null && existingEntries.isNotEmpty()) {
+            return existingEntries.any { it.isEncrypted }
+        }
+        if (sessionManager.prewarmSession(file, null)) {
+            val warmedEntries = sessionManager.getEntries(file, null)
+            if (warmedEntries != null && warmedEntries.isNotEmpty()) {
+                return warmedEntries.any { it.isEncrypted }
+            }
+        }
         return try {
             SevenZFile.builder().setFile(file).get().use { sevenZ ->
                 sevenZ.entries.any { entry ->
@@ -73,66 +83,17 @@ class SevenZArchiveManager(
     fun getImageEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
         if (!isValidSevenZArchive(file)) return emptyList()
 
-        if (!password.isNullOrEmpty()) {
-            val cachedEntries = sessionManager.getEntries(file, password)
-            if (cachedEntries != null) {
-                return cachedEntries
-            }
-            if (sessionManager.prewarmSession(file, password)) {
-                val warmed = sessionManager.getEntries(file, password)
-                if (warmed != null) {
-                    return warmed
-                }
+        val cachedEntries = sessionManager.getEntries(file, password)
+        if (cachedEntries != null) {
+            return cachedEntries
+        }
+        if (sessionManager.prewarmSession(file, password)) {
+            val warmed = sessionManager.getEntries(file, password)
+            if (warmed != null) {
+                return warmed
             }
         }
-
-        if (Native7z.isAvailable) {
-            val session = Native7zArchiveSession.open(file.absolutePath, password)
-            if (session != null) {
-                return session.use { s ->
-                    s.entries
-                        .asSequence()
-                        .filter { !it.isDirectory }
-                        .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                        .filter { ZipArchiveManager.isImageFile(it.path) }
-                        .map { entry ->
-                            ArchiveEntryInfo(
-                                name = entry.path,
-                                uncompressedSize = entry.size,
-                                isEncrypted = !password.isNullOrEmpty()
-                            )
-                        }
-                        .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
-                        .toList()
-                }
-            }
-        }
-
-        val builder = SevenZFile.builder().setFile(file)
-        if (!password.isNullOrEmpty()) {
-            builder.setPassword(password)
-        }
-
-        return try {
-            builder.get().use { sevenZ ->
-                sevenZ.entries
-                    .asSequence()
-                    .filter { !it.isDirectory }
-                    .filter { !ZipArchiveManager.isIgnoredFile(it.name) }
-                    .filter { ZipArchiveManager.isImageFile(it.name) }
-                    .map { entry ->
-                        ArchiveEntryInfo(
-                            name = entry.name,
-                            uncompressedSize = entry.size,
-                            isEncrypted = isEntryEncrypted(entry)
-                        )
-                    }
-                    .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
-                    .toList()
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
+        return emptyList()
     }
 
     /**

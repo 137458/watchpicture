@@ -79,6 +79,12 @@ object Native7z {
     external fun nativeVerify(handle: Long, fileIndex: Int): Boolean
 
     @JvmStatic
+    external fun nativeIsHeaderEncrypted(handle: Long): Boolean
+
+    @JvmStatic
+    external fun nativeIsEncrypted(handle: Long): Boolean
+
+    @JvmStatic
     external fun nativeClose(handle: Long)
 
     @JvmStatic
@@ -94,7 +100,9 @@ object Native7z {
  */
 class Native7zArchiveSession private constructor(
     private val handle: Long,
-    val entries: List<Native7zEntry>
+    val entries: List<Native7zEntry>,
+    val isHeaderEncrypted: Boolean = false,
+    val isEncrypted: Boolean = false
 ) : Closeable {
     private val closed = AtomicBoolean(false)
     private val entryMap: Map<String, Native7zEntry>
@@ -196,8 +204,10 @@ class Native7zArchiveSession private constructor(
                     Native7z.nativeClose(handle)
                     return null
                 }
-                com.watchpicture.app.util.AppLog.d("Native7z", "Opened $path with ${rawEntries.size} entries")
-                Native7zArchiveSession(handle, rawEntries.toList())
+                val headerEncrypted = Native7z.nativeIsHeaderEncrypted(handle)
+                val encrypted = headerEncrypted || Native7z.nativeIsEncrypted(handle)
+                com.watchpicture.app.util.AppLog.d("Native7z", "Opened $path with ${rawEntries.size} entries (headerEncrypted=$headerEncrypted, encrypted=$encrypted)")
+                Native7zArchiveSession(handle, rawEntries.toList(), headerEncrypted, encrypted)
             } catch (e: Throwable) {
                 com.watchpicture.app.util.AppLog.e("Native7z", "nativeOpen failed for $path: ${e.message}", e)
                 null
@@ -218,7 +228,9 @@ class Native7zArchiveSession private constructor(
                     Native7z.nativeClose(handle)
                     return null
                 }
-                Native7zArchiveSession(handle, rawEntries.toList())
+                val headerEncrypted = Native7z.nativeIsHeaderEncrypted(handle)
+                val encrypted = headerEncrypted || Native7z.nativeIsEncrypted(handle)
+                Native7zArchiveSession(handle, rawEntries.toList(), headerEncrypted, encrypted)
             } catch (e: Throwable) {
                 com.watchpicture.app.util.AppLog.e("Native7z", "nativeOpenFd failed for fd $fd: ${e.message}", e)
                 null

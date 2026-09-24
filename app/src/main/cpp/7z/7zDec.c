@@ -1058,3 +1058,387 @@ SRes SzAr_DecodeFolder(const CSzAr *p, UInt32 folderIndex,
     return res;
   }
 }
+
+struct CSzFolderIncrementalDecoder
+{
+  BoolInt active;
+  BoolInt crcChecked;
+  UInt32 folderIndex;
+  UInt32 mainMethod;
+  BoolInt hasAes;
+  CAesLookInStream *aesStream;
+  ILookInStreamPtr activeStream;
+  UInt64 remainingInSize;
+  BoolInt allowPadding;
+  BoolInt lzmaAllocated;
+  BoolInt lzma2Allocated;
+  CLzmaDec lzmaState;
+  CLzma2Dec lzma2State;
+  Byte *outBuffer;
+  size_t totalUnpackSize;
+  size_t decodedSize;
+};
+
+CSzFolderIncrementalDecoder* SzFolderDecoder_Create(ISzAllocPtr allocMain)
+{
+  CSzFolderIncrementalDecoder *dec = (CSzFolderIncrementalDecoder *)ISzAlloc_Alloc(allocMain, sizeof(CSzFolderIncrementalDecoder));
+  if (!dec) return NULL;
+  memset(dec, 0, sizeof(CSzFolderIncrementalDecoder));
+  dec->folderIndex = (UInt32)-1;
+  LzmaDec_CONSTRUCT(&dec->lzmaState);
+  Lzma2Dec_CONSTRUCT(&dec->lzma2State);
+  return dec;
+}
+
+void SzFolderDecoder_Reset(CSzFolderIncrementalDecoder *dec, ISzAllocPtr allocMain)
+{
+  if (!dec) return;
+  if (dec->lzmaAllocated)
+  {
+    LzmaDec_FreeProbs(&dec->lzmaState, allocMain);
+    dec->lzmaAllocated = False;
+  }
+  if (dec->lzma2Allocated)
+  {
+    Lzma2Dec_FreeProbs(&dec->lzma2State, allocMain);
+    dec->lzma2Allocated = False;
+  }
+  if (dec->aesStream)
+  {
+    ISzAlloc_Free(allocMain, dec->aesStream);
+    dec->aesStream = NULL;
+  }
+  dec->active = False;
+  dec->crcChecked = False;
+  dec->folderIndex = (UInt32)-1;
+  dec->activeStream = NULL;
+  dec->remainingInSize = 0;
+  dec->outBuffer = NULL;
+  dec->totalUnpackSize = 0;
+  dec->decodedSize = 0;
+}
+
+void SzFolderDecoder_Destroy(CSzFolderIncrementalDecoder *dec, ISzAllocPtr allocMain)
+{
+  if (!dec) return;
+  SzFolderDecoder_Reset(dec, allocMain);
+  ISzAlloc_Free(allocMain, dec);
+}
+
+static SRes SzFolderDecoder_StepTo(CSzFolderIncrementalDecoder *dec, size_t targetSize)
+{
+  if (targetSize > dec->totalUnpackSize)
+    targetSize = dec->totalUnpackSize;
+  if (dec->decodedSize >= targetSize)
+    return SZ_OK;
+
+  if (dec->mainMethod == k_Copy)
+  {
+    while (dec->decodedSize < targetSize)
+    {
+      const void *inBuf = NULL;
+      size_t curSize = targetSize - dec->decodedSize;
+      if (curSize > (1 << 18))
+        curSize = (1 << 18);
+      if (curSize > dec->remainingInSize)
+        curSize = (size_t)dec->remainingInSize;
+      RINOK(ILookInStream_Look(dec->activeStream, &inBuf, &curSize));
+      if (curSize == 0)
+        return SZ_ERROR_INPUT_EOF;
+      memcpy(dec->outBuffer + dec->decodedSize, inBuf, curSize);
+      dec->decodedSize += curSize;
+      dec->remainingInSize -= curSize;
+      RINOK(ILookInStream_Skip(dec->activeStream, curSize));
+    }
+    return SZ_OK;
+  }
+
+  if (dec->mainMethod == k_LZMA)
+  {
+    ELzmaFinishMode finishMode = (targetSize == dec->totalUnpackSize) ? LZMA_FINISH_END : LZMA_FINISH_ANY;
+    for (;;)
+    {
+      if (dec->lzmaState.dicPos >= targetSize)
+      {
+        dec->decodedSize = dec->lzmaState.dicPos;
+        break;
+      }
+      const void *inBuf = NULL;
+      size_t lookahead = (1 << 18);
+      if (lookahead > dec->remainingInSize)
+        lookahead = (size_t)dec->remainingInSize;
+      SRes res = ILookInStream_Look(dec->activeStream, &inBuf, &lookahead);
+      if (res != SZ_OK)
+        return res;
+
+      SizeT inProcessed = (SizeT)lookahead;
+      SizeT dicPosBefore = dec->lzmaState.dicPos;
+      ELzmaStatus status;
+      res = LzmaDec_DecodeToDic(&dec->lzmaState, targetSize, (const Byte *)inBuf, &inProcessed, finishMode, &status);
+      dec->remainingInSize -= inProcessed;
+      if (res != SZ_OK)
+        return res;
+
+      res = ILookInStream_Skip(dec->activeStream, inProcessed);
+      if (res != SZ_OK)
+        return res;
+
+      dec->decodedSize = dec->lzmaState.dicPos;
+
+      if (status == LZMA_STATUS_FINISHED_WITH_MARK)
+      {
+        if (dec->decodedSize < targetSize)
+          return SZ_ERROR_DATA;
+        break;
+      }
+      if (dec->decodedSize >= targetSize)
+        break;
+      if (inProcessed == 0 && dicPosBefore == dec->decodedSize)
+        return SZ_ERROR_DATA;
+    }
+    return SZ_OK;
+  }
+
+#ifndef Z7_NO_METHOD_LZMA2
+  if (dec->mainMethod == k_LZMA2)
+  {
+    ELzmaFinishMode finishMode = (targetSize == dec->totalUnpackSize) ? LZMA_FINISH_END : LZMA_FINISH_ANY;
+    for (;;)
+    {
+      if (dec->lzma2State.decoder.dicPos >= targetSize)
+      {
+        dec->decodedSize = dec->lzma2State.decoder.dicPos;
+        break;
+      }
+      const void *inBuf = NULL;
+      size_t lookahead = (1 << 18);
+      if (lookahead > dec->remainingInSize)
+        lookahead = (size_t)dec->remainingInSize;
+      SRes res = ILookInStream_Look(dec->activeStream, &inBuf, &lookahead);
+      if (res != SZ_OK)
+        return res;
+
+      SizeT inProcessed = (SizeT)lookahead;
+      SizeT dicPosBefore = dec->lzma2State.decoder.dicPos;
+      ELzmaStatus status;
+      res = Lzma2Dec_DecodeToDic(&dec->lzma2State, targetSize, (const Byte *)inBuf, &inProcessed, finishMode, &status);
+      dec->remainingInSize -= inProcessed;
+      if (res != SZ_OK)
+        return res;
+
+      res = ILookInStream_Skip(dec->activeStream, inProcessed);
+      if (res != SZ_OK)
+        return res;
+
+      dec->decodedSize = dec->lzma2State.decoder.dicPos;
+
+      if (status == LZMA_STATUS_FINISHED_WITH_MARK)
+      {
+        if (dec->decodedSize < targetSize)
+          return SZ_ERROR_DATA;
+        break;
+      }
+      if (dec->decodedSize >= targetSize)
+        break;
+      if (inProcessed == 0 && dicPosBefore == dec->decodedSize)
+        return SZ_ERROR_DATA;
+    }
+    return SZ_OK;
+  }
+#endif
+
+  return SZ_ERROR_UNSUPPORTED;
+}
+
+SRes SzAr_DecodeFolderUpTo(
+    CSzFolderIncrementalDecoder *dec,
+    const CSzAr *p,
+    UInt32 folderIndex,
+    ILookInStreamPtr inStream,
+    UInt64 startPos,
+    Byte *outBuffer,
+    size_t totalUnpackSize,
+    size_t targetUnpackSize,
+    ISzAllocPtr allocMain,
+    ISzAllocPtr allocTemp)
+{
+  if (!dec)
+  {
+    return SzAr_DecodeFolder(p, folderIndex, inStream, startPos, outBuffer, totalUnpackSize, allocTemp);
+  }
+
+  if (targetUnpackSize > totalUnpackSize)
+    targetUnpackSize = totalUnpackSize;
+
+  if (!dec->active || dec->folderIndex != folderIndex || dec->outBuffer != outBuffer || dec->totalUnpackSize != totalUnpackSize)
+  {
+    SzFolderDecoder_Reset(dec, allocMain);
+
+    CSzFolder folder;
+    CSzData sd;
+    const Byte *data = p->CodersData + p->FoCodersOffsets[folderIndex];
+    sd.Data = data;
+    sd.Size = p->FoCodersOffsets[(size_t)folderIndex + 1] - p->FoCodersOffsets[folderIndex];
+
+    RINOK(SzGetNextFolderItem(&folder, &sd));
+    if (sd.Size != 0
+        || folder.UnpackStream != p->FoToMainUnpackSizeIndex[folderIndex]
+        || totalUnpackSize != SzAr_GetFolderUnpackSize(p, folderIndex))
+      return SZ_ERROR_FAIL;
+
+    RINOK(CheckSupportedFolder(&folder));
+
+    int aesIndex = FindAesCoder(&folder);
+    int mainIndex = -1;
+    BoolInt canStreamIncrementally = False;
+
+    if (aesIndex >= 0)
+    {
+      if (folder.NumCoders == 1)
+      {
+        canStreamIncrementally = True;
+        mainIndex = -1; // Copy directly from AES stream
+      }
+      else if (folder.NumCoders == 2)
+      {
+        mainIndex = (aesIndex == 0) ? 1 : 0;
+        UInt32 m = (UInt32)folder.Coders[mainIndex].MethodID;
+        if (m == k_Copy || m == k_LZMA
+        #ifndef Z7_NO_METHOD_LZMA2
+            || m == k_LZMA2
+        #endif
+        )
+        {
+          canStreamIncrementally = True;
+        }
+      }
+    }
+    else if (folder.NumCoders == 1)
+    {
+      mainIndex = 0;
+      UInt32 m = (UInt32)folder.Coders[0].MethodID;
+      if (m == k_Copy || m == k_LZMA
+      #ifndef Z7_NO_METHOD_LZMA2
+          || m == k_LZMA2
+      #endif
+      )
+      {
+        canStreamIncrementally = True;
+      }
+    }
+
+    if (!canStreamIncrementally)
+    {
+      SRes fullRes = SzAr_DecodeFolder(p, folderIndex, inStream, startPos, outBuffer, totalUnpackSize, allocTemp);
+      if (fullRes == SZ_OK)
+      {
+        dec->active = True;
+        dec->crcChecked = True;
+        dec->folderIndex = folderIndex;
+        dec->outBuffer = outBuffer;
+        dec->totalUnpackSize = totalUnpackSize;
+        dec->decodedSize = totalUnpackSize;
+      }
+      return fullRes;
+    }
+
+    const UInt64 *packPositions = p->PackPositions + p->FoStartPackStreamIndex[folderIndex];
+    UInt64 offset = packPositions[0];
+    UInt64 inSize = packPositions[1] - offset;
+    RINOK(LookInStream_SeekTo(inStream, startPos + offset));
+
+    if (aesIndex >= 0)
+    {
+      const CSzCoderInfo *aesCoder = &folder.Coders[aesIndex];
+      Byte key[32];
+      Byte iv[16];
+      RINOK(GetAesKeyAndIv((CSzAr *)p, aesCoder, data, key, iv));
+
+      dec->aesStream = (CAesLookInStream *)ISzAlloc_Alloc(allocMain, sizeof(CAesLookInStream));
+      if (!dec->aesStream)
+        return SZ_ERROR_MEM;
+      AesLookInStream_Init(dec->aesStream, inStream, inSize, key, iv);
+      dec->activeStream = &dec->aesStream->vt;
+      dec->hasAes = True;
+      dec->allowPadding = True;
+    }
+    else
+    {
+      dec->activeStream = inStream;
+      dec->hasAes = False;
+      dec->allowPadding = False;
+    }
+
+    if (mainIndex < 0 || folder.Coders[mainIndex].MethodID == k_Copy)
+    {
+      dec->mainMethod = k_Copy;
+    }
+    else if (folder.Coders[mainIndex].MethodID == k_LZMA)
+    {
+      const CSzCoderInfo *mainCoder = &folder.Coders[mainIndex];
+      SRes allocRes = LzmaDec_AllocateProbs(&dec->lzmaState, data + mainCoder->PropsOffset, mainCoder->PropsSize, allocMain);
+      if (allocRes != SZ_OK)
+      {
+        SzFolderDecoder_Reset(dec, allocMain);
+        return allocRes;
+      }
+      dec->lzmaAllocated = True;
+      dec->lzmaState.dic = outBuffer;
+      dec->lzmaState.dicBufSize = totalUnpackSize;
+      LzmaDec_Init(&dec->lzmaState);
+      dec->mainMethod = k_LZMA;
+    }
+#ifndef Z7_NO_METHOD_LZMA2
+    else if (folder.Coders[mainIndex].MethodID == k_LZMA2)
+    {
+      const CSzCoderInfo *mainCoder = &folder.Coders[mainIndex];
+      if (mainCoder->PropsSize != 1)
+      {
+        SzFolderDecoder_Reset(dec, allocMain);
+        return SZ_ERROR_DATA;
+      }
+      SRes allocRes = Lzma2Dec_AllocateProbs(&dec->lzma2State, data[mainCoder->PropsOffset], allocMain);
+      if (allocRes != SZ_OK)
+      {
+        SzFolderDecoder_Reset(dec, allocMain);
+        return allocRes;
+      }
+      dec->lzma2Allocated = True;
+      dec->lzma2State.decoder.dic = outBuffer;
+      dec->lzma2State.decoder.dicBufSize = totalUnpackSize;
+      Lzma2Dec_Init(&dec->lzma2State);
+      dec->mainMethod = k_LZMA2;
+    }
+#endif
+
+    dec->active = True;
+    dec->crcChecked = False;
+    dec->folderIndex = folderIndex;
+    dec->remainingInSize = inSize;
+    dec->outBuffer = outBuffer;
+    dec->totalUnpackSize = totalUnpackSize;
+    dec->decodedSize = 0;
+  }
+
+  SRes stepRes = SzFolderDecoder_StepTo(dec, targetUnpackSize);
+  if (stepRes != SZ_OK)
+  {
+    SzFolderDecoder_Reset(dec, allocMain);
+    return stepRes;
+  }
+
+  if (dec->decodedSize == dec->totalUnpackSize && !dec->crcChecked)
+  {
+    dec->crcChecked = True;
+    if (SzBitWithVals_Check(&p->FolderCRCs, folderIndex))
+    {
+      if (CrcCalc(outBuffer, totalUnpackSize) != p->FolderCRCs.Vals[folderIndex])
+      {
+        SzFolderDecoder_Reset(dec, allocMain);
+        return SZ_ERROR_CRC;
+      }
+    }
+  }
+
+  return SZ_OK;
+}

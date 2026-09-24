@@ -32,16 +32,18 @@ struct Native7zArchive {
     UInt32 blockIndex;
     Byte *outBuffer;
     size_t outBufferSize;
+    CSzFolderIncrementalDecoder *incDecoder;
     std::mutex mutex;
     std::vector<uint8_t> passwordBytes;
 
-    Native7zArchive() : blockIndex(0xFFFFFFFF), outBuffer(nullptr), outBufferSize(0) {
+    Native7zArchive() : blockIndex(0xFFFFFFFF), outBuffer(nullptr), outBufferSize(0), incDecoder(nullptr) {
         SzArEx_Init(&db);
         FileInStream_CreateVTable(&archiveStream);
         archiveStream.wres = 0;
         File_Construct(&archiveStream.file);
         LookToRead2_CreateVTable(&lookStream, False);
         lookStream.buf = nullptr;
+        incDecoder = SzFolderDecoder_Create(&g_Alloc);
     }
 
     void setPassword(const uint8_t *pwd, size_t len) {
@@ -62,6 +64,10 @@ struct Native7zArchive {
 
     void close() {
         std::lock_guard<std::mutex> lock(mutex);
+        if (incDecoder) {
+            SzFolderDecoder_Destroy(incDecoder, &g_Alloc);
+            incDecoder = nullptr;
+        }
         if (outBuffer) {
             ISzAlloc_Free(&g_Alloc, outBuffer);
             outBuffer = nullptr;
@@ -78,6 +84,9 @@ struct Native7zArchive {
 
     void purgeBlockCache() {
         std::lock_guard<std::mutex> lock(mutex);
+        if (incDecoder) {
+            SzFolderDecoder_Reset(incDecoder, &g_Alloc);
+        }
         if (outBuffer) {
             ISzAlloc_Free(&g_Alloc, outBuffer);
             outBuffer = nullptr;
@@ -338,7 +347,7 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToFile(
     size_t outSizeProcessed = 0;
 
     std::lock_guard<std::mutex> lock(archive->mutex);
-    SRes res = SzArEx_Extract(
+    SRes res = SzArEx_ExtractIncremental(
         &archive->db,
         &archive->lookStream.vt,
         static_cast<UInt32>(fileIndex),
@@ -347,13 +356,14 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToFile(
         &archive->outBufferSize,
         &offset,
         &outSizeProcessed,
+        archive->incDecoder,
         &g_Alloc,
         &g_Alloc
     );
 
     if (res != SZ_OK) {
         env->ReleaseStringUTFChars(outPath, cOutPath);
-        LOGE("SzArEx_Extract failed for index %d with error %d", fileIndex, res);
+        LOGE("SzArEx_ExtractIncremental failed for index %d with error %d", fileIndex, res);
         return JNI_FALSE;
     }
 
@@ -403,7 +413,7 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToFd(
     size_t outSizeProcessed = 0;
 
     std::lock_guard<std::mutex> lock(archive->mutex);
-    SRes res = SzArEx_Extract(
+    SRes res = SzArEx_ExtractIncremental(
         &archive->db,
         &archive->lookStream.vt,
         static_cast<UInt32>(fileIndex),
@@ -412,12 +422,13 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToFd(
         &archive->outBufferSize,
         &offset,
         &outSizeProcessed,
+        archive->incDecoder,
         &g_Alloc,
         &g_Alloc
     );
 
     if (res != SZ_OK) {
-        LOGE("SzArEx_Extract failed for index %d with error %d", fileIndex, res);
+        LOGE("SzArEx_ExtractIncremental failed for index %d with error %d", fileIndex, res);
         return JNI_FALSE;
     }
 
@@ -454,7 +465,7 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToBytes(
     size_t outSizeProcessed = 0;
 
     std::lock_guard<std::mutex> lock(archive->mutex);
-    SRes res = SzArEx_Extract(
+    SRes res = SzArEx_ExtractIncremental(
         &archive->db,
         &archive->lookStream.vt,
         static_cast<UInt32>(fileIndex),
@@ -463,12 +474,13 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToBytes(
         &archive->outBufferSize,
         &offset,
         &outSizeProcessed,
+        archive->incDecoder,
         &g_Alloc,
         &g_Alloc
     );
 
     if (res != SZ_OK) {
-        LOGE("SzArEx_Extract failed for index %d with error %d", fileIndex, res);
+        LOGE("SzArEx_ExtractIncremental failed for index %d with error %d", fileIndex, res);
         return nullptr;
     }
 
@@ -504,7 +516,7 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToDirectBuffer(
     size_t outSizeProcessed = 0;
 
     std::lock_guard<std::mutex> lock(archive->mutex);
-    SRes res = SzArEx_Extract(
+    SRes res = SzArEx_ExtractIncremental(
         &archive->db,
         &archive->lookStream.vt,
         static_cast<UInt32>(fileIndex),
@@ -513,12 +525,13 @@ Java_com_watchpicture_app_archive_Native7z_nativeExtractToDirectBuffer(
         &archive->outBufferSize,
         &offset,
         &outSizeProcessed,
+        archive->incDecoder,
         &g_Alloc,
         &g_Alloc
     );
 
     if (res != SZ_OK || !archive->outBuffer) {
-        LOGE("SzArEx_Extract failed for index %d with error %d", fileIndex, res);
+        LOGE("SzArEx_ExtractIncremental failed for index %d with error %d", fileIndex, res);
         return nullptr;
     }
 
@@ -549,7 +562,7 @@ Java_com_watchpicture_app_archive_Native7z_nativeVerify(
     size_t outSizeProcessed = 0;
 
     std::lock_guard<std::mutex> lock(archive->mutex);
-    SRes res = SzArEx_Extract(
+    SRes res = SzArEx_ExtractIncremental(
         &archive->db,
         &archive->lookStream.vt,
         static_cast<UInt32>(fileIndex),
@@ -558,10 +571,52 @@ Java_com_watchpicture_app_archive_Native7z_nativeVerify(
         &archive->outBufferSize,
         &offset,
         &outSizeProcessed,
+        archive->incDecoder,
         &g_Alloc,
         &g_Alloc
     );
     return (res == SZ_OK) ? JNI_TRUE : JNI_FALSE;
+}
+
+static bool isArchiveContentEncrypted(const CSzAr *ar) {
+    if (!ar) return false;
+    if (ar->isHeaderEncrypted) return true;
+    for (UInt32 fo = 0; fo < ar->NumFolders; ++fo) {
+        CSzFolder folder;
+        CSzData sd;
+        sd.Data = ar->CodersData + ar->FoCodersOffsets[fo];
+        sd.Size = ar->FoCodersOffsets[(size_t)fo + 1] - ar->FoCodersOffsets[fo];
+        if (SzGetNextFolderItem(&folder, &sd) == SZ_OK) {
+            for (UInt32 ci = 0; ci < folder.NumCoders; ++ci) {
+                if (folder.Coders[ci].MethodID == 0x06F10701) {
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_watchpicture_app_archive_Native7z_nativeIsHeaderEncrypted(
+    JNIEnv * /* env */,
+    jclass /* clazz */,
+    jlong handle
+) {
+    if (!handle) return JNI_FALSE;
+    auto *archive = reinterpret_cast<Native7zArchive *>(handle);
+    return archive->db.db.isHeaderEncrypted ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_watchpicture_app_archive_Native7z_nativeIsEncrypted(
+    JNIEnv * /* env */,
+    jclass /* clazz */,
+    jlong handle
+) {
+    if (!handle) return JNI_FALSE;
+    auto *archive = reinterpret_cast<Native7zArchive *>(handle);
+    return isArchiveContentEncrypted(&archive->db.db) ? JNI_TRUE : JNI_FALSE;
 }
 
 extern "C" JNIEXPORT void JNICALL

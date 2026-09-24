@@ -101,6 +101,7 @@ typedef struct
   int cachedNumCyclesPower;
   Byte cachedKey[32];
   BoolInt isKeyValid;
+  BoolInt isHeaderEncrypted;
 } CSzAr;
 
 UInt64 SzAr_GetFolderUnpackSize(const CSzAr *p, UInt32 folderIndex);
@@ -109,6 +110,24 @@ SRes SzAr_DecodeFolder(const CSzAr *p, UInt32 folderIndex,
     ILookInStreamPtr stream, UInt64 startPos,
     Byte *outBuffer, size_t outSize,
     ISzAllocPtr allocMain);
+
+typedef struct CSzFolderIncrementalDecoder CSzFolderIncrementalDecoder;
+
+CSzFolderIncrementalDecoder* SzFolderDecoder_Create(ISzAllocPtr allocMain);
+void SzFolderDecoder_Destroy(CSzFolderIncrementalDecoder *dec, ISzAllocPtr allocMain);
+void SzFolderDecoder_Reset(CSzFolderIncrementalDecoder *dec, ISzAllocPtr allocMain);
+
+SRes SzAr_DecodeFolderUpTo(
+    CSzFolderIncrementalDecoder *dec,
+    const CSzAr *p,
+    UInt32 folderIndex,
+    ILookInStreamPtr inStream,
+    UInt64 startPos,
+    Byte *outBuffer,
+    size_t totalUnpackSize,
+    size_t targetUnpackSize,
+    ISzAllocPtr allocMain,
+    ISzAllocPtr allocTemp);
 
 typedef struct
 {
@@ -145,40 +164,7 @@ void SzArEx_Free(CSzArEx *p, ISzAllocPtr alloc);
 UInt64 SzArEx_GetFolderStreamPos(const CSzArEx *p, UInt32 folderIndex, UInt32 indexInFolder);
 int SzArEx_GetFolderFullPackSize(const CSzArEx *p, UInt32 folderIndex, UInt64 *resSize);
 
-/*
-if dest == NULL, the return value specifies the required size of the buffer,
-  in 16-bit characters, including the null-terminating character.
-if dest != NULL, the return value specifies the number of 16-bit characters that
-  are written to the dest, including the null-terminating character. */
-
 size_t SzArEx_GetFileNameUtf16(const CSzArEx *p, size_t fileIndex, UInt16 *dest);
-
-/*
-size_t SzArEx_GetFullNameLen(const CSzArEx *p, size_t fileIndex);
-UInt16 *SzArEx_GetFullNameUtf16_Back(const CSzArEx *p, size_t fileIndex, UInt16 *dest);
-*/
-
-
-
-/*
-  SzArEx_Extract extracts file from archive
-
-  *outBuffer must be 0 before first call for each new archive.
-
-  Extracting cache:
-    If you need to decompress more than one file, you can send
-    these values from previous call:
-      *blockIndex,
-      *outBuffer,
-      *outBufferSize
-    You can consider "*outBuffer" as cache of solid block. If your archive is solid,
-    it will increase decompression speed.
-  
-    If you use external function, you can declare these 3 cache variables
-    (blockIndex, outBuffer, outBufferSize) as static in that external function.
-    
-    Free *outBuffer and set *outBuffer to 0, if you want to flush cache.
-*/
 
 SRes SzArEx_Extract(
     const CSzArEx *db,
@@ -192,17 +178,18 @@ SRes SzArEx_Extract(
     ISzAllocPtr allocMain,
     ISzAllocPtr allocTemp);
 
-
-/*
-SzArEx_Open Errors:
-SZ_ERROR_NO_ARCHIVE
-SZ_ERROR_ARCHIVE
-SZ_ERROR_UNSUPPORTED
-SZ_ERROR_MEM
-SZ_ERROR_CRC
-SZ_ERROR_INPUT_EOF
-SZ_ERROR_FAIL
-*/
+SRes SzArEx_ExtractIncremental(
+    const CSzArEx *db,
+    ILookInStreamPtr inStream,
+    UInt32 fileIndex,
+    UInt32 *blockIndex,
+    Byte **outBuffer,
+    size_t *outBufferSize,
+    size_t *offset,
+    size_t *outSizeProcessed,
+    CSzFolderIncrementalDecoder *incDec,
+    ISzAllocPtr allocMain,
+    ISzAllocPtr allocTemp);
 
 SRes SzArEx_Open(CSzArEx *p, ILookInStreamPtr inStream,
     ISzAllocPtr allocMain, ISzAllocPtr allocTemp);

@@ -14,6 +14,8 @@ add_definitions(
     -D_LARGEFILE_SOURCE
 )
 
+add_compile_options(-O3 -DNDEBUG -funroll-loops)
+
 include_directories(${CMAKE_CURRENT_SOURCE_DIR}/7z)
 
 set(7Z_C_SOURCES

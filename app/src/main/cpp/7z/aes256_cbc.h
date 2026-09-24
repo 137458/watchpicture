@@ -13,6 +13,7 @@ extern "C" {
 
 typedef struct {
     uint32_t round_keys[60]; // 15 round keys of 4 32-bit words
+    uint8_t dec_round_keys[15][16]; // Pre-expanded round keys for ARMv8 AES instructions
     uint8_t iv[16];
 } aes256_cbc_ctx;
 

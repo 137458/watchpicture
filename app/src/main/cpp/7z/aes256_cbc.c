@@ -66,6 +66,82 @@ static inline uint8_t xtime(uint8_t x) {
 #define Mul13(x) ((uint8_t)(Mul8(x) ^ Mul4(x) ^ (x)))
 #define Mul14(x) ((uint8_t)(Mul8(x) ^ Mul4(x) ^ Mul2(x)))
 
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#include <sys/auxv.h>
+#ifndef HWCAP_AES
+#define HWCAP_AES (1 << 3)
+#endif
+
+static int g_has_hw_aes = -1;
+
+static inline int has_hw_aes(void) {
+    int v = __atomic_load_n(&g_has_hw_aes, __ATOMIC_RELAXED);
+    if (v >= 0) return v;
+    unsigned long hwcap = getauxval(AT_HWCAP);
+    v = (hwcap & HWCAP_AES) ? 1 : 0;
+    __atomic_store_n(&g_has_hw_aes, v, __ATOMIC_RELAXED);
+    return v;
+}
+
+__attribute__((target("aes")))
+static void aes256_prepare_dec_keys_arm64(aes256_cbc_ctx *ctx) {
+    for (int r = 1; r <= 13; r++) {
+        uint8x16_t rk = vld1q_u8(ctx->dec_round_keys[r]);
+        rk = vaesimcq_u8(rk);
+        vst1q_u8(ctx->dec_round_keys[r], rk);
+    }
+}
+
+__attribute__((target("aes")))
+static void aes256_cbc_decrypt_arm64(aes256_cbc_ctx *ctx, const uint8_t *src, uint8_t *dst, size_t blocks) {
+    uint8x16_t rk14 = vld1q_u8(ctx->dec_round_keys[14]);
+    uint8x16_t rk13 = vld1q_u8(ctx->dec_round_keys[13]);
+    uint8x16_t rk12 = vld1q_u8(ctx->dec_round_keys[12]);
+    uint8x16_t rk11 = vld1q_u8(ctx->dec_round_keys[11]);
+    uint8x16_t rk10 = vld1q_u8(ctx->dec_round_keys[10]);
+    uint8x16_t rk9  = vld1q_u8(ctx->dec_round_keys[9]);
+    uint8x16_t rk8  = vld1q_u8(ctx->dec_round_keys[8]);
+    uint8x16_t rk7  = vld1q_u8(ctx->dec_round_keys[7]);
+    uint8x16_t rk6  = vld1q_u8(ctx->dec_round_keys[6]);
+    uint8x16_t rk5  = vld1q_u8(ctx->dec_round_keys[5]);
+    uint8x16_t rk4  = vld1q_u8(ctx->dec_round_keys[4]);
+    uint8x16_t rk3  = vld1q_u8(ctx->dec_round_keys[3]);
+    uint8x16_t rk2  = vld1q_u8(ctx->dec_round_keys[2]);
+    uint8x16_t rk1  = vld1q_u8(ctx->dec_round_keys[1]);
+    uint8x16_t rk0  = vld1q_u8(ctx->dec_round_keys[0]);
+
+    uint8x16_t iv = vld1q_u8(ctx->iv);
+
+    for (size_t b = 0; b < blocks; b++) {
+        uint8x16_t ct = vld1q_u8(src + b * 16);
+        uint8x16_t state = ct;
+
+        state = vaesimcq_u8(vaesdq_u8(state, rk14));
+        state = vaesimcq_u8(vaesdq_u8(state, rk13));
+        state = vaesimcq_u8(vaesdq_u8(state, rk12));
+        state = vaesimcq_u8(vaesdq_u8(state, rk11));
+        state = vaesimcq_u8(vaesdq_u8(state, rk10));
+        state = vaesimcq_u8(vaesdq_u8(state, rk9));
+        state = vaesimcq_u8(vaesdq_u8(state, rk8));
+        state = vaesimcq_u8(vaesdq_u8(state, rk7));
+        state = vaesimcq_u8(vaesdq_u8(state, rk6));
+        state = vaesimcq_u8(vaesdq_u8(state, rk5));
+        state = vaesimcq_u8(vaesdq_u8(state, rk4));
+        state = vaesimcq_u8(vaesdq_u8(state, rk3));
+        state = vaesimcq_u8(vaesdq_u8(state, rk2));
+        state = vaesdq_u8(state, rk1);
+        state = veorq_u8(state, rk0);
+        state = veorq_u8(state, iv);
+
+        iv = ct;
+        vst1q_u8(dst + b * 16, state);
+    }
+
+    vst1q_u8(ctx->iv, iv);
+}
+#endif
+
 void aes256_cbc_init(aes256_cbc_ctx *ctx, const uint8_t key[32], const uint8_t iv[16]) {
     memcpy(ctx->iv, iv, 16);
 
@@ -86,6 +162,21 @@ void aes256_cbc_init(aes256_cbc_ctx *ctx, const uint8_t key[32], const uint8_t i
         }
         w[i] = w[i - 8] ^ temp;
     }
+
+    for (int r = 0; r <= 14; r++) {
+        for (int c = 0; c < 4; c++) {
+            uint32_t kw = w[r * 4 + c];
+            ctx->dec_round_keys[r][c * 4 + 0] = (uint8_t)(kw >> 24);
+            ctx->dec_round_keys[r][c * 4 + 1] = (uint8_t)(kw >> 16);
+            ctx->dec_round_keys[r][c * 4 + 2] = (uint8_t)(kw >> 8);
+            ctx->dec_round_keys[r][c * 4 + 3] = (uint8_t)(kw);
+        }
+    }
+#if defined(__aarch64__)
+    if (has_hw_aes()) {
+        aes256_prepare_dec_keys_arm64(ctx);
+    }
+#endif
 }
 
 static void aes256_decrypt_block(const aes256_cbc_ctx *ctx, const uint8_t in[16], uint8_t out[16]) {
@@ -196,6 +287,12 @@ static void aes256_decrypt_block(const aes256_cbc_ctx *ctx, const uint8_t in[16]
 
 void aes256_cbc_decrypt(aes256_cbc_ctx *ctx, const uint8_t *src, uint8_t *dst, size_t len) {
     size_t blocks = len / AES256_BLOCK_SIZE;
+#if defined(__aarch64__)
+    if (has_hw_aes()) {
+        aes256_cbc_decrypt_arm64(ctx, src, dst, blocks);
+        return;
+    }
+#endif
     for (size_t b = 0; b < blocks; b++) {
         const uint8_t *ct = src + b * AES256_BLOCK_SIZE;
         uint8_t *pt = dst + b * AES256_BLOCK_SIZE;

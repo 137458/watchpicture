@@ -111,6 +111,7 @@ static void SzAr_Init(CSzAr *p)
   p->cachedSaltLen = 0;
   p->cachedNumCyclesPower = -1;
   p->isKeyValid = False;
+  p->isHeaderEncrypted = False;
 }
 
 Z7_NO_INLINE
@@ -1553,6 +1554,15 @@ static SRes SzArEx_Open2(
         tempAr.passwordLen = p->db.passwordLen;
 
         res = SzReadAndDecodePackedStreams(inStream, &sd, &tempBuf, 1, p->startPosAfterHeader, &tempAr, allocTemp);
+        if (tempAr.isKeyValid)
+        {
+          p->db.isHeaderEncrypted = True;
+          memcpy(p->db.cachedSalt, tempAr.cachedSalt, sizeof(tempAr.cachedSalt));
+          p->db.cachedSaltLen = tempAr.cachedSaltLen;
+          p->db.cachedNumCyclesPower = tempAr.cachedNumCyclesPower;
+          memcpy(p->db.cachedKey, tempAr.cachedKey, sizeof(tempAr.cachedKey));
+          p->db.isKeyValid = True;
+        }
         SzAr_Free(&tempAr, allocTemp);
        
         if (res != SZ_OK)
@@ -1574,18 +1584,6 @@ static SRes SzArEx_Open2(
       {
         if (type == k7zIdHeader)
         {
-          /*
-          CSzData sd2;
-          unsigned ttt;
-          for (ttt = 0; ttt < 40000; ttt++)
-          {
-            SzArEx_Free(p, allocMain);
-            sd2 = sd;
-            res = SzReadHeader(p, &sd2, inStream, allocMain, allocTemp);
-            if (res != SZ_OK)
-              break;
-          }
-          */
           res = SzReadHeader(p, &sd, inStream, allocMain, allocTemp);
         }
         else
@@ -1621,6 +1619,25 @@ SRes SzArEx_Extract(
     ISzAllocPtr allocMain,
     ISzAllocPtr allocTemp)
 {
+  return SzArEx_ExtractIncremental(
+      p, inStream, fileIndex, blockIndex, tempBuf, outBufferSize,
+      offset, outSizeProcessed, NULL, allocMain, allocTemp);
+}
+
+
+SRes SzArEx_ExtractIncremental(
+    const CSzArEx *p,
+    ILookInStreamPtr inStream,
+    UInt32 fileIndex,
+    UInt32 *blockIndex,
+    Byte **tempBuf,
+    size_t *outBufferSize,
+    size_t *offset,
+    size_t *outSizeProcessed,
+    CSzFolderIncrementalDecoder *incDec,
+    ISzAllocPtr allocMain,
+    ISzAllocPtr allocTemp)
+{
   const UInt32 folderIndex = p->FileToFolder[fileIndex];
   SRes res = SZ_OK;
   
@@ -1629,6 +1646,7 @@ SRes SzArEx_Extract(
   
   if (folderIndex == (UInt32)-1)
   {
+    SzFolderDecoder_Reset(incDec, allocMain);
     ISzAlloc_Free(allocMain, *tempBuf);
     *blockIndex = folderIndex;
     *tempBuf = NULL;
@@ -1636,47 +1654,53 @@ SRes SzArEx_Extract(
     return SZ_OK;
   }
 
+  const UInt64 unpackSizeSpec = SzAr_GetFolderUnpackSize(&p->db, folderIndex);
+  const size_t unpackSize = (size_t)unpackSizeSpec;
+  if (unpackSize != unpackSizeSpec)
+    return SZ_ERROR_MEM;
+
+  const UInt64 unpackPos = p->UnpackPositions[fileIndex];
+  const size_t reqOffset = (size_t)(unpackPos - p->UnpackPositions[p->FolderToFile[folderIndex]]);
+  const size_t reqSize = (size_t)(p->UnpackPositions[(size_t)fileIndex + 1] - unpackPos);
+  const size_t targetUnpackSize = reqOffset + reqSize;
+  if (targetUnpackSize > unpackSize)
+    return SZ_ERROR_FAIL;
+
   if (*tempBuf == NULL || *blockIndex != folderIndex)
   {
-    const UInt64 unpackSizeSpec = SzAr_GetFolderUnpackSize(&p->db, folderIndex);
-    /*
-    UInt64 unpackSizeSpec =
-        p->UnpackPositions[p->FolderToFile[(size_t)folderIndex + 1]] -
-        p->UnpackPositions[p->FolderToFile[folderIndex]];
-    */
-    const size_t unpackSize = (size_t)unpackSizeSpec;
-
-    if (unpackSize != unpackSizeSpec)
-      return SZ_ERROR_MEM;
+    SzFolderDecoder_Reset(incDec, allocMain);
     *blockIndex = folderIndex;
     ISzAlloc_Free(allocMain, *tempBuf);
     *tempBuf = NULL;
-    
-    if (res == SZ_OK)
+    *outBufferSize = unpackSize;
+    if (unpackSize != 0)
     {
-      *outBufferSize = unpackSize;
-      if (unpackSize != 0)
-      {
-        *tempBuf = (Byte *)ISzAlloc_Alloc(allocMain, unpackSize);
-        if (*tempBuf == NULL)
-          res = SZ_ERROR_MEM;
-      }
-  
-      if (res == SZ_OK)
-      {
-        res = SzAr_DecodeFolder(&p->db, folderIndex,
-            inStream, p->dataPos, *tempBuf, unpackSize, allocTemp);
-      }
+      *tempBuf = (Byte *)ISzAlloc_Alloc(allocMain, unpackSize);
+      if (*tempBuf == NULL)
+        return SZ_ERROR_MEM;
+    }
+  }
+
+  if (unpackSize != 0)
+  {
+    if (incDec != NULL)
+    {
+      res = SzAr_DecodeFolderUpTo(
+          incDec, &p->db, folderIndex, inStream, p->dataPos,
+          *tempBuf, unpackSize, targetUnpackSize, allocMain, allocTemp);
+    }
+    else
+    {
+      res = SzAr_DecodeFolder(
+          &p->db, folderIndex, inStream, p->dataPos,
+          *tempBuf, unpackSize, allocTemp);
     }
   }
 
   if (res == SZ_OK)
   {
-    const UInt64 unpackPos = p->UnpackPositions[fileIndex];
-    *offset = (size_t)(unpackPos - p->UnpackPositions[p->FolderToFile[folderIndex]]);
-    *outSizeProcessed = (size_t)(p->UnpackPositions[(size_t)fileIndex + 1] - unpackPos);
-    if (*offset + *outSizeProcessed > *outBufferSize)
-      return SZ_ERROR_FAIL;
+    *offset = reqOffset;
+    *outSizeProcessed = reqSize;
     if (SzBitWithVals_Check(&p->CRCs, fileIndex))
       if (CrcCalc(*tempBuf + *offset, *outSizeProcessed) != p->CRCs.Vals[fileIndex])
         res = SZ_ERROR_CRC;

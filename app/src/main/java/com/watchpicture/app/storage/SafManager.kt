@@ -111,7 +111,7 @@ class SafManager(
             if (isZip || isCbz || is7z) {
                 val cachedPassword = passwordStore.get(child.absolutePath)
                 val entries = zipArchiveManager.getImageEntries(child, cachedPassword)
-                val isEncrypted = zipArchiveManager.isEncrypted(child) || entries.any { it.isEncrypted }
+                val isEncrypted = if (entries.isNotEmpty()) entries.any { it.isEncrypted } else zipArchiveManager.isEncrypted(child)
 
                 val cover = entries.firstOrNull()?.let { entry ->
                     PackImage(
@@ -195,9 +195,9 @@ class SafManager(
                     // Try to resolve direct file if possible
                     val directFile = resolveDirectFile(doc.uri)
                     if (directFile != null && directFile.exists()) {
-                        val isEncrypted = zipArchiveManager.isEncrypted(directFile)
                         val cachedPassword = passwordStore.get(doc.uri.toString())
                         val entries = zipArchiveManager.getImageEntries(directFile, cachedPassword)
+                        val isEncrypted = if (entries.isNotEmpty()) entries.any { it.isEncrypted } else zipArchiveManager.isEncrypted(directFile)
 
                         val cover = entries.firstOrNull()?.let { entry ->
                             PackImage(

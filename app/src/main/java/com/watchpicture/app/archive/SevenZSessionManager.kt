@@ -79,25 +79,10 @@ open class SevenZSessionManager(
                         val ns = Native7zArchiveSession.open(file.absolutePath, password)
                         if (ns != null && ns.entries.isNotEmpty()) {
                             nativeSession = ns
-                            // Probe header encryption once, using a deliberately wrong password:
-                            // if the header itself is encrypted, SzArEx_Open fails without the correct
-                            // password, proving the password during open. For content-only encryption
-                            // the header opens regardless, so verification must still decompress data.
-                            // Probed via the raw JNI entry point to avoid ERROR-log noise on the
-                            // expected probe failure.
-                            if (isHeaderEncrypted == null && password != null) {
-                                val probeOk = runCatching {
-                                    val probeHandle = Native7z.nativeOpen(file.absolutePath, "invalid-probe-password")
-                                    if (probeHandle != 0L) {
-                                        Native7z.nativeClose(probeHandle)
-                                        true
-                                    } else {
-                                        false
-                                    }
-                                }.getOrDefault(false)
-                                isHeaderEncrypted = !probeOk
+                            if (isHeaderEncrypted == null) {
+                                isHeaderEncrypted = ns.isHeaderEncrypted
                             }
-                            com.watchpicture.app.util.AppLog.d("7zSession", "Native7z session opened for ${file.name} with ${ns.entries.size} entries")
+                            com.watchpicture.app.util.AppLog.d("7zSession", "Native7z session opened for ${file.name} with ${ns.entries.size} entries (headerEncrypted=${ns.isHeaderEncrypted})")
                             return
                         } else {
                             com.watchpicture.app.util.AppLog.w("7zSession", "Native7zArchiveSession.open returned null or empty for ${file.name}")
@@ -799,7 +784,11 @@ open class SevenZSessionManager(
         val session = getSession(file, password)
         return try {
             session.openIfNeeded()
-            session.nativeSession != null || session.sevenZ != null
+            val ok = session.nativeSession != null || session.sevenZ != null
+            if (!ok) {
+                sessions.remove(key)?.let { closeSessionNow(it) }
+            }
+            ok
         } catch (_: Throwable) {
             sessions.remove(key)?.let { closeSessionNow(it) }
             false
@@ -818,6 +807,7 @@ open class SevenZSessionManager(
         val native = session.nativeSession
         if (native != null) {
             if (native.entries.isEmpty()) return null
+            val entryEncrypted = native.isEncrypted || !password.isNullOrEmpty()
             return native.entries
                 .asSequence()
                 .filter { !it.isDirectory }
@@ -827,7 +817,7 @@ open class SevenZSessionManager(
                     ArchiveEntryInfo(
                         name = entry.path,
                         uncompressedSize = entry.size,
-                        isEncrypted = !password.isNullOrEmpty()
+                        isEncrypted = entryEncrypted
                     )
                 }
                 .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
