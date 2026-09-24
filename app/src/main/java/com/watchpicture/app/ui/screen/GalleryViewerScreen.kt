@@ -264,14 +264,15 @@ fun GalleryViewerScreen(
         }
     }
 
-    val images = uiState.images
+    val cachedImages = remember(packId) { ViewerViewModel.getCachedImages(packId) }
+    val images = if (uiState.images.isNotEmpty()) uiState.images else (cachedImages ?: emptyList())
 
     Box(
         modifier = Modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        if (uiState.isLoading || images.isEmpty()) {
+        if ((uiState.isLoading && images.isEmpty()) || images.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
@@ -288,9 +289,10 @@ fun GalleryViewerScreen(
                 pageCount = { images.size }
             )
 
-            // Reset zoom state on page change
-            LaunchedEffect(pagerState.currentPage) {
+            // Reset zoom state on page change & sync lastViewedIndex for thumbnail grid restoration
+            LaunchedEffect(packId, pagerState.currentPage) {
                 isCurrentPageZoomed = false
+                ViewerViewModel.saveLastViewedIndex(packId, pagerState.currentPage)
             }
 
             // Auto-play slideshow timer (every 3.5 seconds, pauses while zoomed, stops at last page)

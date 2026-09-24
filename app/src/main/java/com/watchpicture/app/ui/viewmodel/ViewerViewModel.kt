@@ -173,6 +173,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
 
     fun lockPack(packId: String) {
         removeCachedImageList(packId)
+        clearBrowseState(packId)
         passwordStore.markExplicitlyLocked(packId)
         val file = File(packId)
         if (file.exists() && file.isFile) {
@@ -185,8 +186,16 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
         // viewer each create their own ViewerViewModel, so an instance field would make both
         // re-scan the same pack; sharing prevents that double resolution.
         private const val IMAGE_CACHE_MAX = 16
+        private const val BROWSE_STATE_MAX = 64
         private val imageCacheLock = Any()
         private val imageCache = java.util.LinkedHashMap<String, List<PackImage>>(IMAGE_CACHE_MAX, 0.75f, true)
+
+        private val browseStateLock = Any()
+        private val browseStateCache = java.util.LinkedHashMap<String, PackBrowseState>(BROWSE_STATE_MAX, 0.75f, true)
+        private val _browseStatesFlow = MutableStateFlow<Map<String, PackBrowseState>>(emptyMap())
+        val browseStatesFlow: StateFlow<Map<String, PackBrowseState>> = _browseStatesFlow.asStateFlow()
+
+        fun getCachedImages(packId: String): List<PackImage>? = cachedImageList(packId)
 
         private fun cachedImageList(packId: String): List<PackImage>? =
             synchronized(imageCacheLock) { imageCache[packId] }
@@ -204,5 +213,79 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
         private fun removeCachedImageList(packId: String) {
             synchronized(imageCacheLock) { imageCache.remove(packId) }
         }
+
+        fun getBrowseState(packId: String): PackBrowseState =
+            synchronized(browseStateLock) { browseStateCache[packId] ?: PackBrowseState() }
+
+        fun saveScrollPosition(packId: String, firstVisibleItemIndex: Int, firstVisibleItemScrollOffset: Int) {
+            if (packId.isEmpty()) return
+            synchronized(browseStateLock) {
+                val current = browseStateCache[packId] ?: PackBrowseState()
+                val updated = current.copy(
+                    firstVisibleItemIndex = firstVisibleItemIndex.coerceAtLeast(0),
+                    firstVisibleItemScrollOffset = firstVisibleItemScrollOffset.coerceAtLeast(0)
+                )
+                if (updated != current) {
+                    browseStateCache[packId] = updated
+                    trimBrowseStateCacheLocked()
+                    _browseStatesFlow.value = HashMap(browseStateCache)
+                }
+            }
+        }
+
+        fun saveLastViewedIndex(packId: String, index: Int) {
+            if (packId.isEmpty() || index < 0) return
+            synchronized(browseStateLock) {
+                val current = browseStateCache[packId] ?: PackBrowseState()
+                val updated = current.copy(lastViewedIndex = index)
+                if (updated != current) {
+                    browseStateCache[packId] = updated
+                    trimBrowseStateCacheLocked()
+                    _browseStatesFlow.value = HashMap(browseStateCache)
+                }
+            }
+        }
+
+        private fun clearBrowseState(packId: String) {
+            synchronized(browseStateLock) {
+                if (browseStateCache.remove(packId) != null) {
+                    _browseStatesFlow.value = HashMap(browseStateCache)
+                }
+            }
+        }
+
+        private fun trimBrowseStateCacheLocked() {
+            while (browseStateCache.size > BROWSE_STATE_MAX) {
+                browseStateCache.remove(browseStateCache.keys.first())
+            }
+        }
+
+        /**
+         * 判断从全屏阅读器返回缩略图网格时，是否需要将网格滚动到 [lastViewedIndex]。
+         * - 若 [lastViewedIndex] 仍在当前可视区域 [visibleItemIndices] 内，返回 false，保持精确像素滚动偏移量不跳动；
+         * - 若用户在全屏阅读器中翻页超出了当前可视区域，返回 true，使网格自动定位到最新阅读的图片。
+         */
+        fun shouldScrollToLastViewed(
+            lastViewedIndex: Int,
+            visibleItemIndices: List<Int>,
+            totalItems: Int
+        ): Boolean {
+            if (lastViewedIndex < 0 || lastViewedIndex >= totalItems) return false
+            if (visibleItemIndices.isEmpty()) return lastViewedIndex > 0
+            return lastViewedIndex !in visibleItemIndices
+        }
+
+        fun clearBrowseStateForTest() {
+            synchronized(browseStateLock) {
+                browseStateCache.clear()
+                _browseStatesFlow.value = emptyMap()
+            }
+        }
     }
 }
+
+data class PackBrowseState(
+    val firstVisibleItemIndex: Int = 0,
+    val firstVisibleItemScrollOffset: Int = 0,
+    val lastViewedIndex: Int = -1
+)

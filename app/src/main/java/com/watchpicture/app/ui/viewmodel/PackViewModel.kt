@@ -107,6 +107,16 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
     private val _uiState = MutableStateFlow(PackListUiState())
     val uiState: StateFlow<PackListUiState> = _uiState.asStateFlow()
 
+    var firstVisibleItemIndex: Int = 0
+        private set
+    var firstVisibleItemScrollOffset: Int = 0
+        private set
+
+    fun saveScrollPosition(index: Int, offset: Int) {
+        firstVisibleItemIndex = index.coerceAtLeast(0)
+        firstVisibleItemScrollOffset = offset.coerceAtLeast(0)
+    }
+
     /**
      * Search/sort pipeline computed off the main thread with debounce so that
      * typing a search query never blocks recomposition with full-list filtering.

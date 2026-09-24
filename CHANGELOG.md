@@ -3,9 +3,10 @@
 ## [未发布]
 
 ### 新增
+- 升级多维主题与色彩引擎（`WatchPictureTheme` / `buildMiuixThemeController`）：解耦深浅外观模式（跟随系统、浅色、深色）与色彩来源（壁纸莫奈动态色彩、Miuix 默认色板、10 款精选预置种子色与 Miuix `ColorPicker` + HEX 自定义种子色），新增 9 种调色板生成风格（`ThemePaletteStyle`：TonalSpot、Neutral、Vibrant、Expressive、Rainbow、FruitSalad、Monochrome、Fidelity、Content）与 Material 3 2025 扩展色彩规范（`ThemeColorSpec.Spec2025`）开关，并在设置页提供实时主题预览卡片（`ThemePreviewCard`）；优化浅色画布与纯白卡片分层对比度（`#F6F7F9` 画布 + `#FFFFFF` 容器）及 AMOLED 纯黑灰阶层次。
+- 新增图包浏览列表与缩略图网格滚动位置记忆及阅读进度联动（`PackBrowseState`）：按图包独立记录缩略图网格 `(firstVisibleItemIndex, firstVisibleItemScrollOffset)` 与最后阅读页码 `lastViewedIndex`，支持缩略图角标高亮标记上次阅读图片、顶栏播放按钮续读上次页码，以及从大图阅读器跨页滑动返回时自动同步网格可视区域。
 - 重构大图查看器（`GalleryViewerScreen`）为 Miuix 液态毛玻璃双层悬浮胶囊架构：引入实时背景模糊采样（`viewerBackdrop` + `ViewerGlassSurface`）、上下滑入/滑出物理过渡动效、悬浮双行信息顶栏、支持日漫 RTL 自动镜像与触觉刻度反馈的进度胶囊（`ChapterNavigator`）以及拖拽实时页码预览气泡；底部多功能工具栏（`BottomReaderBar`）新增屏幕旋转锁定（跟随系统/竖屏/横屏）、定时自动翻页幻灯片、3 列网格缩略图速览跳页抽屉（`WindowBottomSheet`）与图片元数据详情弹窗。
 - 升级软件更新页（`UpdateScreen`）为 HyperOS 3.0 动态流光极光架构：引入 AGSL `BgEffectBackground` 极光流体背景着色器随滚动视差平滑淡出，支持横竖屏自适应 Hero 布局、Markdown 发行日志卡片与 GitHub Releases 历史版本直达入口。
-- 新增 6 态主题色彩控制器（`WatchPictureTheme`）：支持跟随系统、浅色、深色、莫奈动态跟随系统、莫奈浅色、莫奈深色切换，并支持深色模式下的 AMOLED 纯黑背景叠加覆盖。
 - 新增平板与横屏宽屏（`>= 600dp`）自适应侧边导航栏（`NavigationRail`），并支持在设置中自由开启或关闭。
 
 ### 优化
@@ -14,6 +15,7 @@
 - 为缩略图网格页与软件更新页路由启用 `NavSwipeDirection.LeftToRight` 左边缘滑动预测返回手势，并将卡片封面、缩略图、角标与弹窗统一升级为连续曲率超椭圆 `SquircleShape`。
 
 ### 修复
+- 修复了 `App.kt` 中 `NavDisplay` 路由 `contentKey` 回调每次重组调用 `AtomicInteger.getAndIncrement()` 导致进入大图查看器再退出返回缩略图网格时 `SaveableStateHolder` 与 `LazyGridState` 被销毁重建、丢失浏览滚动位置的缺陷；改为基于 `packId` 的确定性稳定 `contentKey`，并在 `ThumbnailGridScreen` 首帧同步命中内存图片缓存消除加载闪烁。
 - 修复了 `ArchiveExtractionCoordinator.extractThumbnailDirectResult` 校验 `SevenZSessionManager` 返回结果时错误要求目标磁盘文件必须存在，导致 Coil 内存直出模式下（`keepBitmapInMemory = true`）生成的内存 `Bitmap` 被全部丢弃、强行跌入兜底路径逐张从头重新解压整块 7z 固实包（Solid Block）造成多分钟卡死甚至 OOM 的根本缺陷；重构为优先采信未回收的有效内存 Bitmap 结果。
 - 修复了从缩略图网格点击图片跳转至大图画廊时，`ThumbnailGridScreen.onDispose` 立即无差别调用 `purgeCache()` 释放 Native 固实块缓存，导致大图查看器载入首张原图时缓存已被清空、不得不从第 0 字节全量重新解压固实块的问题；重构为 30 秒延迟析构（`scheduleCachePurge`），并在大图与缩略图请求发起时主动取消待执行清理（`cancelCachePurge`）。
 - 修复了 `ArchiveExtractionCoordinator.pauseBackgroundSweep/resumeBackgroundSweep` 采用布尔标志位导致多个并发 Coil 前台请求在首个请求完成后即刻提前唤醒后台扫图的锁竞争问题，重构为基于 `AtomicInteger` 的引用计数器；同时在网格滚动事件监听中添加状态守卫，避免滚动期间高频累加挂起计数。

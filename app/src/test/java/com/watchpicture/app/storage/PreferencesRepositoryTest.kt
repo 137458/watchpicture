@@ -100,28 +100,82 @@ class PreferencesRepositoryTest {
     }
 
     @Test
-    fun `resolveColorSchemeMode maps indices and fallbacks accurately`() {
+    fun `resolveColorSchemeMode maps darkMode and colorMode matrix accurately`() {
+        // Legacy single-arg mapping
         assertEquals(ColorSchemeMode.System, resolveColorSchemeMode(0))
         assertEquals(ColorSchemeMode.Light, resolveColorSchemeMode(1))
         assertEquals(ColorSchemeMode.Dark, resolveColorSchemeMode(2))
         assertEquals(ColorSchemeMode.MonetSystem, resolveColorSchemeMode(3))
         assertEquals(ColorSchemeMode.MonetLight, resolveColorSchemeMode(4))
         assertEquals(ColorSchemeMode.MonetDark, resolveColorSchemeMode(5))
-        assertEquals(ColorSchemeMode.MonetSystem, resolveColorSchemeMode(-1))
-        assertEquals(ColorSchemeMode.MonetSystem, resolveColorSchemeMode(6))
-        assertEquals(ColorSchemeMode.MonetSystem, resolveColorSchemeMode(99))
+
+        // Decoupled (darkMode, colorMode): colorMode 0 (Monet wallpaper) & 2 (Seed color) -> Monet*
+        assertEquals(ColorSchemeMode.MonetSystem, resolveColorSchemeMode(darkMode = 0, colorMode = 0))
+        assertEquals(ColorSchemeMode.MonetLight, resolveColorSchemeMode(darkMode = 1, colorMode = 0))
+        assertEquals(ColorSchemeMode.MonetDark, resolveColorSchemeMode(darkMode = 2, colorMode = 0))
+
+        assertEquals(ColorSchemeMode.System, resolveColorSchemeMode(darkMode = 0, colorMode = 1))
+        assertEquals(ColorSchemeMode.Light, resolveColorSchemeMode(darkMode = 1, colorMode = 1))
+        assertEquals(ColorSchemeMode.Dark, resolveColorSchemeMode(darkMode = 2, colorMode = 1))
+
+        assertEquals(ColorSchemeMode.MonetSystem, resolveColorSchemeMode(darkMode = 0, colorMode = 2))
+        assertEquals(ColorSchemeMode.MonetLight, resolveColorSchemeMode(darkMode = 1, colorMode = 2))
+        assertEquals(ColorSchemeMode.MonetDark, resolveColorSchemeMode(darkMode = 2, colorMode = 2))
+
+        assertEquals(ColorSchemeMode.MonetSystem, resolveColorSchemeMode(darkMode = 99, colorMode = 99))
     }
 
     @Test
-    fun `applyAmoledColors overrides surface roles to black hierarchy while keeping accent colors`() {
+    fun `buildMiuixThemeController configures keyColor paletteStyle and colorSpec`() {
+        val seedHex = 0xFF7B1FA2L
+        val customSeedController = com.watchpicture.app.ui.theme.buildMiuixThemeController(
+            darkMode = 2,
+            colorMode = 2,
+            seedColor = seedHex,
+            amoledDark = true,
+            paletteStyleIndex = 3, // Expressive
+            useSpec2025 = true
+        )
+        assertEquals(ColorSchemeMode.MonetDark, customSeedController.colorSchemeMode)
+        assertEquals(Color(seedHex), customSeedController.keyColor)
+        assertEquals(top.yukonga.miuix.kmp.theme.ThemePaletteStyle.Expressive, customSeedController.paletteStyle)
+        assertEquals(top.yukonga.miuix.kmp.theme.ThemeColorSpec.Spec2025, customSeedController.colorSpec)
+
+        val monetWallpaperController = com.watchpicture.app.ui.theme.buildMiuixThemeController(
+            darkMode = 0,
+            colorMode = 0,
+            seedColor = seedHex,
+            amoledDark = false,
+            paletteStyleIndex = -1, // out of bounds -> TonalSpot
+            useSpec2025 = false
+        )
+        assertEquals(ColorSchemeMode.MonetSystem, monetWallpaperController.colorSchemeMode)
+        assertNull(monetWallpaperController.keyColor)
+        assertEquals(top.yukonga.miuix.kmp.theme.ThemePaletteStyle.TonalSpot, monetWallpaperController.paletteStyle)
+        assertEquals(top.yukonga.miuix.kmp.theme.ThemeColorSpec.Spec2021, monetWallpaperController.colorSpec)
+    }
+
+    @Test
+    fun `defaultLightColors separates page canvas from white card containers`() {
+        val light = com.watchpicture.app.ui.theme.defaultLightColors()
+        assertEquals(Color(0xFFF6F7F9), light.background)
+        assertEquals(Color(0xFFF6F7F9), light.surface)
+        assertEquals(Color.White, light.surfaceContainer)
+        assertEquals(Color(0xFFF0F1F4), light.surfaceContainerHigh)
+        assertEquals(Color(0xFFE5E7EB), light.surfaceContainerHighest)
+    }
+
+    @Test
+    fun `applyAmoledColors overrides surface roles to pure black hierarchy while keeping accent colors`() {
         val base = darkColorScheme()
         val amoled = applyAmoledColors(base)
 
         assertEquals(Color.Black, amoled.background)
         assertEquals(Color.Black, amoled.surface)
-        assertEquals(Color(0xFF0D0D0D), amoled.surfaceContainer)
-        assertEquals(Color(0xFF1A1A1A), amoled.surfaceContainerHigh)
-        assertEquals(Color(0xFF262626), amoled.surfaceContainerHighest)
+        assertEquals(Color(0xFF121212), amoled.surfaceVariant)
+        assertEquals(Color.Black, amoled.surfaceContainer)
+        assertEquals(Color(0xFF1E1E1E), amoled.surfaceContainerHigh)
+        assertEquals(Color(0xFF2C2C2C), amoled.surfaceContainerHighest)
         assertEquals(base.primary, amoled.primary)
         assertEquals(base.onSurface, amoled.onSurface)
     }

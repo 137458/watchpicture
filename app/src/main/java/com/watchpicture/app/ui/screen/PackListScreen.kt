@@ -88,11 +88,24 @@ fun PackListScreen(
     // Off-main-thread search/sort result; falls back to the memoized getter until first emission.
     val displayedPacks by viewModel.displayedPacksFlow.collectAsStateWithLifecycle()
     val scrollBehavior = MiuixScrollBehavior()
+    val lazyGridState = androidx.compose.foundation.lazy.grid.rememberLazyGridState(
+        initialFirstVisibleItemIndex = viewModel.firstVisibleItemIndex,
+        initialFirstVisibleItemScrollOffset = viewModel.firstVisibleItemScrollOffset
+    )
     val haptic = LocalHapticFeedback.current
     val context = androidx.compose.ui.platform.LocalContext.current
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     var showSortDialog by remember { mutableStateOf(false) }
     var packToDelete by remember { mutableStateOf<PackItem?>(null) }
+
+    androidx.compose.runtime.LaunchedEffect(displayedPacks.isNotEmpty()) {
+        if (displayedPacks.isEmpty()) return@LaunchedEffect
+        androidx.compose.runtime.snapshotFlow {
+            lazyGridState.firstVisibleItemIndex to lazyGridState.firstVisibleItemScrollOffset
+        }.collect { (index, offset) ->
+            viewModel.saveScrollPosition(index, offset)
+        }
+    }
 
     androidx.compose.runtime.LaunchedEffect(uiState.errorMessage) {
         uiState.errorMessage?.let { msg ->
@@ -411,6 +424,7 @@ fun PackListScreen(
                 else -> {
                     // Grid of picture packs
                     LazyVerticalGrid(
+                        state = lazyGridState,
                         columns = GridCells.Fixed(2),
                         contentPadding = PaddingValues(
                             start = 12.dp,

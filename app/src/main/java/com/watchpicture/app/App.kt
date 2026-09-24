@@ -26,28 +26,36 @@ import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 @Composable
 fun App() {
     val prefsRepo = WatchPictureApp.instance.preferencesRepository
-    val themeModeIndex by prefsRepo.themeModeIndexFlow.collectAsStateWithLifecycle(initialValue = 3)
+    val darkMode by prefsRepo.darkModeFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val colorMode by prefsRepo.colorModeFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val seedColor by prefsRepo.seedColorFlow.collectAsStateWithLifecycle(initialValue = 0xFF2196F3L)
     val amoledDark by prefsRepo.amoledDarkFlow.collectAsStateWithLifecycle(initialValue = false)
+    val paletteStyleIndex by prefsRepo.paletteStyleIndexFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val useSpec2025 by prefsRepo.useSpec2025Flow.collectAsStateWithLifecycle(initialValue = false)
 
     WatchPictureTheme(
-        themeModeIndex = themeModeIndex,
+        darkMode = darkMode,
+        colorMode = colorMode,
+        seedColor = seedColor,
         amoledDark = amoledDark,
+        paletteStyleIndex = paletteStyleIndex,
+        useSpec2025 = useSpec2025,
     ) {
         val backStack = rememberNavBackStack<AppRoute>(AppRoute.Main)
 
-        // miuix-nav requires every entry on the stack to have a unique contentKey. Re-opening the
-        // same pack (e.g. back from its grid, then tapping it again) would push a duplicate
-        // contentKey and crash. Navigate by replacing any existing identical route instead.
+        // miuix-nav requires every entry on the stack to have a deterministic and unique contentKey.
+        // Using a stable contentKey per route identity preserves SaveableStateHolder (LazyGridState)
+        // and ViewModelStoreOwner when pushing GalleryViewer and popping back to ThumbnailGrid.
         val navigate: (AppRoute) -> Unit = { route ->
             if (backStack.lastOrNull() != route) {
-                backStack.removeAll { it == route }
+                backStack.removeAll { existing ->
+                    existing == route ||
+                        (existing is AppRoute.ThumbnailGrid && route is AppRoute.ThumbnailGrid && existing.packId == route.packId) ||
+                        (existing is AppRoute.GalleryViewer && route is AppRoute.GalleryViewer && existing.packId == route.packId)
+                }
                 backStack.add(route)
             }
         }
-
-        // Guarantee each grid / viewer push gets a distinct contentKey even across consecutive
-        // entries of the same pack, since same-key adjacent navigations get deduplicated.
-        val contentSeq = remember { java.util.concurrent.atomic.AtomicInteger() }
 
         BackHandler(enabled = backStack.size > 1) {
             backStack.removeLastOrNull()
@@ -74,7 +82,7 @@ fun App() {
             }
 
             entry<AppRoute.ThumbnailGrid>(
-                contentKey = { route -> "grid#${route.packId}#${contentSeq.getAndIncrement()}" },
+                contentKey = { route -> "grid#${route.packId}" },
                 swipeDismiss = NavSwipeDirection.LeftToRight,
             ) { route ->
                 val viewerViewModel: ViewerViewModel = viewModel()
@@ -88,7 +96,7 @@ fun App() {
             }
 
             entry<AppRoute.GalleryViewer>(
-                contentKey = { route -> "viewer#${route.packId}#${route.initialIndex}#${contentSeq.getAndIncrement()}" }
+                contentKey = { route -> "viewer#${route.packId}" }
             ) { route ->
                 val viewerViewModel: ViewerViewModel = viewModel()
                 GalleryViewerScreen(

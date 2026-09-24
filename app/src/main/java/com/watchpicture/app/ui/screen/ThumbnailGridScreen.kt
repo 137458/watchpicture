@@ -78,14 +78,57 @@ fun ThumbnailGridScreen(
     onNavigate: (AppRoute) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+    val cachedImages = remember(packId) { ViewerViewModel.getCachedImages(packId) }
+    val displayImages = if (uiState.images.isNotEmpty()) uiState.images else (cachedImages ?: emptyList())
+    val isEffectiveLoading = uiState.isLoading && displayImages.isEmpty()
+
+    val savedBrowseState = remember(packId) { ViewerViewModel.getBrowseState(packId) }
+    val browseStates by ViewerViewModel.browseStatesFlow.collectAsStateWithLifecycle()
+    val currentBrowseState = browseStates[packId] ?: savedBrowseState
+
     val scrollBehavior = MiuixScrollBehavior()
-    val lazyGridState = rememberLazyGridState()
+    val lazyGridState = rememberLazyGridState(
+        initialFirstVisibleItemIndex = savedBrowseState.firstVisibleItemIndex,
+        initialFirstVisibleItemScrollOffset = savedBrowseState.firstVisibleItemScrollOffset
+    )
     val backdrop = rememberBlurBackdrop()
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     val sessionPassword = remember(packId) { passwordStore.get(packId) }
 
     LaunchedEffect(packId) {
         viewModel.loadImages(packId)
+    }
+
+    // Persist grid scroll position continuously so re-entering the pack or returning from viewer
+    // preserves the exact scroll offset.
+    LaunchedEffect(packId, displayImages.isNotEmpty()) {
+        if (displayImages.isEmpty()) return@LaunchedEffect
+        snapshotFlow {
+            lazyGridState.firstVisibleItemIndex to lazyGridState.firstVisibleItemScrollOffset
+        }
+            .distinctUntilChanged()
+            .collectLatest { (firstIndex, firstOffset) ->
+                ViewerViewModel.saveScrollPosition(packId, firstIndex, firstOffset)
+            }
+    }
+
+    // When returning from fullscreen viewer (or when lastViewedIndex updates), if the user flipped
+    // pages outside the currently visible grid viewport, scroll the grid to keep lastViewedIndex in view.
+    LaunchedEffect(packId, currentBrowseState.lastViewedIndex, displayImages.size) {
+        val lastViewed = currentBrowseState.lastViewedIndex
+        if (displayImages.isNotEmpty() && lastViewed in displayImages.indices) {
+            // Wait for layout pass if visibleItemsInfo is not yet populated
+            androidx.compose.runtime.withFrameNanos { }
+            val visibleIndices = lazyGridState.layoutInfo.visibleItemsInfo.map { it.index }
+            if (ViewerViewModel.shouldScrollToLastViewed(lastViewed, visibleIndices, displayImages.size)) {
+                lazyGridState.scrollToItem(lastViewed)
+                ViewerViewModel.saveScrollPosition(
+                    packId,
+                    lazyGridState.firstVisibleItemIndex,
+                    lazyGridState.firstVisibleItemScrollOffset
+                )
+            }
+        }
     }
 
     androidx.compose.runtime.DisposableEffect(packId) {
@@ -99,9 +142,9 @@ fun ThumbnailGridScreen(
         }
     }
 
-    LaunchedEffect(uiState.images, packId, sessionPassword) {
+    LaunchedEffect(displayImages, packId, sessionPassword) {
         val file = File(packId)
-        if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && uiState.images.isNotEmpty()) {
+        if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && displayImages.isNotEmpty()) {
             val app = WatchPictureApp.instance
             var isScrollPaused = false
             try {
@@ -123,13 +166,13 @@ fun ThumbnailGridScreen(
                             // Delay background sweep by 600ms to allow visible viewport thumbnails to load without CPU contention
                             kotlinx.coroutines.delay(600)
 
-                            val totalSize = uiState.images.size
+                            val totalSize = displayImages.size
                             if (totalSize > 0) {
                                 val lastIndex = lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstIndex
                                 val start = (firstIndex - 30).coerceAtLeast(0)
                                 val end = (lastIndex + 30).coerceAtMost(totalSize - 1)
                                 if (start <= end) {
-                                    val sublist = uiState.images.subList(start, end + 1)
+                                    val sublist = displayImages.subList(start, end + 1)
                                     val entryNames = sublist.map { it.entryPath }
                                     app.archiveExtractionCoordinator.startBatchThumbnailSweep(
                                         file = file,
@@ -183,13 +226,21 @@ fun ThumbnailGridScreen(
                                 )
                             }
                         }
-                        if (uiState.images.isNotEmpty()) {
+                        if (displayImages.isNotEmpty()) {
                             IconButton(
                                 onClick = {
+                                    val resumeIndex = currentBrowseState.lastViewedIndex
+                                        .takeIf { it in displayImages.indices } ?: 0
+                                    ViewerViewModel.saveScrollPosition(
+                                        packId,
+                                        lazyGridState.firstVisibleItemIndex,
+                                        lazyGridState.firstVisibleItemScrollOffset
+                                    )
+                                    ViewerViewModel.saveLastViewedIndex(packId, resumeIndex)
                                     onNavigate(
                                         AppRoute.GalleryViewer(
                                             packId = packId,
-                                            initialIndex = 0
+                                            initialIndex = resumeIndex
                                         )
                                     )
                                 }
@@ -211,7 +262,7 @@ fun ThumbnailGridScreen(
                 .blurBackdropSource(backdrop)
         ) {
             when {
-                uiState.isLoading -> {
+                isEffectiveLoading -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -233,7 +284,7 @@ fun ThumbnailGridScreen(
                     }
                 }
 
-                uiState.images.isEmpty() -> {
+                displayImages.isEmpty() -> {
                     Box(
                         modifier = Modifier
                             .fillMaxSize()
@@ -274,14 +325,21 @@ fun ThumbnailGridScreen(
                             .nestedScroll(scrollBehavior.nestedScrollConnection)
                     ) {
                         itemsIndexed(
-                            items = uiState.images,
+                            items = displayImages,
                             key = { _, img -> "${img.packId}_${img.entryPath}" }
                         ) { index, item ->
                             ThumbnailItem(
                                 image = item,
                                 sessionPassword = sessionPassword,
                                 index = index + 1,
+                                isLastViewed = index == currentBrowseState.lastViewedIndex,
                                 onClick = {
+                                    ViewerViewModel.saveScrollPosition(
+                                        packId,
+                                        lazyGridState.firstVisibleItemIndex,
+                                        lazyGridState.firstVisibleItemScrollOffset
+                                    )
+                                    ViewerViewModel.saveLastViewedIndex(packId, index)
                                     onNavigate(
                                         AppRoute.GalleryViewer(
                                             packId = packId,
@@ -303,6 +361,7 @@ private fun ThumbnailItem(
     image: PackImage,
     sessionPassword: String?,
     index: Int,
+    isLastViewed: Boolean = false,
     onClick: () -> Unit
 ) {
     val model: Any? = remember(image, sessionPassword) {
@@ -346,19 +405,22 @@ private fun ThumbnailItem(
             )
         }
 
-        // Bottom right index badge
+        // Bottom right index badge (highlighted in primary color for last viewed image)
         Box(
             modifier = Modifier
                 .padding(4.dp)
                 .align(Alignment.BottomEnd)
-                .background(Color(0xB3000000), shape = SquircleShape(4.dp))
+                .background(
+                    color = if (isLastViewed) MiuixTheme.colorScheme.primary else Color(0xB3000000),
+                    shape = SquircleShape(4.dp)
+                )
                 .padding(horizontal = 5.dp, vertical = 2.dp)
         ) {
             Text(
                 text = "$index",
                 fontSize = 10.sp,
-                fontWeight = FontWeight.Medium,
-                color = Color.White
+                fontWeight = if (isLastViewed) FontWeight.Bold else FontWeight.Medium,
+                color = if (isLastViewed) MiuixTheme.colorScheme.onPrimary else Color.White
             )
         }
     }

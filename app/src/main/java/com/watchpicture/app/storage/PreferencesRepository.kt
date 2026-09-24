@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -37,6 +38,11 @@ class PreferencesRepository(private val context: Context) {
         private val KEY_IGNORED_VERSION = stringPreferencesKey("ignored_version")
         private val KEY_STANDALONE_ARCHIVES = stringSetPreferencesKey("standalone_archives")
         private val KEY_THEME_MODE_INDEX = intPreferencesKey("theme_mode_index")
+        private val KEY_DARK_MODE = intPreferencesKey("dark_mode")
+        private val KEY_COLOR_MODE = intPreferencesKey("color_mode")
+        private val KEY_SEED_COLOR = longPreferencesKey("seed_color")
+        private val KEY_PALETTE_STYLE_INDEX = intPreferencesKey("palette_style_index")
+        private val KEY_USE_SPEC_2025 = booleanPreferencesKey("use_spec_2025")
         private val KEY_AMOLED_DARK = booleanPreferencesKey("amoled_dark")
         private val KEY_WIDE_SCREEN_RAIL = booleanPreferencesKey("wide_screen_rail")
     }
@@ -87,6 +93,51 @@ class PreferencesRepository(private val context: Context) {
             preferences[KEY_THEME_MODE_INDEX] ?: 3
         }
 
+    /**
+     * 外观深浅模式: 0=跟随系统, 1=浅色, 2=深色。
+     * 若未显式保存，则从旧版 theme_mode_index 平滑派生。
+     */
+    val darkModeFlow: Flow<Int> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_DARK_MODE] ?: when (preferences[KEY_THEME_MODE_INDEX]) {
+                1, 4 -> 1
+                2, 5 -> 2
+                else -> 0
+            }
+        }
+
+    /**
+     * 色彩模式: 0=动态色彩(壁纸莫奈取色), 1=默认固定色板, 2=预置/自定义种子色。
+     * 若未显式保存，则从旧版 theme_mode_index 平滑派生。
+     */
+    val colorModeFlow: Flow<Int> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_COLOR_MODE] ?: when (preferences[KEY_THEME_MODE_INDEX]) {
+                0, 1, 2 -> 1
+                else -> 0
+            }
+        }
+
+    val seedColorFlow: Flow<Long> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_SEED_COLOR] ?: 0xFF2196F3L
+        }
+
+    val paletteStyleIndexFlow: Flow<Int> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_PALETTE_STYLE_INDEX] ?: 0
+        }
+
+    val useSpec2025Flow: Flow<Boolean> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_USE_SPEC_2025] ?: false
+        }
+
     val amoledDarkFlow: Flow<Boolean> = context.settingsDataStore.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { preferences ->
@@ -132,6 +183,36 @@ class PreferencesRepository(private val context: Context) {
     suspend fun saveThemeModeIndex(index: Int) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_THEME_MODE_INDEX] = index
+        }
+    }
+
+    suspend fun saveDarkMode(mode: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_DARK_MODE] = mode.coerceIn(0, 2)
+        }
+    }
+
+    suspend fun saveColorMode(mode: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_COLOR_MODE] = mode.coerceIn(0, 2)
+        }
+    }
+
+    suspend fun saveSeedColor(color: Long) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_SEED_COLOR] = color
+        }
+    }
+
+    suspend fun savePaletteStyleIndex(index: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_PALETTE_STYLE_INDEX] = index.coerceAtLeast(0)
+        }
+    }
+
+    suspend fun saveUseSpec2025(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_USE_SPEC_2025] = enabled
         }
     }
 
