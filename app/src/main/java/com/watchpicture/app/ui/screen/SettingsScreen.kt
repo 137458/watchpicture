@@ -29,6 +29,9 @@ import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.SortOption
 import com.watchpicture.app.storage.ReadingMode
+import com.watchpicture.app.ui.component.BlurredBar
+import com.watchpicture.app.ui.component.blurBackdropSource
+import com.watchpicture.app.ui.component.rememberBlurBackdrop
 import com.watchpicture.app.update.UpdateManager
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Card
@@ -40,6 +43,7 @@ import top.yukonga.miuix.kmp.basic.TopAppBar
 import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
+import top.yukonga.miuix.kmp.preference.WindowDropdownPreference
 import top.yukonga.miuix.kmp.window.WindowDialog
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -72,168 +76,229 @@ fun SettingsScreen(
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     val scrollBehavior = MiuixScrollBehavior()
+    val backdrop = rememberBlurBackdrop()
+    val colorScheme = MiuixTheme.colorScheme
     val prefsRepo = WatchPictureApp.instance.preferencesRepository
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     val passwordBookRepo = WatchPictureApp.instance.passwordBookRepository
     val updateManager = remember { UpdateManager(context) }
 
+    val themeModeIndex by prefsRepo.themeModeIndexFlow.collectAsStateWithLifecycle(initialValue = 3)
+    val amoledDark by prefsRepo.amoledDarkFlow.collectAsStateWithLifecycle(initialValue = false)
+    val wideScreenRail by prefsRepo.wideScreenRailFlow.collectAsStateWithLifecycle(initialValue = true)
     val readingMode by prefsRepo.readingModeFlow.collectAsStateWithLifecycle(initialValue = ReadingMode.LTR)
     val sortOption by prefsRepo.sortOptionFlow.collectAsStateWithLifecycle(initialValue = SortOption.NAME_ASC)
     val savedPasswords by passwordBookRepo.passwordsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val autoSavePassword by passwordBookRepo.autoSavePasswordFlow.collectAsStateWithLifecycle(initialValue = true)
 
-    var showReadingModeDialog by remember { mutableStateOf(false) }
     var showPasswordBookDialog by remember { mutableStateOf(false) }
     var newPasswordInput by remember { mutableStateOf("") }
     var showPlainSavedPasswords by remember { mutableStateOf(false) }
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = stringResource(R.string.settings_title),
-                scrollBehavior = scrollBehavior,
-            )
-        }
-    ) { innerPadding ->
-        LazyColumn(
-            modifier = Modifier
-                .fillMaxSize()
-                .nestedScroll(scrollBehavior.nestedScrollConnection),
-            contentPadding = PaddingValues(
-                top = innerPadding.calculateTopPadding() + 8.dp,
-                bottom = innerPadding.calculateBottomPadding() + contentPadding.calculateBottomPadding() + 24.dp,
-                start = 12.dp,
-                end = 12.dp,
-            ),
-        ) {
-            item {
-                SmallTitle(text = stringResource(R.string.settings_section_general))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.settings_reading_mode_title),
-                        summary = if (readingMode == ReadingMode.LTR) {
-                            stringResource(R.string.settings_reading_mode_ltr)
-                        } else {
-                            stringResource(R.string.settings_reading_mode_rtl)
-                        },
-                        onClick = { showReadingModeDialog = true },
-                    )
-
-                    ArrowPreference(
-                        title = stringResource(R.string.settings_default_sort_title),
-                        summary = when (sortOption) {
-                            SortOption.NAME_ASC -> "按名称升序 (A → Z)"
-                            SortOption.NAME_DESC -> "按名称降序 (Z → A)"
-                            SortOption.TIME_DESC -> "按修改时间 (最新优先)"
-                            SortOption.TIME_ASC -> "按修改时间 (最早优先)"
-                            SortOption.SIZE_DESC -> "按体积降序 (大 → 小)"
-                            SortOption.COUNT_DESC -> "按图片数量 (多 → 少)"
-                        },
-                        onClick = {
-                            val next = when (sortOption) {
-                                SortOption.NAME_ASC -> SortOption.NAME_DESC
-                                SortOption.NAME_DESC -> SortOption.TIME_DESC
-                                SortOption.TIME_DESC -> SortOption.TIME_ASC
-                                SortOption.TIME_ASC -> SortOption.SIZE_DESC
-                                SortOption.SIZE_DESC -> SortOption.COUNT_DESC
-                                SortOption.COUNT_DESC -> SortOption.NAME_ASC
-                            }
-                            coroutineScope.launch {
-                                prefsRepo.saveSortOption(next)
-                            }
-                        }
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            item {
-                SmallTitle(text = stringResource(R.string.settings_section_security))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    ArrowPreference(
-                        title = "密码本管理",
-                        summary = if (savedPasswords.isEmpty()) "暂无保存的常用密码" else "已保存 ${savedPasswords.size} 个常用密码",
-                        onClick = { showPasswordBookDialog = true },
-                    )
-
-                    SwitchPreference(
-                        title = "自动记忆密码",
-                        summary = "解密成功后自动将密码记入密码本",
-                        checked = autoSavePassword,
-                        onCheckedChange = { enabled ->
-                            coroutineScope.launch {
-                                passwordBookRepo.setAutoSavePassword(enabled)
-                            }
-                        }
-                    )
-
-                    ArrowPreference(
-                        title = stringResource(R.string.settings_clear_passwords_title),
-                        summary = stringResource(R.string.settings_clear_passwords_summary),
-                        onClick = {
-                            passwordStore.clear()
-                            Toast.makeText(context, context.getString(R.string.settings_clear_passwords_done), Toast.LENGTH_SHORT).show()
-                        },
-                    )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-
-            item {
-                SmallTitle(text = stringResource(R.string.settings_section_about))
-                Card(modifier = Modifier.fillMaxWidth()) {
-                    ArrowPreference(
-                        title = stringResource(R.string.settings_check_update_entry),
-                        summary = stringResource(R.string.settings_check_update_entry_summary),
-                        onClick = onNavigateToUpdate,
-                    )
-
-                    BasicComponent(
-                        title = stringResource(R.string.settings_version_title),
-                        summary = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
-                    )
-
-                    ArrowPreference(
-                        title = stringResource(R.string.settings_github_repo),
-                        summary = UpdateManager.REPO_URL,
-                        onClick = {
-                            updateManager.openInBrowser(context, UpdateManager.REPO_URL)
-                        },
-                    )
-                }
-            }
-        }
+    val themeOptions = remember {
+        listOf(
+            "跟随系统",
+            "浅色模式",
+            "深色模式",
+            "莫奈动态跟随系统",
+            "莫奈浅色",
+            "莫奈深色",
+        )
     }
 
-    if (showReadingModeDialog) {
-        WindowDialog(
-            show = showReadingModeDialog,
-            title = stringResource(R.string.settings_reading_mode_title),
-            onDismissRequest = { showReadingModeDialog = false },
+    val readingModes = remember { listOf(ReadingMode.LTR, ReadingMode.RTL) }
+    val readingModeOptions = listOf(
+        stringResource(R.string.settings_reading_mode_ltr),
+        stringResource(R.string.settings_reading_mode_rtl),
+    )
+    val currentReadingModeIndex = remember(readingMode, readingModes) {
+        readingModes.indexOf(readingMode).coerceAtLeast(0)
+    }
+
+    val sortOptions = remember {
+        listOf(
+            SortOption.NAME_ASC,
+            SortOption.NAME_DESC,
+            SortOption.TIME_DESC,
+            SortOption.TIME_ASC,
+            SortOption.SIZE_DESC,
+            SortOption.COUNT_DESC,
+        )
+    }
+    val sortOptionLabels = remember {
+        listOf(
+            "按名称升序 (A → Z)",
+            "按名称降序 (Z → A)",
+            "按修改时间 (最新优先)",
+            "按修改时间 (最早优先)",
+            "按体积降序 (大 → 小)",
+            "按图片数量 (多 → 少)",
+        )
+    }
+    val currentSortOptionIndex = remember(sortOption, sortOptions) {
+        sortOptions.indexOf(sortOption).coerceAtLeast(0)
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        topBar = {
+            BlurredBar(
+                backdrop = backdrop,
+                scrollBehavior = scrollBehavior,
+            ) {
+                TopAppBar(
+                    title = stringResource(R.string.settings_title),
+                    scrollBehavior = scrollBehavior,
+                    color = if (backdrop != null) Color.Transparent else colorScheme.surface,
+                )
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .background(colorScheme.surface)
+                .blurBackdropSource(backdrop),
         ) {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                BasicComponent(
-                    title = stringResource(R.string.settings_reading_mode_ltr),
-                    summary = "默认从左向右翻页",
-                    onClick = {
-                        coroutineScope.launch {
-                            prefsRepo.saveReadingMode(ReadingMode.LTR)
-                            showReadingModeDialog = false
-                        }
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .nestedScroll(scrollBehavior.nestedScrollConnection),
+                contentPadding = PaddingValues(
+                    top = innerPadding.calculateTopPadding() + 8.dp,
+                    bottom = innerPadding.calculateBottomPadding() + contentPadding.calculateBottomPadding() + 24.dp,
+                    start = 12.dp,
+                    end = 12.dp,
+                ),
+            ) {
+                item {
+                    SmallTitle(text = "外观与显示")
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        WindowDropdownPreference(
+                            title = "主题色彩模式",
+                            summary = "选择应用配色方案与莫奈动态取色策略",
+                            items = themeOptions,
+                            selectedIndex = themeModeIndex.coerceIn(0, themeOptions.lastIndex),
+                            onSelectedIndexChange = { index ->
+                                coroutineScope.launch {
+                                    prefsRepo.saveThemeModeIndex(index)
+                                }
+                            },
+                        )
+
+                        SwitchPreference(
+                            title = "AMOLED 纯黑深色模式",
+                            summary = "深色模式下将背景与卡片表面压至纯黑",
+                            checked = amoledDark,
+                            onCheckedChange = { enabled ->
+                                coroutineScope.launch {
+                                    prefsRepo.saveAmoledDark(enabled)
+                                }
+                            },
+                        )
+
+                        SwitchPreference(
+                            title = "宽屏侧边导航栏",
+                            summary = "宽屏或平板设备上使用左侧导航栏替代悬浮底栏",
+                            checked = wideScreenRail,
+                            onCheckedChange = { enabled ->
+                                coroutineScope.launch {
+                                    prefsRepo.saveWideScreenRail(enabled)
+                                }
+                            },
+                        )
                     }
-                )
-                BasicComponent(
-                    title = stringResource(R.string.settings_reading_mode_rtl),
-                    summary = "日本漫画右起左翻翻页",
-                    onClick = {
-                        coroutineScope.launch {
-                            prefsRepo.saveReadingMode(ReadingMode.RTL)
-                            showReadingModeDialog = false
-                        }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                item {
+                    SmallTitle(text = stringResource(R.string.settings_section_general))
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        WindowDropdownPreference(
+                            title = stringResource(R.string.settings_reading_mode_title),
+                            items = readingModeOptions,
+                            selectedIndex = currentReadingModeIndex,
+                            onSelectedIndexChange = { index ->
+                                val selected = readingModes.getOrElse(index) { ReadingMode.LTR }
+                                coroutineScope.launch {
+                                    prefsRepo.saveReadingMode(selected)
+                                }
+                            },
+                        )
+
+                        WindowDropdownPreference(
+                            title = stringResource(R.string.settings_default_sort_title),
+                            items = sortOptionLabels,
+                            selectedIndex = currentSortOptionIndex,
+                            onSelectedIndexChange = { index ->
+                                val selected = sortOptions.getOrElse(index) { SortOption.NAME_ASC }
+                                coroutineScope.launch {
+                                    prefsRepo.saveSortOption(selected)
+                                }
+                            },
+                        )
                     }
-                )
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                item {
+                    SmallTitle(text = stringResource(R.string.settings_section_security))
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        ArrowPreference(
+                            title = "密码本管理",
+                            summary = if (savedPasswords.isEmpty()) "暂无保存的常用密码" else "已保存 ${savedPasswords.size} 个常用密码",
+                            onClick = { showPasswordBookDialog = true },
+                        )
+
+                        SwitchPreference(
+                            title = "自动记忆密码",
+                            summary = "解密成功后自动将密码记入密码本",
+                            checked = autoSavePassword,
+                            onCheckedChange = { enabled ->
+                                coroutineScope.launch {
+                                    passwordBookRepo.setAutoSavePassword(enabled)
+                                }
+                            }
+                        )
+
+                        ArrowPreference(
+                            title = stringResource(R.string.settings_clear_passwords_title),
+                            summary = stringResource(R.string.settings_clear_passwords_summary),
+                            onClick = {
+                                passwordStore.clear()
+                                Toast.makeText(context, context.getString(R.string.settings_clear_passwords_done), Toast.LENGTH_SHORT).show()
+                            },
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                item {
+                    SmallTitle(text = stringResource(R.string.settings_section_about))
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        ArrowPreference(
+                            title = stringResource(R.string.settings_check_update_entry),
+                            summary = stringResource(R.string.settings_check_update_entry_summary),
+                            onClick = onNavigateToUpdate,
+                        )
+
+                        BasicComponent(
+                            title = stringResource(R.string.settings_version_title),
+                            summary = "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})",
+                        )
+
+                        ArrowPreference(
+                            title = stringResource(R.string.settings_github_repo),
+                            summary = UpdateManager.REPO_URL,
+                            onClick = {
+                                updateManager.openInBrowser(context, UpdateManager.REPO_URL)
+                            },
+                        )
+                    }
+                }
             }
         }
     }

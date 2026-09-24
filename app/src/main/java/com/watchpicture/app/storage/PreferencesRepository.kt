@@ -3,9 +3,12 @@ package com.watchpicture.app.storage
 import android.content.Context
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.emptyPreferences
+import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.datastore.preferences.core.stringSetPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.watchpicture.app.model.SortOption
 import kotlinx.coroutines.flow.Flow
@@ -30,9 +33,12 @@ class PreferencesRepository(private val context: Context) {
         private val KEY_LAST_ROOT_URI = stringPreferencesKey("last_root_uri")
         private val KEY_SORT_OPTION = stringPreferencesKey("sort_option")
         private val KEY_READING_MODE = stringPreferencesKey("reading_mode")
-        private val KEY_AUTO_CHECK_UPDATE = androidx.datastore.preferences.core.booleanPreferencesKey("auto_check_update")
+        private val KEY_AUTO_CHECK_UPDATE = booleanPreferencesKey("auto_check_update")
         private val KEY_IGNORED_VERSION = stringPreferencesKey("ignored_version")
-        private val KEY_STANDALONE_ARCHIVES = androidx.datastore.preferences.core.stringSetPreferencesKey("standalone_archives")
+        private val KEY_STANDALONE_ARCHIVES = stringSetPreferencesKey("standalone_archives")
+        private val KEY_THEME_MODE_INDEX = intPreferencesKey("theme_mode_index")
+        private val KEY_AMOLED_DARK = booleanPreferencesKey("amoled_dark")
+        private val KEY_WIDE_SCREEN_RAIL = booleanPreferencesKey("wide_screen_rail")
     }
 
     val lastRootUriFlow: Flow<String?> = context.settingsDataStore.data
@@ -75,6 +81,24 @@ class PreferencesRepository(private val context: Context) {
             preferences[KEY_IGNORED_VERSION]
         }
 
+    val themeModeIndexFlow: Flow<Int> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_THEME_MODE_INDEX] ?: 3
+        }
+
+    val amoledDarkFlow: Flow<Boolean> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_AMOLED_DARK] ?: false
+        }
+
+    val wideScreenRailFlow: Flow<Boolean> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_WIDE_SCREEN_RAIL] ?: true
+        }
+
     suspend fun saveLastRootUri(uriString: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_LAST_ROOT_URI] = uriString
@@ -102,6 +126,24 @@ class PreferencesRepository(private val context: Context) {
     suspend fun saveIgnoredVersion(version: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_IGNORED_VERSION] = version
+        }
+    }
+
+    suspend fun saveThemeModeIndex(index: Int) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_THEME_MODE_INDEX] = index
+        }
+    }
+
+    suspend fun saveAmoledDark(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AMOLED_DARK] = enabled
+        }
+    }
+
+    suspend fun saveWideScreenRail(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_WIDE_SCREEN_RAIL] = enabled
         }
     }
 

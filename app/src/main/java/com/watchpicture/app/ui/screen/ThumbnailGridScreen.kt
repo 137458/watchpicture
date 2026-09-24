@@ -17,7 +17,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.rememberLazyGridState
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.watchpicture.app.ui.component.SquircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Image
@@ -51,6 +51,9 @@ import com.watchpicture.app.archive.ZipArchiveManager
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.navigation.AppRoute
+import com.watchpicture.app.ui.component.BlurredBar
+import com.watchpicture.app.ui.component.blurBackdropSource
+import com.watchpicture.app.ui.component.rememberBlurBackdrop
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -77,6 +80,7 @@ fun ThumbnailGridScreen(
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val scrollBehavior = MiuixScrollBehavior()
     val lazyGridState = rememberLazyGridState()
+    val backdrop = rememberBlurBackdrop()
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     val sessionPassword = remember(packId) { passwordStore.get(packId) }
 
@@ -149,61 +153,69 @@ fun ThumbnailGridScreen(
 
     Scaffold(
         topBar = {
-            TopAppBar(
-                title = title,
+            BlurredBar(
+                backdrop = backdrop,
                 scrollBehavior = scrollBehavior,
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "返回"
-                        )
-                    }
-                },
-                actions = {
-                    if (sessionPassword != null) {
-                        IconButton(
-                            onClick = {
-                                viewModel.lockPack(packId)
-                                onBack()
-                            }
-                        ) {
+            ) {
+                TopAppBar(
+                    title = title,
+                    scrollBehavior = scrollBehavior,
+                    color = if (backdrop != null) Color.Transparent else MiuixTheme.colorScheme.surface,
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
                             Icon(
-                                imageVector = Icons.Default.Lock,
-                                contentDescription = "锁定图包"
+                                imageVector = Icons.AutoMirrored.Filled.ArrowBack,
+                                contentDescription = "返回"
                             )
                         }
-                    }
-                    if (uiState.images.isNotEmpty()) {
-                        IconButton(
-                            onClick = {
-                                onNavigate(
-                                    AppRoute.GalleryViewer(
-                                        packId = packId,
-                                        initialIndex = 0
-                                    )
+                    },
+                    actions = {
+                        if (sessionPassword != null) {
+                            IconButton(
+                                onClick = {
+                                    viewModel.lockPack(packId)
+                                    onBack()
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = "锁定图包"
                                 )
                             }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = "开始浏览"
-                            )
+                        }
+                        if (uiState.images.isNotEmpty()) {
+                            IconButton(
+                                onClick = {
+                                    onNavigate(
+                                        AppRoute.GalleryViewer(
+                                            packId = packId,
+                                            initialIndex = 0
+                                        )
+                                    )
+                                }
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.PlayArrow,
+                                    contentDescription = "开始浏览"
+                                )
+                            }
                         }
                     }
-                }
-            )
+                )
+            }
         }
     ) { innerPadding ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(innerPadding)
+                .blurBackdropSource(backdrop)
         ) {
             when {
                 uiState.isLoading -> {
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -223,7 +235,9 @@ fun ThumbnailGridScreen(
 
                 uiState.images.isEmpty() -> {
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(innerPadding),
                         contentAlignment = Alignment.Center
                     ) {
                         Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -247,7 +261,12 @@ fun ThumbnailGridScreen(
                     LazyVerticalGrid(
                         state = lazyGridState,
                         columns = GridCells.Adaptive(minSize = 110.dp),
-                        contentPadding = PaddingValues(6.dp),
+                        contentPadding = PaddingValues(
+                            start = 6.dp,
+                            top = innerPadding.calculateTopPadding() + 6.dp,
+                            end = 6.dp,
+                            bottom = innerPadding.calculateBottomPadding() + 16.dp
+                        ),
                         horizontalArrangement = Arrangement.spacedBy(6.dp),
                         verticalArrangement = Arrangement.spacedBy(6.dp),
                         modifier = Modifier
@@ -314,7 +333,7 @@ private fun ThumbnailItem(
     Box(
         modifier = Modifier
             .aspectRatio(1f)
-            .clip(RoundedCornerShape(8.dp))
+            .clip(SquircleShape(8.dp))
             .background(MiuixTheme.colorScheme.surfaceContainerHigh)
             .clickable(onClick = onClick)
     ) {
@@ -332,7 +351,7 @@ private fun ThumbnailItem(
             modifier = Modifier
                 .padding(4.dp)
                 .align(Alignment.BottomEnd)
-                .background(Color(0xB3000000), shape = RoundedCornerShape(4.dp))
+                .background(Color(0xB3000000), shape = SquircleShape(4.dp))
                 .padding(horizontal = 5.dp, vertical = 2.dp)
         ) {
             Text(

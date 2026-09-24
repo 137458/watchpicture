@@ -2,6 +2,17 @@
 
 ## [未发布]
 
+### 新增
+- 重构大图查看器（`GalleryViewerScreen`）为 Miuix 液态毛玻璃双层悬浮胶囊架构：引入实时背景模糊采样（`viewerBackdrop` + `ViewerGlassSurface`）、上下滑入/滑出物理过渡动效、悬浮双行信息顶栏、支持日漫 RTL 自动镜像与触觉刻度反馈的进度胶囊（`ChapterNavigator`）以及拖拽实时页码预览气泡；底部多功能工具栏（`BottomReaderBar`）新增屏幕旋转锁定（跟随系统/竖屏/横屏）、定时自动翻页幻灯片、3 列网格缩略图速览跳页抽屉（`WindowBottomSheet`）与图片元数据详情弹窗。
+- 升级软件更新页（`UpdateScreen`）为 HyperOS 3.0 动态流光极光架构：引入 AGSL `BgEffectBackground` 极光流体背景着色器随滚动视差平滑淡出，支持横竖屏自适应 Hero 布局、Markdown 发行日志卡片与 GitHub Releases 历史版本直达入口。
+- 新增 6 态主题色彩控制器（`WatchPictureTheme`）：支持跟随系统、浅色、深色、莫奈动态跟随系统、莫奈浅色、莫奈深色切换，并支持深色模式下的 AMOLED 纯黑背景叠加覆盖。
+- 新增平板与横屏宽屏（`>= 600dp`）自适应侧边导航栏（`NavigationRail`），并支持在设置中自由开启或关闭。
+
+### 优化
+- 全面推广 `BlurredBar` 顶栏渐进式纹理模糊至图包列表页（`PackListScreen`）、缩略图网格页（`ThumbnailGridScreen`）与设置页（`SettingsScreen`），并在图包列表页接入 Miuix `PullToRefresh` 阻尼下拉刷新。
+- 重构设置页「画廊翻页方向」与「默认排序方式」为 Miuix 原生 `WindowDropdownPreference` 下拉选择菜单，消除盲点循环切换；将图包列表排序弹窗升级为 `Card` + `RadioButtonPreference` 单选体系。
+- 为缩略图网格页与软件更新页路由启用 `NavSwipeDirection.LeftToRight` 左边缘滑动预测返回手势，并将卡片封面、缩略图、角标与弹窗统一升级为连续曲率超椭圆 `SquircleShape`。
+
 ### 修复
 - 修复了 `ArchiveExtractionCoordinator.extractThumbnailDirectResult` 校验 `SevenZSessionManager` 返回结果时错误要求目标磁盘文件必须存在，导致 Coil 内存直出模式下（`keepBitmapInMemory = true`）生成的内存 `Bitmap` 被全部丢弃、强行跌入兜底路径逐张从头重新解压整块 7z 固实包（Solid Block）造成多分钟卡死甚至 OOM 的根本缺陷；重构为优先采信未回收的有效内存 Bitmap 结果。
 - 修复了从缩略图网格点击图片跳转至大图画廊时，`ThumbnailGridScreen.onDispose` 立即无差别调用 `purgeCache()` 释放 Native 固实块缓存，导致大图查看器载入首张原图时缓存已被清空、不得不从第 0 字节全量重新解压固实块的问题；重构为 30 秒延迟析构（`scheduleCachePurge`），并在大图与缩略图请求发起时主动取消待执行清理（`cancelCachePurge`）。

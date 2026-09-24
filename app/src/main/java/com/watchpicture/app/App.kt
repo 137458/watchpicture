@@ -3,32 +3,36 @@ package com.watchpicture.app
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.screen.GalleryViewerScreen
 import com.watchpicture.app.ui.screen.MainScreen
-import com.watchpicture.app.ui.screen.PackListScreen
 import com.watchpicture.app.ui.screen.ThumbnailGridScreen
 import com.watchpicture.app.ui.screen.UpdateScreen
-import com.watchpicture.app.ui.viewmodel.PackViewModel
+import com.watchpicture.app.ui.theme.WatchPictureTheme
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.nav.core.NavDisplay
 import top.yukonga.miuix.kmp.nav.core.rememberNavBackStack
+import top.yukonga.miuix.kmp.nav.transition.NavSwipeDirection
 import top.yukonga.miuix.kmp.nav.transition.NavTransitions
-import top.yukonga.miuix.kmp.theme.ColorSchemeMode
-import top.yukonga.miuix.kmp.theme.MiuixTheme
-import top.yukonga.miuix.kmp.theme.ThemeController
 
 /**
- * Root Composable assembling MiuixTheme and NavDisplay route transitions.
+ * Root Composable assembling WatchPictureTheme and NavDisplay route transitions.
  */
 @Composable
 fun App() {
-    val themeController = remember { ThemeController(ColorSchemeMode.System) }
+    val prefsRepo = WatchPictureApp.instance.preferencesRepository
+    val themeModeIndex by prefsRepo.themeModeIndexFlow.collectAsStateWithLifecycle(initialValue = 3)
+    val amoledDark by prefsRepo.amoledDarkFlow.collectAsStateWithLifecycle(initialValue = false)
 
-    MiuixTheme(controller = themeController) {
+    WatchPictureTheme(
+        themeModeIndex = themeModeIndex,
+        amoledDark = amoledDark,
+    ) {
         val backStack = rememberNavBackStack<AppRoute>(AppRoute.Main)
 
         // miuix-nav requires every entry on the stack to have a unique contentKey. Re-opening the
@@ -61,22 +65,17 @@ fun App() {
                 )
             }
 
-            entry<AppRoute.PackList> {
-                val packViewModel: PackViewModel = viewModel()
-                PackListScreen(
-                    viewModel = packViewModel,
-                    onNavigate = navigate
-                )
-            }
-
-            entry<AppRoute.Update> {
+            entry<AppRoute.Update>(
+                swipeDismiss = NavSwipeDirection.LeftToRight,
+            ) {
                 UpdateScreen(
                     onBack = { backStack.removeLastOrNull() }
                 )
             }
 
             entry<AppRoute.ThumbnailGrid>(
-                contentKey = { route -> "grid#${route.packId}#${contentSeq.getAndIncrement()}" }
+                contentKey = { route -> "grid#${route.packId}#${contentSeq.getAndIncrement()}" },
+                swipeDismiss = NavSwipeDirection.LeftToRight,
             ) { route ->
                 val viewerViewModel: ViewerViewModel = viewModel()
                 ThumbnailGridScreen(

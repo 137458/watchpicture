@@ -17,7 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
+import com.watchpicture.app.ui.component.SquircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
@@ -76,7 +76,7 @@ fun PackCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .aspectRatio(0.85f)
-                    .clip(RoundedCornerShape(12.dp))
+                    .clip(SquircleShape(12.dp))
                     .background(MiuixTheme.colorScheme.surfaceContainerHigh)
             ) {
                 if (isLocked) {
@@ -182,7 +182,7 @@ fun PackCard(
                         .align(Alignment.TopEnd)
                         .background(
                             color = Color(0xCC000000),
-                            shape = RoundedCornerShape(6.dp)
+                            shape = SquircleShape(6.dp)
                         )
                         .padding(horizontal = 6.dp, vertical = 3.dp)
                 ) {

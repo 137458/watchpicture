@@ -13,9 +13,6 @@ sealed interface AppRoute : NavKey {
     data object Main : AppRoute
 
     @Serializable
-    data object PackList : AppRoute
-
-    @Serializable
     data object Update : AppRoute
 
     @Serializable

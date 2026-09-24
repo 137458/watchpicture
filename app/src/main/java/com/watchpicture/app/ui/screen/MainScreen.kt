@@ -3,8 +3,10 @@ package com.watchpicture.app.ui.screen
 import android.os.Build
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.asPaddingValues
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBars
@@ -23,6 +25,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -40,6 +43,8 @@ import com.watchpicture.app.update.UpdateManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.NavigationItem
+import top.yukonga.miuix.kmp.basic.NavigationRail
+import top.yukonga.miuix.kmp.basic.NavigationRailItem
 import top.yukonga.miuix.kmp.basic.Scaffold
 import top.yukonga.miuix.kmp.blur.isRuntimeShaderSupported
 import top.yukonga.miuix.kmp.blur.layerBackdrop
@@ -47,7 +52,7 @@ import top.yukonga.miuix.kmp.blur.rememberLayerBackdrop
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 
 /**
- * 主页面框架：承载 HorizontalPager（图包 / 设置）与 Miuix 液态玻璃悬浮底栏。
+ * 主页面框架：承载 HorizontalPager（图包 / 设置）、宽屏侧边导航栏与 Miuix 液态玻璃悬浮底栏。
  */
 @Composable
 fun MainScreen(
@@ -61,6 +66,10 @@ fun MainScreen(
 
     val autoCheckUpdate by prefsRepo.autoCheckUpdateFlow.collectAsStateWithLifecycle(initialValue = true)
     val ignoredVersion by prefsRepo.ignoredVersionFlow.collectAsStateWithLifecycle(initialValue = null)
+    val wideScreenRail by prefsRepo.wideScreenRailFlow.collectAsStateWithLifecycle(initialValue = true)
+
+    val configuration = LocalConfiguration.current
+    val useNavigationRail = configuration.screenWidthDp >= 600 && wideScreenRail
 
     var availableUpdate by remember { mutableStateOf<UpdateCheckResult?>(null) }
     var showUpdateDialog by remember { mutableStateOf(false) }
@@ -112,63 +121,91 @@ fun MainScreen(
         }
     } else null
 
-    val bottomInset = 76.dp + navBarBottomPadding
+    val bottomInset = if (useNavigationRail) navBarBottomPadding else 76.dp + navBarBottomPadding
     val tabContentPadding = PaddingValues(bottom = bottomInset)
 
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
     ) { innerPadding ->
-        Box(
+        Row(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)
         ) {
-            // 页面内容采样层
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .then(
-                        if (floatingBackdrop != null) Modifier.layerBackdrop(floatingBackdrop) else Modifier
-                    )
-            ) { page ->
-                when (page) {
-                    0 -> PackListScreen(
-                        viewModel = packViewModel,
-                        onNavigate = onNavigate,
-                        contentPadding = tabContentPadding,
-                    )
-                    1 -> SettingsScreen(
-                        contentPadding = tabContentPadding,
-                        onNavigateToUpdate = { onNavigate(AppRoute.Update) },
-                    )
+            if (useNavigationRail) {
+                NavigationRail(
+                    modifier = Modifier.fillMaxHeight(),
+                    defaultWindowInsetsPadding = true,
+                ) {
+                    navigationItems.forEachIndexed { index, item ->
+                        NavigationRailItem(
+                            selected = pagerState.currentPage == index,
+                            onClick = {
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            },
+                            icon = item.icon,
+                            label = item.label,
+                        )
+                    }
                 }
             }
 
-            // 液态玻璃悬浮底栏
             Box(
                 modifier = Modifier
-                    .fillMaxWidth()
-                    .align(Alignment.BottomCenter)
-                    .padding(bottom = 12.dp + navBarBottomPadding)
-                    .padding(horizontal = 24.dp),
-                contentAlignment = Alignment.BottomCenter,
+                    .weight(1f)
+                    .fillMaxHeight()
             ) {
-                FloatingBottomBar(
-                    items = navigationItems,
-                    selectedIndex = { pagerState.currentPage },
-                    onSelected = { index ->
-                        coroutineScope.launch {
-                            pagerState.animateScrollToPage(index)
-                        }
-                    },
-                    backdrop = floatingBackdrop,
-                    mode = when {
-                        !shaderCapable -> FloatingBottomBarMode.Blur
-                        isThrottled -> FloatingBottomBarMode.Blur
-                        else -> FloatingBottomBarMode.LiquidGlass
-                    },
-                )
+                // 页面内容采样层
+                HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .then(
+                            if (floatingBackdrop != null) Modifier.layerBackdrop(floatingBackdrop) else Modifier
+                        )
+                ) { page ->
+                    when (page) {
+                        0 -> PackListScreen(
+                            viewModel = packViewModel,
+                            onNavigate = onNavigate,
+                            contentPadding = tabContentPadding,
+                        )
+                        1 -> SettingsScreen(
+                            contentPadding = tabContentPadding,
+                            onNavigateToUpdate = { onNavigate(AppRoute.Update) },
+                        )
+                    }
+                }
+
+                // 液态玻璃悬浮底栏
+                if (!useNavigationRail) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 12.dp + navBarBottomPadding)
+                            .padding(horizontal = 24.dp),
+                        contentAlignment = Alignment.BottomCenter,
+                    ) {
+                        FloatingBottomBar(
+                            items = navigationItems,
+                            selectedIndex = { pagerState.currentPage },
+                            onSelected = { index ->
+                                coroutineScope.launch {
+                                    pagerState.animateScrollToPage(index)
+                                }
+                            },
+                            backdrop = floatingBackdrop,
+                            mode = when {
+                                !shaderCapable -> FloatingBottomBarMode.Blur
+                                isThrottled -> FloatingBottomBarMode.Blur
+                                else -> FloatingBottomBarMode.LiquidGlass
+                            },
+                        )
+                    }
+                }
             }
         }
     }

@@ -1,5 +1,6 @@
 package com.watchpicture.app.ui.screen
 
+import android.content.res.Configuration
 import android.widget.Toast
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -14,9 +15,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.runtime.Composable
@@ -31,11 +33,13 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
@@ -53,11 +57,13 @@ import com.watchpicture.app.ui.component.MarkdownText
 import com.watchpicture.app.ui.component.UpdateDialog
 import com.watchpicture.app.ui.component.blurBackdropSource
 import com.watchpicture.app.ui.component.formatFileSize
-import com.watchpicture.app.ui.component.formatSpeed
 import com.watchpicture.app.ui.component.rememberBlurBackdrop
+import com.watchpicture.app.ui.effect.BgEffectBackground
+import com.watchpicture.app.ui.effect.isRuntimeShaderSupported
 import com.watchpicture.app.update.UpdateCheckResult
 import com.watchpicture.app.update.UpdateManager
 import kotlinx.coroutines.launch
+import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
@@ -70,15 +76,15 @@ import top.yukonga.miuix.kmp.basic.SmallTitle
 import top.yukonga.miuix.kmp.basic.SmallTopAppBar
 import top.yukonga.miuix.kmp.basic.Text
 import top.yukonga.miuix.kmp.basic.TextButton
-import top.yukonga.miuix.kmp.basic.BasicComponent
 import top.yukonga.miuix.kmp.preference.ArrowPreference
 import top.yukonga.miuix.kmp.preference.SwitchPreference
+import com.watchpicture.app.ui.component.SquircleShape
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import java.io.File
 
 /**
- * 官方 Miuix / HyperOS 规范系统与应用更新页。
- * 遵循 Hero 滚动视差层级架构与 Miuix 卡片偏好系统。
+ * 官方 Miuix / HyperOS 3.0 规范系统与应用更新页。
+ * 集成 HyperOS 动态流光背景、横竖屏自适应 Hero 视差层级、超椭圆图标容器与卡片偏好系统。
  */
 @Composable
 fun UpdateScreen(
@@ -119,7 +125,11 @@ fun UpdateScreen(
                         showDialog = true
                     }
                 } else if (userInitiated) {
-                    Toast.makeText(context, context.getString(R.string.update_latest_header, BuildConfig.VERSION_NAME), Toast.LENGTH_SHORT).show()
+                    Toast.makeText(
+                        context,
+                        context.getString(R.string.update_latest_header, BuildConfig.VERSION_NAME),
+                        Toast.LENGTH_SHORT
+                    ).show()
                 }
             }.onFailure { error ->
                 val message = error.localizedMessage ?: ""
@@ -153,12 +163,19 @@ fun UpdateScreen(
     }
 
     val density = LocalDensity.current
-    var logoHeightDp by remember { mutableStateOf(240.dp) }
+    val isLandscape = LocalConfiguration.current.orientation == Configuration.ORIENTATION_LANDSCAPE
+    var logoHeightDp by remember { mutableStateOf(if (isLandscape) 120.dp else 240.dp) }
     val backdrop = rememberBlurBackdrop()
 
     Scaffold(
         topBar = {
-            val barColor = if (backdrop != null) Color.Transparent else if (scrollProgress == 1f) MiuixTheme.colorScheme.surface else Color.Transparent
+            val barColor = if (backdrop != null) {
+                Color.Transparent
+            } else if (scrollProgress == 1f) {
+                MiuixTheme.colorScheme.surface
+            } else {
+                Color.Transparent
+            }
             val titleColor = MiuixTheme.colorScheme.onSurface.copy(
                 alpha = ((scrollProgress - 0.35f) / 0.65f).coerceIn(0f, 1f),
             )
@@ -186,266 +203,330 @@ fun UpdateScreen(
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .blurBackdropSource(backdrop)
+                .blurBackdropSource(backdrop),
+            contentAlignment = Alignment.TopCenter,
         ) {
-            // ── 顶部官方规范 Hero 视觉 ──
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = innerPadding.calculateTopPadding() + 24.dp)
-                    .onSizeChanged { size ->
-                        with(density) { logoHeightDp = size.height.toDp() }
-                    },
-                horizontalAlignment = Alignment.CenterHorizontally,
+            BgEffectBackground(
+                dynamicBackground = isRuntimeShaderSupported(),
+                isOs3Effect = true,
+                isFullSize = true,
+                modifier = Modifier.fillMaxSize(),
+                alpha = { 1f - scrollProgress },
             ) {
                 Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(88.dp)
-                        .graphicsLayer {
-                            val iconProgress = ((scrollProgress - 0.35f) / 0.15f).coerceIn(0f, 1f)
-                            clip = true
-                            shape = RoundedCornerShape(24.dp)
-                            alpha = 1 - iconProgress
-                            scaleX = 1 - (iconProgress * 0.05f)
-                            scaleY = 1 - (iconProgress * 0.05f)
-                        }
-                        .background(MiuixTheme.colorScheme.surfaceVariant),
+                    modifier = Modifier.fillMaxSize(),
+                    contentAlignment = Alignment.TopCenter,
                 ) {
-                    SafeAppIcon(modifier = Modifier.size(56.dp))
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                Text(
-                    text = stringResource(R.string.app_name),
-                    style = MiuixTheme.textStyles.title2.copy(fontWeight = FontWeight.Bold),
-                    color = MiuixTheme.colorScheme.onSurface,
-                    modifier = Modifier
-                        .graphicsLayer {
-                            val nameProgress = ((scrollProgress - 0.20f) / 0.15f).coerceIn(0f, 1f)
-                            alpha = 1 - nameProgress
-                            scaleX = 1 - (nameProgress * 0.05f)
-                            scaleY = 1 - (nameProgress * 0.05f)
-                        },
-                )
-
-                Spacer(modifier = Modifier.height(6.dp))
-
-                if (isChecking) {
-                    Text(
-                        text = stringResource(R.string.update_checking_hint),
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                val verProgress = ((scrollProgress - 0.05f) / 0.15f).coerceIn(0f, 1f)
-                                alpha = 1 - verProgress
-                            },
-                    )
-                } else if (hasNew) {
-                    Text(
-                        text = stringResource(R.string.update_found_header, releaseInfo?.latestVersion ?: "", BuildConfig.VERSION_NAME),
-                        color = MiuixTheme.colorScheme.primary,
-                        fontWeight = FontWeight.SemiBold,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                val verProgress = ((scrollProgress - 0.05f) / 0.15f).coerceIn(0f, 1f)
-                                alpha = 1 - verProgress
-                            },
-                    )
-                } else {
-                    Text(
-                        text = stringResource(R.string.update_latest_header, BuildConfig.VERSION_NAME),
-                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                        fontSize = 14.sp,
-                        textAlign = TextAlign.Center,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .graphicsLayer {
-                                val verProgress = ((scrollProgress - 0.05f) / 0.15f).coerceIn(0f, 1f)
-                                alpha = 1 - verProgress
-                            },
-                    )
-                }
-            }
-
-            // ── 滚动内容列表 ──
-            LazyColumn(
-                state = lazyListState,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
-                contentPadding = PaddingValues(
-                    top = innerPadding.calculateTopPadding(),
-                    bottom = innerPadding.calculateBottomPadding() + 24.dp,
-                ),
-            ) {
-                item(key = "logoSpacer") {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(logoHeightDp + 48.dp),
-                    )
-                }
-
-                // ── 更新日志卡片 ──
-                if (releaseInfo != null) {
-                    item(key = "changelog") {
-                        val changelogTitle = if (hasNew) {
-                            stringResource(R.string.update_changelog_title_new, releaseInfo?.latestVersion ?: "")
-                        } else {
-                            stringResource(R.string.update_changelog_title_current, BuildConfig.VERSION_NAME)
-                        }
-                        val defaultReleaseTitle = stringResource(R.string.update_release_default_title)
-                        SmallTitle(text = changelogTitle)
-                        Card(
+                    // ── 顶部官方规范横竖屏自适应 Hero 视觉 ──
+                    if (isLandscape) {
+                        Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(horizontal = 12.dp),
+                                .padding(
+                                    top = innerPadding.calculateTopPadding() + 8.dp,
+                                    start = 24.dp,
+                                    end = 24.dp,
+                                )
+                                .onSizeChanged { size ->
+                                    with(density) { logoHeightDp = size.height.toDp() }
+                                },
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.Center,
                         ) {
-                            Column(modifier = Modifier.padding(16.dp)) {
-                                Text(
-                                    text = releaseInfo?.releaseTitle?.ifBlank { defaultReleaseTitle } ?: defaultReleaseTitle,
-                                    style = MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.Bold),
-                                    color = MiuixTheme.colorScheme.onSurface,
+                            UpdateHeroIcon(compact = true, scrollProgress = scrollProgress)
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column(
+                                modifier = Modifier.graphicsLayer {
+                                    val nameProgress = ((scrollProgress - 0.20f) / 0.15f).coerceIn(0f, 1f)
+                                    alpha = 1 - nameProgress
+                                    scaleX = 1 - (nameProgress * 0.05f)
+                                    scaleY = 1 - (nameProgress * 0.05f)
+                                },
+                            ) {
+                                UpdateHeroTitle(compact = true, scrollProgress = scrollProgress)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                UpdateHeroStatus(
+                                    compact = true,
+                                    isChecking = isChecking,
+                                    hasNew = hasNew,
+                                    releaseInfo = releaseInfo,
+                                    scrollProgress = scrollProgress,
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-                                MarkdownText(
-                                    markdown = releaseInfo?.changelog ?: "",
-                                    modifier = Modifier.fillMaxWidth(),
-                                    baseFontSize = 14,
-                                )
-
-                                if (isDownloading) {
-                                    Spacer(modifier = Modifier.height(12.dp))
-                                    Row(
-                                        modifier = Modifier.fillMaxWidth(),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                    ) {
-                                        Text(
-                                            text = stringResource(R.string.update_downloading_hint),
-                                            style = MiuixTheme.textStyles.body2.copy(fontSize = 12.sp),
-                                            color = MiuixTheme.colorScheme.primary,
-                                        )
-                                        val percent = if (downloadProgress >= 0f) "${(downloadProgress * 100).toInt()}%" else ""
-                                        val sizeText = if (totalBytes > 0) {
-                                            "${formatFileSize(downloadedBytes)} / ${formatFileSize(totalBytes)}"
-                                        } else {
-                                            formatFileSize(downloadedBytes)
-                                        }
-                                        Text(
-                                            text = if (percent.isNotEmpty()) "$sizeText ($percent)" else sizeText,
-                                            style = MiuixTheme.textStyles.body2.copy(fontSize = 12.sp),
-                                            color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
-                                        )
-                                    }
-                                    Spacer(modifier = Modifier.height(6.dp))
-                                    LinearProgressIndicator(
-                                        progress = downloadProgress,
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
-
-                                Spacer(modifier = Modifier.height(16.dp))
-
-                                if (downloadedFile != null) {
-                                    TextButton(
-                                        text = stringResource(R.string.update_btn_install_now),
-                                        onClick = {
-                                            updateManager.installApk(context, downloadedFile!!)
-                                        },
-                                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                } else if (hasNew && !isDownloading) {
-                                    TextButton(
-                                        text = stringResource(R.string.update_btn_download_now),
-                                        onClick = {
-                                            val url = releaseInfo?.downloadUrl ?: releaseInfo?.releaseUrl
-                                            if (url != null) {
-                                                isDownloading = true
-                                                downloadProgress = 0f
-                                                coroutineScope.launch {
-                                                    val result = updateManager.downloadApk(
-                                                        downloadUrl = url,
-                                                        onProgress = { progress, downloaded, total ->
-                                                            downloadProgress = progress
-                                                            downloadedBytes = downloaded
-                                                            totalBytes = total
-                                                        },
-                                                    )
-                                                    isDownloading = false
-                                                    result.onSuccess { file ->
-                                                        downloadedFile = file
-                                                        updateManager.installApk(context, file)
-                                                    }.onFailure { error ->
-                                                        Toast.makeText(context, "下载 APK 失败: ${error.localizedMessage ?: ""}", Toast.LENGTH_SHORT).show()
-                                                    }
-                                                }
-                                            } else {
-                                                releaseInfo?.releaseUrl?.let { updateManager.openInBrowser(context, it) }
-                                            }
-                                        },
-                                        colors = ButtonDefaults.textButtonColorsPrimary(),
-                                        modifier = Modifier.fillMaxWidth(),
-                                    )
-                                }
                             }
                         }
-                        Spacer(modifier = Modifier.height(12.dp))
+                    } else {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = innerPadding.calculateTopPadding() + 24.dp)
+                                .onSizeChanged { size ->
+                                    with(density) { logoHeightDp = size.height.toDp() }
+                                },
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                        ) {
+                            UpdateHeroIcon(compact = false, scrollProgress = scrollProgress)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            UpdateHeroTitle(compact = false, scrollProgress = scrollProgress)
+                            Spacer(modifier = Modifier.height(6.dp))
+                            UpdateHeroStatus(
+                                compact = false,
+                                isChecking = isChecking,
+                                hasNew = hasNew,
+                                releaseInfo = releaseInfo,
+                                scrollProgress = scrollProgress,
+                            )
+                        }
                     }
-                }
 
-                // ── 更新设置与操作 ──
-                item(key = "settings") {
-                    SmallTitle(text = stringResource(R.string.update_section_settings))
-                    Card(
+                    // ── 滚动内容列表 ──
+                    LazyColumn(
+                        state = lazyListState,
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(horizontal = 12.dp),
+                            .fillMaxSize()
+                            .widthIn(max = 760.dp)
+                            .nestedScroll(topAppBarScrollBehavior.nestedScrollConnection),
+                        contentPadding = PaddingValues(
+                            top = innerPadding.calculateTopPadding(),
+                            bottom = innerPadding.calculateBottomPadding() + 24.dp,
+                        ),
+                        horizontalAlignment = Alignment.CenterHorizontally,
                     ) {
-                        SwitchPreference(
-                            title = stringResource(R.string.update_pref_auto_check_title),
-                            summary = stringResource(R.string.update_pref_auto_check_summary),
-                            checked = autoCheckUpdate,
-                            onCheckedChange = { checked ->
-                                coroutineScope.launch {
-                                    prefsRepo.saveAutoCheckUpdate(checked)
-                                }
-                            },
-                        )
+                        item(key = "logoSpacer") {
+                            val spacerExtra = if (isLandscape) 12.dp else 48.dp
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(logoHeightDp + spacerExtra),
+                            )
+                        }
 
-                        BasicComponent(
-                            title = stringResource(R.string.update_pref_manual_check_title),
-                            summary = if (isChecking) stringResource(R.string.update_checking_hint) else stringResource(R.string.update_pref_manual_check_summary),
-                            onClick = {
-                                if (!isChecking) {
-                                    doCheck(userInitiated = true)
+                        // ── 更新日志卡片（带发布日期、版本胶囊徽章与下载进度条） ──
+                        if (releaseInfo != null) {
+                            item(key = "changelog") {
+                                val changelogTitle = if (hasNew) {
+                                    stringResource(R.string.update_changelog_title_new, releaseInfo?.latestVersion ?: "")
+                                } else {
+                                    stringResource(R.string.update_changelog_title_current, BuildConfig.VERSION_NAME)
                                 }
-                            },
-                            endActions = {
-                                if (isChecking) {
-                                    InfiniteProgressIndicator(
-                                        modifier = Modifier.size(20.dp),
-                                        color = MiuixTheme.colorScheme.primary,
-                                    )
-                                }
-                            },
-                        )
+                                val defaultReleaseTitle = stringResource(R.string.update_release_default_title)
+                                SmallTitle(text = changelogTitle)
+                                Card(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp),
+                                ) {
+                                    Column(modifier = Modifier.padding(16.dp)) {
+                                        // 版本胶囊徽章与发布日期元信息栏
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .padding(bottom = 10.dp),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically,
+                                        ) {
+                                            Row(
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            ) {
+                                                Box(
+                                                    modifier = Modifier
+                                                        .clip(SquircleShape(6.dp))
+                                                        .background(MiuixTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                                ) {
+                                                    Text(
+                                                        text = releaseInfo?.latestVersion ?: "v${BuildConfig.VERSION_NAME}",
+                                                        style = MiuixTheme.textStyles.body2.copy(
+                                                            fontWeight = FontWeight.Bold,
+                                                            fontSize = 12.sp,
+                                                        ),
+                                                        color = MiuixTheme.colorScheme.primary,
+                                                    )
+                                                }
+                                                val apkSize = releaseInfo?.apkSize ?: 0L
+                                                if (apkSize > 0L) {
+                                                    Text(
+                                                        text = formatFileSize(apkSize),
+                                                        style = MiuixTheme.textStyles.body2.copy(fontSize = 12.sp),
+                                                        color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                                    )
+                                                }
+                                            }
+                                            val publishedAt = releaseInfo?.publishedAt.orEmpty()
+                                            if (publishedAt.isNotBlank()) {
+                                                Text(
+                                                    text = publishedAt,
+                                                    style = MiuixTheme.textStyles.body2.copy(fontSize = 12.sp),
+                                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                                )
+                                            }
+                                        }
 
-                        ArrowPreference(
-                            title = stringResource(R.string.settings_github_repo),
-                            summary = UpdateManager.REPO_URL,
-                            onClick = {
-                                updateManager.openInBrowser(context, UpdateManager.REPO_URL)
-                            },
-                        )
+                                        Text(
+                                            text = releaseInfo?.releaseTitle?.ifBlank { defaultReleaseTitle } ?: defaultReleaseTitle,
+                                            style = MiuixTheme.textStyles.body1.copy(fontWeight = FontWeight.Bold),
+                                            color = MiuixTheme.colorScheme.onSurface,
+                                        )
+                                        Spacer(modifier = Modifier.height(8.dp))
+                                        MarkdownText(
+                                            markdown = releaseInfo?.changelog ?: "",
+                                            modifier = Modifier.fillMaxWidth(),
+                                            baseFontSize = 14,
+                                        )
+
+                                        if (isDownloading) {
+                                            Spacer(modifier = Modifier.height(12.dp))
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.SpaceBetween,
+                                            ) {
+                                                Text(
+                                                    text = stringResource(R.string.update_downloading_hint),
+                                                    style = MiuixTheme.textStyles.body2.copy(fontSize = 12.sp),
+                                                    color = MiuixTheme.colorScheme.primary,
+                                                )
+                                                val percent = if (downloadProgress >= 0f) "${(downloadProgress * 100).toInt()}%" else ""
+                                                val sizeText = if (totalBytes > 0) {
+                                                    "${formatFileSize(downloadedBytes)} / ${formatFileSize(totalBytes)}"
+                                                } else {
+                                                    formatFileSize(downloadedBytes)
+                                                }
+                                                Text(
+                                                    text = if (percent.isNotEmpty()) "$sizeText ($percent)" else sizeText,
+                                                    style = MiuixTheme.textStyles.body2.copy(fontSize = 12.sp),
+                                                    color = MiuixTheme.colorScheme.onSurfaceVariantSummary,
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.height(6.dp))
+                                            LinearProgressIndicator(
+                                                progress = downloadProgress,
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                        }
+
+                                        if (downloadedFile != null || (hasNew && !isDownloading)) {
+                                            Spacer(modifier = Modifier.height(16.dp))
+                                        }
+
+                                        if (downloadedFile != null) {
+                                            TextButton(
+                                                text = stringResource(R.string.update_btn_install_now),
+                                                onClick = {
+                                                    updateManager.installApk(context, downloadedFile!!)
+                                                },
+                                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                        } else if (hasNew && !isDownloading) {
+                                            TextButton(
+                                                text = stringResource(R.string.update_btn_download_now),
+                                                onClick = {
+                                                    val url = releaseInfo?.downloadUrl ?: releaseInfo?.releaseUrl
+                                                    if (url != null) {
+                                                        isDownloading = true
+                                                        downloadProgress = 0f
+                                                        coroutineScope.launch {
+                                                            val result = updateManager.downloadApk(
+                                                                downloadUrl = url,
+                                                                onProgress = { progress, downloaded, total ->
+                                                                    downloadProgress = progress
+                                                                    downloadedBytes = downloaded
+                                                                    totalBytes = total
+                                                                },
+                                                            )
+                                                            isDownloading = false
+                                                            result.onSuccess { file ->
+                                                                downloadedFile = file
+                                                                updateManager.installApk(context, file)
+                                                            }.onFailure { error ->
+                                                                Toast.makeText(
+                                                                    context,
+                                                                    "下载 APK 失败: ${error.localizedMessage ?: ""}",
+                                                                    Toast.LENGTH_SHORT
+                                                                ).show()
+                                                            }
+                                                        }
+                                                    } else {
+                                                        releaseInfo?.releaseUrl?.let { updateManager.openInBrowser(context, it) }
+                                                    }
+                                                },
+                                                colors = ButtonDefaults.textButtonColorsPrimary(),
+                                                modifier = Modifier.fillMaxWidth(),
+                                            )
+                                        }
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+                        }
+
+                        // ── 当前版本状态与更新设置 ──
+                        item(key = "settings") {
+                            SmallTitle(text = stringResource(R.string.update_section_settings))
+                            Card(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = 12.dp),
+                            ) {
+                                BasicComponent(
+                                    title = stringResource(R.string.settings_version_title),
+                                    summary = if (hasNew) {
+                                        "当前 v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE}) · 最新 ${releaseInfo?.latestVersion}"
+                                    } else {
+                                        "v${BuildConfig.VERSION_NAME} (${BuildConfig.VERSION_CODE})"
+                                    },
+                                )
+
+                                SwitchPreference(
+                                    title = stringResource(R.string.update_pref_auto_check_title),
+                                    summary = stringResource(R.string.update_pref_auto_check_summary),
+                                    checked = autoCheckUpdate,
+                                    onCheckedChange = { checked ->
+                                        coroutineScope.launch {
+                                            prefsRepo.saveAutoCheckUpdate(checked)
+                                        }
+                                    },
+                                )
+
+                                BasicComponent(
+                                    title = stringResource(R.string.update_pref_manual_check_title),
+                                    summary = if (isChecking) {
+                                        stringResource(R.string.update_checking_hint)
+                                    } else {
+                                        stringResource(R.string.update_pref_manual_check_summary)
+                                    },
+                                    onClick = {
+                                        if (!isChecking) {
+                                            doCheck(userInitiated = true)
+                                        }
+                                    },
+                                    endActions = {
+                                        if (isChecking) {
+                                            InfiniteProgressIndicator(
+                                                modifier = Modifier.size(20.dp),
+                                                color = MiuixTheme.colorScheme.primary,
+                                            )
+                                        }
+                                    },
+                                )
+
+                                ArrowPreference(
+                                    title = "前往 GitHub Releases 查看全部版本",
+                                    summary = UpdateManager.RELEASES_URL,
+                                    onClick = {
+                                        updateManager.openInBrowser(context, UpdateManager.RELEASES_URL)
+                                    },
+                                )
+
+                                ArrowPreference(
+                                    title = stringResource(R.string.settings_github_repo),
+                                    summary = UpdateManager.REPO_URL,
+                                    onClick = {
+                                        updateManager.openInBrowser(context, UpdateManager.REPO_URL)
+                                    },
+                                )
+                            }
+                        }
                     }
                 }
             }
@@ -466,6 +547,102 @@ fun UpdateScreen(
                 }
             },
             externalScope = coroutineScope,
+        )
+    }
+}
+
+@Composable
+private fun UpdateHeroIcon(
+    compact: Boolean,
+    scrollProgress: Float,
+) {
+    Box(
+        contentAlignment = Alignment.Center,
+        modifier = Modifier
+            .size(if (compact) 56.dp else 88.dp)
+            .graphicsLayer {
+                val iconProgress = ((scrollProgress - 0.35f) / 0.15f).coerceIn(0f, 1f)
+                clip = true
+                shape = SquircleShape(if (compact) 16.dp else 24.dp)
+                alpha = 1 - iconProgress
+                scaleX = 1 - (iconProgress * 0.05f)
+                scaleY = 1 - (iconProgress * 0.05f)
+            }
+            .background(MiuixTheme.colorScheme.surfaceContainerHigh),
+    ) {
+        SafeAppIcon(modifier = Modifier.size(if (compact) 36.dp else 56.dp))
+    }
+}
+
+@Composable
+private fun UpdateHeroTitle(
+    compact: Boolean,
+    scrollProgress: Float,
+) {
+    Text(
+        text = stringResource(R.string.app_name),
+        style = if (compact) {
+            MiuixTheme.textStyles.title3.copy(fontWeight = FontWeight.Bold)
+        } else {
+            MiuixTheme.textStyles.title2.copy(fontWeight = FontWeight.Bold)
+        },
+        color = MiuixTheme.colorScheme.onSurface,
+        modifier = Modifier.graphicsLayer {
+            val nameProgress = ((scrollProgress - 0.20f) / 0.15f).coerceIn(0f, 1f)
+            alpha = 1 - nameProgress
+            scaleX = 1 - (nameProgress * 0.05f)
+            scaleY = 1 - (nameProgress * 0.05f)
+        },
+    )
+}
+
+@Composable
+private fun UpdateHeroStatus(
+    compact: Boolean,
+    isChecking: Boolean,
+    hasNew: Boolean,
+    releaseInfo: UpdateCheckResult?,
+    scrollProgress: Float,
+) {
+    val colorScheme = MiuixTheme.colorScheme
+    val fontSize = if (compact) 12.sp else 14.sp
+    val textAlign = if (compact) null else TextAlign.Center
+    val modifier = if (compact) {
+        Modifier
+    } else {
+        Modifier
+            .fillMaxWidth()
+            .graphicsLayer {
+                val verProgress = ((scrollProgress - 0.05f) / 0.15f).coerceIn(0f, 1f)
+                alpha = 1 - verProgress
+            }
+    }
+    when {
+        isChecking -> Text(
+            text = stringResource(R.string.update_checking_hint),
+            color = colorScheme.onSurfaceVariantSummary,
+            fontSize = fontSize,
+            textAlign = textAlign,
+            modifier = modifier,
+        )
+        hasNew -> Text(
+            text = stringResource(
+                R.string.update_found_header,
+                releaseInfo?.latestVersion ?: "",
+                BuildConfig.VERSION_NAME,
+            ),
+            color = colorScheme.primary,
+            fontWeight = FontWeight.SemiBold,
+            fontSize = fontSize,
+            textAlign = textAlign,
+            modifier = modifier,
+        )
+        else -> Text(
+            text = stringResource(R.string.update_latest_header, BuildConfig.VERSION_NAME),
+            color = colorScheme.onSurfaceVariantSummary,
+            fontSize = fontSize,
+            textAlign = textAlign,
+            modifier = modifier,
         )
     }
 }
@@ -492,14 +669,13 @@ private fun SafeAppIcon(modifier: Modifier = Modifier) {
         Image(
             bitmap = appIconBitmap,
             contentDescription = stringResource(R.string.app_name),
-            modifier = modifier
+            modifier = modifier,
         )
     } else {
         Image(
             painter = painterResource(id = R.drawable.ic_launcher_foreground),
             contentDescription = stringResource(R.string.app_name),
-            modifier = modifier
+            modifier = modifier,
         )
     }
 }
-
