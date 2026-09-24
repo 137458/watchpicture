@@ -13,7 +13,7 @@ WatchPicture 是一款轻量、高性能的安卓「图包快捷查看器」应�
 ## 技术栈与依赖
 
 - 运行时与平台：Kotlin 2.3.21, Android SDK 37 (Min SDK 24), Java 21
-- UI 框架：Jetpack Compose + Miuix Compose (`top.yukonga.miuix.kmp:0.9.4-rc01`)
+- UI 框架：Jetpack Compose + Miuix Compose (`top.yukonga.miuix.kmp:0.9.4`)
 - 图片渲染：Coil 3 (`io.coil-kt.coil3:3.0.4`)
 - 压缩包引擎：Zip4j (`net.lingala.zip4j:2.11.5`)
 - 数据流与状态：Kotlin Coroutines + StateFlow (MVVM + Clean Architecture)

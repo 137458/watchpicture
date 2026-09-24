@@ -32,6 +32,7 @@
 - `UpdateManager.downloadApk` 增加下载字节数与预期尺寸的比对校验，降低 DNS/传输层被劫持时静默安装恶意包的暴露面。
 
 ### 优化
+- 升级 Miuix 组件库（`miuix-ui`、`miuix-preference`、`miuix-squircle`、`miuix-blur`、`miuix-nav`）由 `0.9.4-rc01` 至 `0.9.4` 正式版。
 - 重构 Native 7z 固实块解码管线为按需增量流式解压（`CSzFolderIncrementalDecoder` + `SzArEx_ExtractIncremental`），改变首张图片请求或密码验证时强制解压整个数百 MB ~ GB 级固实块的阻塞逻辑，仅推进解码游标至目标图片末尾字节即刻返回并保留流状态，首屏图片与缩略图响应耗时由约 1 分钟降至毫秒级，后续图片按增量字节接续解压且已解码区间维持 0ms 内存直读。
 - 为 Native AES-256-CBC 解密与 7z SHA-256 KDF（524,288 轮密钥派生）接入编译期 `-O3` 优化与运行时 CPU 特性检测的 ARMv8 Crypto 硬件指令加速（`vaesdq_u8`/`vaesimcq_u8`/`vsha256hq_u32`），并在 C 层引入 64 槽位全局 KDF 密钥缓存与 `SzArEx_Open2` 头部密钥透传，消除跨会话重复密钥派生。
 - 移除 `SevenZSessionManager.openIfNeeded()` 中使用错误密码二次调用 `nativeOpen` 探测头部加密的冗余开销，直接读取 C 层 `nativeIsHeaderEncrypted`/`nativeIsEncrypted` 标记；统一 `SevenZArchiveManager.getImageEntries` 与 `SafManager`/`ArchiveFileResolver` 复用并预热 `SevenZSessionManager`，消除打开新图包时的多次重复解析。

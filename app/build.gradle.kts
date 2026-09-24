@@ -115,7 +115,7 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
 
     // Miuix (HyperOS Compose UI Library, Nav & Blur Engine)
-    val miuixVersion = "0.9.4-rc01"
+    val miuixVersion = "0.9.4"
     implementation("top.yukonga.miuix.kmp:miuix-ui-android:$miuixVersion")
     implementation("top.yukonga.miuix.kmp:miuix-preference-android:$miuixVersion")
     
