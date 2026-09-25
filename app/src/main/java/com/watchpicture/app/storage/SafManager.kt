@@ -49,11 +49,26 @@ class SafManager(
      */
     suspend fun scanPacks(context: Context, treeUri: Uri): List<PackItem> = withContext(Dispatchers.IO) {
         val directDir = resolveDirectFile(treeUri)
-        if (directDir != null && directDir.isDirectory && directDir.canRead()) {
-            scanFromDirectFile(directDir)
+        val useDirect = directDir != null && directDir.isDirectory && directDir.canRead()
+        val strategy = if (useDirect) "直接文件" else "DocumentFile回退"
+        val directPacks = if (useDirect) scanFromDirectFile(directDir!!) else emptyList()
+        // 裸文件路径可能因目录权限（例如由其它应用以 0770 创建）而列不出任何内容，
+        // 此时改走 SAF provider 读取，避免把「读不到」误报成「没有图包」。
+        val packs = if (directPacks.isNotEmpty() || !useDirect) {
+            directPacks
         } else {
             scanFromDocumentFile(context, treeUri)
         }
+        if (packs.isEmpty()) {
+            // release 只保留 ERROR 级日志；「文件管理器里看得到、应用里一个图包都没有」属于需要
+            // 用户可见排查依据的异常状态，这里把策略与树 documentId 一并留痕。
+            com.watchpicture.app.util.AppLog.e(
+                "SafScan",
+                "所选目录未解析出任何图包: 策略=$strategy treeId=${documentIdOf(treeUri) ?: "未知"} " +
+                    "directDir=${directDir?.absolutePath ?: "无法解析"}"
+            )
+        }
+        packs
     }
 
     /**
@@ -62,9 +77,45 @@ class SafManager(
      */
     private suspend fun scanFromDirectFile(rootDir: File): List<PackItem> {
         val children = rootDir.listFiles() ?: return emptyList()
-        return children.asIterable()
+        val packs = children.asIterable()
             .mapIsolated(tag = "SafScan", describe = { it.name }) { processDirectChild(it) }
             .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+        if (packs.isEmpty() && children.isNotEmpty()) {
+            com.watchpicture.app.util.AppLog.e(
+                "SafScan",
+                "直接文件扫描结果为空: 子项=${children.size} ${describeChildren(children)}"
+            )
+        }
+        return packs
+    }
+
+    /**
+     * 仅用于空结果诊断：统计子项构成，判断是「没有可识别的图包」还是「归档被过滤掉了」。
+     */
+    private fun describeChildren(children: Array<File>): String {
+        var dirs = 0
+        var archives = 0
+        var others = 0
+        for (child in children) {
+            when {
+                child.isDirectory -> dirs++
+                isArchiveFile(child.name) -> archives++
+                else -> others++
+            }
+        }
+        return "目录=$dirs 压缩包=$archives 其它=$others"
+    }
+
+    private fun isArchiveFile(fileName: String): Boolean {
+        val lower = fileName.lowercase()
+        return lower.endsWith(".zip") || lower.endsWith(".cbz") ||
+            lower.endsWith(".7z") || lower.endsWith(".cb7")
+    }
+
+    private fun documentIdOf(uri: Uri): String? = try {
+        DocumentsContract.getDocumentId(uri)
+    } catch (_: Exception) {
+        null
     }
 
     private fun processDirectChild(child: File): PackItem? {
@@ -101,11 +152,8 @@ class SafManager(
             if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) {
                 return null
             }
-            val isZip = lowerName.endsWith(".zip")
-            val isCbz = lowerName.endsWith(".cbz")
-            val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
 
-            if (isZip || isCbz || is7z) {
+            if (isArchiveFile(lowerName)) {
                 val cachedPassword = passwordStore.get(child.absolutePath)
                 val entries = zipArchiveManager.getMediaEntries(child, cachedPassword)
                 val isEncrypted = if (entries.isNotEmpty()) entries.any { it.isEncrypted } else zipArchiveManager.isEncrypted(child)
@@ -130,8 +178,8 @@ class SafManager(
                     fileSize = child.length(),
                     lastModified = child.lastModified(),
                     coverImage = cover,
-                    isCbz = isCbz,
-                    is7z = is7z
+                    isCbz = lowerName.endsWith(".cbz"),
+                    is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
                 )
             }
         }
@@ -191,12 +239,31 @@ class SafManager(
         if (!doc.isFile) return null
         val lowerName = name.lowercase()
         if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) return null
-        val isZip = lowerName.endsWith(".zip")
-        val isCbz = lowerName.endsWith(".cbz")
-        if (!(isZip || isCbz || lowerName.endsWith(".7z") || lowerName.endsWith(".cb7"))) return null
+        if (!isArchiveFile(lowerName)) return null
 
-        // Only archives resolvable to a real file can be listed here
-        val directFile = resolveDirectFile(doc.uri)?.takeIf { it.exists() } ?: return null
+        // provider-only 归档（裸 File 读不到，例如目录由其它应用以 0770 创建）不能在此丢弃：
+        // 保留条目与原始 Uri，首次打开时经 ContentResolver 按需落盘后即可浏览。
+        val directFile = resolveDirectFile(doc.uri)?.takeIf { it.exists() }
+        if (directFile == null) {
+            com.watchpicture.app.util.AppLog.e(
+                "SafScan",
+                "归档需经 provider 读取，将在打开时按需落盘: $name (documentId=${documentIdOf(doc.uri) ?: "未知"})"
+            )
+            return ZipPack(
+                id = doc.uri.toString(),
+                name = name.substringBeforeLast('.'),
+                uriString = doc.uri.toString(),
+                directPath = null,
+                itemCount = 0,
+                isEncrypted = false,
+                fileSize = doc.length(),
+                lastModified = doc.lastModified(),
+                coverImage = null,
+                isCbz = lowerName.endsWith(".cbz"),
+                is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
+            )
+        }
+        val isCbz = lowerName.endsWith(".cbz")
         val cachedPassword = passwordStore.get(doc.uri.toString())
         val entries = zipArchiveManager.getMediaEntries(directFile, cachedPassword)
         val isEncrypted = if (entries.isNotEmpty()) {

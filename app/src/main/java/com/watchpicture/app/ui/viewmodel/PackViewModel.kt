@@ -290,23 +290,26 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                 onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
             }
             is ZipPack -> {
-                // 落盘副本可能已被自动或手动清理：先按持久化的原始 Uri 重新落盘，
-                // 否则后续会以已删除的缓存路径为 packId 打开，得到空网格。
+                // 两类情况需要先落盘：落盘副本已被清理，或扫描阶段只拿到 provider 条目
+                // （裸 File 读不到，例如目录由其它应用以 0770 创建）。落盘后才能读取条目、
+                // 判断是否加密并按既有流程走解锁。否则会以读不到的路径为 packId 打开，得到空网格。
                 val direct = pack.directPath?.let { File(it) }
-                if (direct != null && !direct.exists() && pack.uriString.startsWith("content://")) {
+                val needsMaterialization =
+                    pack.uriString.startsWith("content://") && (direct == null || !direct.exists())
+                if (needsMaterialization) {
                     viewModelScope.launch {
                         _uiState.update { it.copy(isLoading = true, errorMessage = null) }
                         val restored = try {
                             archiveFileResolver.resolve(app, Uri.parse(pack.uriString))
                         } catch (e: Exception) {
-                            com.watchpicture.app.util.AppLog.e("PackClick", "重新落盘失败: ${pack.name}", e)
+                            com.watchpicture.app.util.AppLog.e("PackClick", "落盘失败: ${pack.name}", e)
                             null
                         }
                         if (restored == null) {
                             _uiState.update {
                                 it.copy(
                                     isLoading = false,
-                                    errorMessage = "缓存已清理，无法重新读取该压缩包，请重新导入"
+                                    errorMessage = "无法读取该压缩包，请重新选择或重新导入"
                                 )
                             }
                             return@launch

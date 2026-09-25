@@ -224,7 +224,12 @@ fun PackCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (pack.itemCount > 0) "${pack.itemCount} 张图片" else "待解密",
+                    text = when {
+                        pack.itemCount > 0 -> "${pack.itemCount} 张图片"
+                        pack.isEncrypted -> "待解密"
+                        // provider-only 归档在首次打开前不解析条目，条目数与封面在打开后才有
+                        else -> "待读取"
+                    },
                     style = MiuixTheme.textStyles.footnote1,
                     color = MiuixTheme.colorScheme.onSurfaceSecondary
                 )
