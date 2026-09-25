@@ -18,9 +18,11 @@
 - 全面推广 `BlurredBar` 顶栏渐进式纹理模糊至图包列表页（`PackListScreen`）、缩略图网格页（`ThumbnailGridScreen`）与设置页（`SettingsScreen`），并在图包列表页接入 Miuix `PullToRefresh` 阻尼下拉刷新。
 - 重构设置页「画廊翻页方向」与「默认排序方式」为 Miuix 原生 `WindowDropdownPreference` 下拉选择菜单，消除盲点循环切换；将图包列表排序弹窗升级为 `Card` + `RadioButtonPreference` 单选体系。
 - 为缩略图网格页与软件更新页路由启用 `NavSwipeDirection.LeftToRight` 左边缘滑动预测返回手势，并将卡片封面、缩略图、角标与弹窗统一升级为连续曲率超椭圆 `SquircleShape`。
+- 大图加载链路专项优化：全屏查看器占位预览按屏幕物理长边分档（`viewerPreviewTargetPx`，720p/1080p/1440p 屏分别取 720/1080/1440），解压落盘期间显示的占位图从 360px 糊图提升到接近屏幕清晰度，且与归档解压共用同一次读取、不增加额外解压；`HorizontalPager` 开启相邻页预组合（`beyondViewportPageCount = 1`）并让相邻页复用 360px 网格缩略图，翻页时的归档落盘与 Coil 解码提前完成；`ArchiveExtractionCoordinator.prefetch` 改为逐条目持锁 + 等待前台交互落盘请求（`interactiveRequestCount`）清空后再继续，避免后台预取长时间霸占归档锁导致「翻页要等预取跑完」。
 
 ### 修复
 - 修复了经 ContentResolver 落盘的 SAF 归档副本只校验表头魔数、不校验 provider 声明体积的问题：被截断的副本同样能通过 `isValidArchive`（ZIP 中央目录位于文件尾部），落盘后解析失败，症状是打开图包得到「图包内未发现有效图片」；落盘改为严格比对 provider 声明体积，不一致即判为失败并留痕，同时为 zip 条目枚举与加密状态判定补上真实异常日志。
+- 修复了 `ZipImageMapper` 在命中归档落盘缓存时 `CacheFileLeases.acquire` 后永不释放、把大图缓存文件永久钉住的问题：该 mapper 交出的是裸 `File`，没有随 Coil 请求结束释放的钩子，导致被钉住的文件既不能被 LRU 淘汰也不能被清理，`archive_cache` 只增不减；改为不在 mapper 内获取租约，读取窗口的租约由消费方持有（全屏页已在 `ZoomableImage` 的 `DisposableEffect` 中按页面存活期持有，覆盖 Coil/Telephoto 的整个读取过程）。
 - 修复了图包扫描 `SafManager` 在直接文件系统路径并发 `awaitAll()`、以及 DocumentFile 回退路径逐项循环中均未隔离子项失败，导致所选目录中任何一个异常子项（损坏归档、不可读目录等）都会让整次扫描失败、图包列表被清空并误报「当前目录下没有找到图片文件夹或 ZIP/CBZ 压缩包」的缺陷；两条路径统一改为逐子项失败隔离（`mapIsolated` / `processDocumentChild`），异常子项仅记日志跳过，其余图包正常列出。
 - 修复了视频文件被图片扩展名过滤静默丢弃（图包内视频完全不显示）以及视频条目误入图片解码、缩略图预读与画廊预取管线导致无谓解压整段视频的问题；条目枚举统一改用 `isMediaFile` 并覆盖 7z/CB7 会话层的全部条目过滤，`toImageModel` 对视频直接短路返回。
 - 修复了「立即清理缓存」或启动自动裁剪后，仍留在图包列表中的独立图包条目 `directPath` 指向已被删除的落盘副本、点开必然得到空网格的问题；打开前按持久化的原始 Uri 重新落盘并回填条目（`PackViewModel.onPackClicked`）。

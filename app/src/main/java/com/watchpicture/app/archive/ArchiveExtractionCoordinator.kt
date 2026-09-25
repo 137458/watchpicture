@@ -40,6 +40,10 @@ class ArchiveExtractionCoordinator(
         private const val BATCH_COOLING_INTERVAL = 5
         private const val BATCH_COOLING_DELAY_MS = 32L
 
+        // 预取让路：前台交互请求持锁期间以该间隔轮询，超时后放弃本次剩余预取（下次翻页会重新预取）
+        private const val PREFETCH_YIELD_POLL_MS = 60L
+        private const val PREFETCH_YIELD_TIMEOUT_MS = 1_500L
+
         // How long to keep the native 7z solid block cache alive after the last extraction.
         // Sequential paging reuses the same solid block; purging too aggressively (e.g. 3s) forces
         // a full re-decompression + AES decryption of the whole solid block on the next page turn,
@@ -53,6 +57,12 @@ class ArchiveExtractionCoordinator(
     private val archiveLocks = ConcurrentHashMap<String, Mutex>()
     private val activeSweepJob = java.util.concurrent.atomic.AtomicReference<kotlinx.coroutines.Job?>(null)
     private val sweepPauseCounter = java.util.concurrent.atomic.AtomicInteger(0)
+
+    /**
+     * 正在等待或执行的前台交互落盘请求数。预取据此让路，避免后台预取长时间霸占归档锁，
+     * 使翻页时的按需落盘排在预取之后。
+     */
+    private val interactiveRequestCount = java.util.concurrent.atomic.AtomicInteger(0)
 
     val isSweepPaused: Boolean
         get() = sweepPauseCounter.get() > 0
@@ -171,9 +181,11 @@ class ArchiveExtractionCoordinator(
     ): File {
         // Yield background sweep to immediately free the session lock and CPU cores
         pauseBackgroundSweep()
+        interactiveRequestCount.incrementAndGet()
         try {
             return extract(file, entryName, password)
         } finally {
+            interactiveRequestCount.decrementAndGet()
             resumeBackgroundSweep()
         }
     }
@@ -571,6 +583,9 @@ class ArchiveExtractionCoordinator(
 
     /**
      * Asynchronously prefetches adjacent entries in background without blocking the UI thread.
+     *
+     * 逐条目持锁而非一次性持锁到底：翻页触发的交互落盘（[extractHighPriority]）到达时，
+     * 预取最多占用一个条目的解压时间，且在条目之间主动让路，避免"翻页要等后台预取跑完"。
      */
     suspend fun prefetch(
         file: File,
@@ -587,25 +602,21 @@ class ArchiveExtractionCoordinator(
         }
         if (uncached.isEmpty()) return@withContext
 
-        val mutex = getLockFor(file)
-        mutex.withLock {
-            val stillUncached = uncached.filter { name ->
-                archiveDiskCache.get(file, name, password) == null
-            }
-            if (stillUncached.isEmpty()) return@withLock
+        val is7z = ZipArchiveManager.isSevenZFile(file)
+        for (name in uncached) {
+            if (awaitInteractiveIdle()) return@withContext
+            if (archiveDiskCache.get(file, name, password) != null) continue
 
-            if (ZipArchiveManager.isSevenZFile(file)) {
-                // Reuse active warm SevenZSessionManager to avoid repeating 524k-round PBKDF2 key derivations
+            val mutex = getLockFor(file)
+            mutex.withLock {
+                if (archiveDiskCache.get(file, name, password) != null) return@withLock
                 runCatching {
-                    for (name in stillUncached) {
+                    if (is7z) {
+                        // Reuse active warm SevenZSessionManager to avoid repeating 524k-round PBKDF2 key derivations
                         sevenZSessionManager.extractSequential(file, name, password, lookahead = 0) { extractedName, stream ->
                             archiveDiskCache.getOrPut(file, extractedName, password) { stream }
                         }
-                    }
-                }
-            } else {
-                for (name in stillUncached) {
-                    runCatching {
+                    } else {
                         archiveDiskCache.getOrPut(file, name, password) {
                             zipArchiveManager.getEntryInputStream(file, name, password)
                         }
@@ -613,5 +624,20 @@ class ArchiveExtractionCoordinator(
                 }
             }
         }
+    }
+
+    /**
+     * 预取让路：等待前台交互落盘请求清空后再继续。返回 true 表示应放弃本次剩余预取
+     * （协程已取消或等待超时），交由下一次翻页触发的预取重试。
+     */
+    private suspend fun awaitInteractiveIdle(): Boolean {
+        var waitedMs = 0L
+        while (interactiveRequestCount.get() > 0) {
+            if (!currentCoroutineContext().isActive) return true
+            if (waitedMs >= PREFETCH_YIELD_TIMEOUT_MS) return true
+            kotlinx.coroutines.delay(PREFETCH_YIELD_POLL_MS)
+            waitedMs += PREFETCH_YIELD_POLL_MS
+        }
+        return !currentCoroutineContext().isActive
     }
 }

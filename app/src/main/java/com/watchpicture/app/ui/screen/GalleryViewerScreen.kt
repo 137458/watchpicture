@@ -75,8 +75,10 @@ import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
@@ -134,6 +136,18 @@ import top.yukonga.miuix.kmp.window.WindowDialog
 import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
+
+/**
+ * 全屏查看器占位预览的目标长边像素。
+ *
+ * 占位预览由缩略图管线解码产出，与归档解压共用同一次读取，因此这里把目标尺寸提到屏幕级别：
+ * 解压落盘期间显示的不再是 360px 糊图，而是接近屏幕清晰度的画面。
+ */
+internal fun viewerPreviewTargetPx(screenLongEdgePx: Int): Int = when {
+    screenLongEdgePx > 1080 -> 1440
+    screenLongEdgePx > 720 -> 1080
+    else -> 720
+}
 
 /**
  * Screen orientation lock state for the reader session.
@@ -212,6 +226,20 @@ fun GalleryViewerScreen(
     val coroutineScope = rememberCoroutineScope()
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
+    val configuration = LocalConfiguration.current
+    val density = LocalDensity.current
+
+    // 占位预览按屏幕物理长边分档，只在当前活动页生效；邻页仍用 360px，避免预组合时争抢解压资源
+    val previewTargetSizePx = remember(
+        configuration.screenWidthDp,
+        configuration.screenHeightDp,
+        density.density
+    ) {
+        val longEdgePx = (
+            maxOf(configuration.screenWidthDp, configuration.screenHeightDp) * density.density
+            ).roundToInt()
+        viewerPreviewTargetPx(longEdgePx)
+    }
 
     var isImmersive by remember { mutableStateOf(false) }
     var isCurrentPageZoomed by remember { mutableStateOf(false) }
@@ -364,10 +392,11 @@ fun GalleryViewerScreen(
             }
 
             // Horizontal Pager with reverseLayout support for Manga RTL mode
-            // beyondViewportPageCount is 0 to ensure 100% CPU is dedicated to the visible page
+            // 预组合左右各一页：让相邻页的归档落盘与 Coil 解码提前完成，翻页时直接命中；
+            // 相邻页本身不触发阻塞式落盘（见 ZoomableImage 的 isActivePage 分支），不会抢占当前页资源。
             HorizontalPager(
                 state = pagerState,
-                beyondViewportPageCount = 0,
+                beyondViewportPageCount = 1,
                 userScrollEnabled = !isCurrentPageZoomed,
                 reverseLayout = (readingMode == ReadingMode.RTL),
                 modifier = Modifier
@@ -375,6 +404,9 @@ fun GalleryViewerScreen(
                     .then(if (viewerBackdrop != null) Modifier.layerBackdrop(viewerBackdrop) else Modifier)
             ) { pageIndex ->
                 val image = images[pageIndex]
+                val isActivePage by remember(pageIndex) {
+                    derivedStateOf { pagerState.currentPage == pageIndex }
+                }
                 if (image.isVideo) {
                     // 视频条目无法按图片解码，改为应用内播放入口
                     VideoPage(
@@ -394,6 +426,8 @@ fun GalleryViewerScreen(
                     ZoomableImage(
                         image = image,
                         sessionPassword = sessionPassword,
+                        isActivePage = isActivePage,
+                        previewTargetSizePx = previewTargetSizePx,
                         onSingleTap = { isImmersive = !isImmersive },
                         onZoomChanged = { isZoomed ->
                             if (pageIndex == pagerState.currentPage) {
@@ -1175,6 +1209,8 @@ private fun VideoPage(
 private fun ZoomableImage(
     image: PackImage,
     sessionPassword: String?,
+    isActivePage: Boolean,
+    previewTargetSizePx: Int,
     onSingleTap: () -> Unit,
     onZoomChanged: (Boolean) -> Unit
 ) {
@@ -1200,9 +1236,11 @@ private fun ZoomableImage(
             mutableStateOf(initial)
         }
 
-        // On-demand high-priority extraction for currently visible image
-        LaunchedEffect(image, sessionPassword) {
-            if (resolvedFile == null && imageModel is ZipImageSource && coordinator != null) {
+        // On-demand high-priority extraction for the currently visible image.
+        // 只有活动页才触发这里的阻塞式落盘；邻页由 coordinator.prefetch 低优先级预取，
+        // 否则邻页会先抢占归档锁 + pauseBackgroundSweep，反而拖慢当前页。
+        LaunchedEffect(image, sessionPassword, isActivePage) {
+            if (isActivePage && resolvedFile == null && imageModel is ZipImageSource && coordinator != null) {
                 runCatching {
                     val extracted = coordinator.extractHighPriority(
                         file = imageModel.zipFile,
@@ -1260,9 +1298,11 @@ private fun ZoomableImage(
                 .clickable { onSingleTap() },
             contentAlignment = Alignment.Center
         ) {
-            // Immediate preview base layer: prevents black screen while full resolution loads
-            val thumbModel = remember(image, sessionPassword) {
-                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
+            // Immediate preview base layer: prevents black screen while full resolution loads.
+            // 活动页用屏幕级预览（足够清晰），邻页仍用 360px 以复用网格缓存、避免额外解码。
+            val previewSizePx = if (isActivePage) previewTargetSizePx else 360
+            val thumbModel = remember(image, sessionPassword, previewSizePx) {
+                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = previewSizePx)
             }
             val thumbRequest = remember(thumbModel) {
                 val entryName = when (thumbModel) {

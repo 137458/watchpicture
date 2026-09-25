@@ -3,7 +3,6 @@ package com.watchpicture.app.coil
 import coil3.map.Mapper
 import coil3.request.Options
 import com.watchpicture.app.archive.ArchiveDiskCache
-import com.watchpicture.app.archive.CacheFileLeases
 import com.watchpicture.app.archive.ThumbnailDiskCache
 import java.io.File
 
@@ -40,12 +39,10 @@ class ZipImageMapper(
             password = password
         )
         if (fullFile != null && fullFile.exists() && fullFile.length() > 0) {
-            // Acquire a lease before handing the cache file to Coil/Telephoto. The card file may
-            // otherwise be LRU-evicted during the decode time window, yielding a blank image /
-            // FileNotFoundException. The lease is held for the process lifetime (the mapper returns a
-            // plain File with no Coil release hook) and is cleared on process restart; this is a
-            // deliberate trade-off to guarantee a stable local file for subsampling.
-            CacheFileLeases.acquire(fullFile.absolutePath)
+            // 这里刻意不 acquire 租约：mapper 交出的是裸 File，没有随 Coil 请求结束释放的钩子，
+            // 一旦在此 acquire 就会把该缓存文件永久钉住（LRU 淘汰与 clearAll/clearEncrypted 全部失效，
+            // 大图缓存只增不减）。读取窗口的租约由消费方持有：全屏页在 ZoomableImage 的
+            // DisposableEffect 中按页面存活期持有，已覆盖 Coil/Telephoto 的整个读取过程。
             return fullFile
         }
 
