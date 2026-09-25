@@ -10,6 +10,7 @@
     <string name="password_incorrect">密码错误或解密失败，请重试</string>
     <string name="confirm">确认</string>
     <string name="cancel">取消</string>
+    <string name="nav_back">返回</string>
     <string name="loading">加载中…</string>
     <string name="open_archive">打开压缩包</string>
     <string name="open_archive_summary">直接选取并浏览单个 ZIP/CBZ 图集</string>

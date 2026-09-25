@@ -192,7 +192,7 @@ fun UpdateScreen(
                         IconButton(onClick = onBack) {
                             Icon(
                                 imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                                contentDescription = stringResource(R.string.cancel),
+                                contentDescription = stringResource(R.string.nav_back),
                             )
                         }
                     },

@@ -112,11 +112,15 @@ class ArchiveFileResolver(
 
     /**
      * Constructs a ZipPack model from a resolved local file.
+     *
+     * @param displayName 原始 Uri 上带回来的用户可见文件名。落盘副本的文件名形如 `hash_原文件名`，
+     *   直接使用会把内部缓存命名暴露到图包标题里，因此优先采用该显示名。
      */
     fun createZipPackFromFile(
         file: File,
         uriString: String? = null,
-        cachedPassword: String? = null
+        cachedPassword: String? = null,
+        displayName: String? = null
     ): ZipPack? {
         if (!isValidArchive(file)) return null
 
@@ -145,7 +149,8 @@ class ArchiveFileResolver(
             )
         }
 
-        val name = file.nameWithoutExtension.ifEmpty { file.name }
+        val name = displayName?.substringBeforeLast('.')?.trim()?.takeIf { it.isNotEmpty() }
+            ?: file.nameWithoutExtension.ifEmpty { file.name }
         return ZipPack(
             id = file.absolutePath,
             name = name,
@@ -228,7 +233,10 @@ class ArchiveFileResolver(
 
         // Step 2: Fallback streaming cache for restricted ContentProviders
         val cachedFile = cacheFromContentProvider(context, uri) ?: return@withContext null
-        createZipPackFromFile(cachedFile, uri.toString())
+        val displayName = queryDisplayName(context, uri)?.let { raw ->
+            runCatching { Uri.decode(raw) }.getOrDefault(raw)
+        }
+        createZipPackFromFile(cachedFile, uri.toString(), displayName = displayName)
     }
 
     /**

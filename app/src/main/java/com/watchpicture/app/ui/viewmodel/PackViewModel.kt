@@ -311,7 +311,8 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                             }
                             return@launch
                         }
-                        val merged = restored.copy(id = pack.id, name = pack.name, uriString = pack.uriString)
+                        // 采用重新解析得到的名称（原始显示名），避免沿用落盘副本的内部命名
+                        val merged = restored.copy(id = pack.id, uriString = pack.uriString)
                         _uiState.update { state ->
                             state.copy(
                                 isLoading = false,
