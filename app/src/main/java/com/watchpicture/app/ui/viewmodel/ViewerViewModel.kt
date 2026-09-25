@@ -90,6 +90,15 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
                 val password = passwordStore.get(packId)
                     ?: passwordStore.get(file.absolutePath)
                 val entries = zipArchiveManager.getMediaEntries(file, password)
+                if (entries.isEmpty()) {
+                    // 空网格的诊断入口：区分「密码没带上」与「归档本身读不出条目」
+                    com.watchpicture.app.util.AppLog.e(
+                        "PackImages",
+                        "归档条目为空: file=${file.name.take(48)} 体积=${file.length()} " +
+                            "有密码=${password != null} 判定加密=${zipArchiveManager.isEncrypted(file)} " +
+                            "packId前缀=${packId.take(24)}"
+                    )
+                }
                 return entries.map { entry ->
                     PackImage(
                         packId = packId,

@@ -61,16 +61,43 @@ data class PackListUiState(
             }
             val seen = HashSet<String>(standalonePacks.size + scannedPacks.size)
             val combined = ArrayList<PackItem>(standalonePacks.size + scannedPacks.size)
+            // 手动导入的 provider 归档 id/directPath 指向内部落盘副本，与扫描项（真实路径或文档 Uri）
+            // 永远不同，需要按原始文件名做跨通路去重，否则同一条归档会以两项出现。
+            val importedFileNames = HashSet<String>()
             for (p in standalonePacks) {
-                if (seen.add(p.id)) combined.add(p)
+                if (seen.add(p.id)) {
+                    combined.add(p)
+                    if (p.uriString.startsWith("content://")) importedFileNames.add(p.sourceFileName())
+                }
             }
             for (p in scannedPacks) {
-                if (seen.add(p.id)) combined.add(p)
+                if (!seen.add(p.id)) continue
+                if (p.sourceFileName() in importedFileNames) continue
+                combined.add(p)
             }
             cachedPacksKey = Pair(standalonePacks, scannedPacks)
             cachedPacks = combined
             return combined
         }
+
+    /**
+     * 归档的原始文件名（取自来源 Uri）。用于识别「手动导入」与「根目录扫描」是否指向同一条归档：
+     * 前者来源是 content:// 文档 Uri，后者可能是真实路径或文档 Uri，但末段文件名一致。
+     */
+    private fun PackItem.sourceFileName(): String {
+        val source = uriString.ifEmpty { id }
+        val lastSegment = source.substringAfterLast('/')
+        // 纯 JVM 的百分号解码（Uri.decode 在单元测试环境不可用），并把 '+' 还原以避开
+        // URLDecoder 将其转成空格的行为；解码后取末段即原始文件名。
+        val decoded = if (lastSegment.contains('%')) {
+            runCatching {
+                java.net.URLDecoder.decode(lastSegment.replace("+", "%2B"), "UTF-8")
+            }.getOrDefault(lastSegment)
+        } else {
+            lastSegment
+        }
+        return decoded.substringAfterLast('/')
+    }
 
     @Volatile
     private var cachedFilterKey: Triple<String, SortOption, List<PackItem>>? = null
@@ -316,6 +343,11 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                         }
                         // 采用重新解析得到的名称（原始显示名），避免沿用落盘副本的内部命名
                         val merged = restored.copy(id = pack.id, uriString = pack.uriString)
+                        com.watchpicture.app.util.AppLog.e(
+                            "PackClick",
+                            "按需落盘完成: ${merged.name} 条目=${merged.itemCount} 加密=${merged.isEncrypted} " +
+                                "封面=${merged.coverImage != null} 体积=${merged.fileSize}"
+                        )
                         _uiState.update { state ->
                             state.copy(
                                 isLoading = false,
@@ -525,6 +557,11 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                     zipArchiveManager.getMediaEntries(targetFile, password)
                 }
                 com.watchpicture.app.util.AppLog.i("Unlock", "entries=${entries.size} in ${System.currentTimeMillis() - t1}ms (total ${System.currentTimeMillis() - t0}ms)")
+                com.watchpicture.app.util.AppLog.e(
+                    "Unlock",
+                    "解锁校验完成: isValid=$isValid 条目=${entries.size} " +
+                        "file=${targetFile.name.take(48)}"
+                )
                 val updatedCover = entries.firstOrNull()?.let { entry ->
                     PackImage(
                         packId = targetPack.id,

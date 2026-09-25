@@ -59,6 +59,50 @@ class PackListMergeTest {
     }
 
     @Test
+    fun `archive imported by Uri and also found by folder scan is listed only once`() {
+        val contentUri = "content://com.android.externalstorage.documents/tree/primary%3ADownload%2FTurrit" +
+            "/document/primary%3ADownload%2FTurrit%2F%E6%98%9F%E6%BE%9C%2074P7V.7z"
+
+        // 根目录扫描得到的条目：走裸文件路径，id/uriString 都是真实路径
+        val scanned = ZipPack(
+            id = "/storage/emulated/0/Download/Turrit/星澜 74P7V.7z",
+            name = "星澜 74P7V",
+            uriString = "file:///storage/emulated/0/Download/Turrit/%E6%98%9F%E6%BE%9C%2074P7V.7z",
+            directPath = "/storage/emulated/0/Download/Turrit/星澜 74P7V.7z",
+            itemCount = 0,
+            isEncrypted = false,
+            fileSize = 1402497106L,
+            lastModified = 1L,
+            coverImage = null,
+            isCbz = false,
+            is7z = true
+        )
+        // 手动导入的同一个归档：id/directPath 指向内部落盘副本，uriString 仍是同一条文档 Uri
+        val imported = ZipPack(
+            id = "/data/user/0/com.watchpicture.app/cache/opened_archives/abc123_星澜 74P7V.7z",
+            name = "星澜 74P7V",
+            uriString = contentUri,
+            directPath = "/data/user/0/com.watchpicture.app/cache/opened_archives/abc123_星澜 74P7V.7z",
+            itemCount = 74,
+            isEncrypted = true,
+            fileSize = 1402497106L,
+            lastModified = 2L,
+            coverImage = null,
+            isCbz = false,
+            is7z = true
+        )
+
+        val state = PackListUiState(
+            standalonePacks = listOf(imported),
+            scannedPacks = listOf(scanned)
+        )
+
+        val merged = state.packs
+        assertEquals("同一归档不应同时以扫描项与导入项出现两次", 1, merged.size)
+        assertEquals("应保留条目数已解析的导入项", 74, merged.first().itemCount)
+    }
+
+    @Test
     fun `returns standalone packs even when root folder is not set`() {
         val standalone = createZipPack("/storage/single.zip", "Single")
         val state = PackListUiState(

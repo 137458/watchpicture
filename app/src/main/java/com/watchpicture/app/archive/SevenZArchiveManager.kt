@@ -84,16 +84,50 @@ class SevenZArchiveManager(
         if (!isValidSevenZArchive(file)) return emptyList()
 
         val cachedEntries = sessionManager.getEntries(file, password)
-        if (cachedEntries != null) {
+        if (cachedEntries != null && cachedEntries.isNotEmpty()) {
             return cachedEntries
         }
         if (sessionManager.prewarmSession(file, password)) {
             val warmed = sessionManager.getEntries(file, password)
-            if (warmed != null) {
+            if (warmed != null && warmed.isNotEmpty()) {
                 return warmed
             }
         }
-        return emptyList()
+
+        // native 会话无法处理加密归档（nativeOpen 会抛
+        // UnsupportedOperationException: 7z archive contains unsupported compression method or encryption），
+        // 若不回退则加密 7z 永远列不出条目、解锁后只能得到空网格。这里用 commons-compress 直接枚举。
+        return readEntriesViaCommonsCompress(file, password)
+    }
+
+    /**
+     * 纯 Java 条目枚举回退路径，覆盖 native 无法打开的加密 7z（含头部加密）。
+     */
+    private fun readEntriesViaCommonsCompress(file: File, password: String?): List<ArchiveEntryInfo> {
+        return try {
+            val builder = SevenZFile.builder().setFile(file)
+            if (!password.isNullOrEmpty()) {
+                builder.setPassword(password.toCharArray())
+            }
+            builder.get().use { sevenZ ->
+                sevenZ.entries
+                    .asSequence()
+                    .filter { !it.isDirectory }
+                    .filter { !ZipArchiveManager.isIgnoredFile(it.name) }
+                    .filter { ZipArchiveManager.isMediaFile(it.name) }
+                    .map { entry ->
+                        ArchiveEntryInfo(
+                            name = entry.name,
+                            uncompressedSize = entry.size,
+                            isEncrypted = isEntryEncrypted(entry)
+                        )
+                    }
+                    .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+                    .toList()
+            }
+        } catch (_: Exception) {
+            emptyList()
+        }
     }
 
     /**

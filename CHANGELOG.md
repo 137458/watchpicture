@@ -26,6 +26,8 @@
 - 修复了扫描失败日志把用户文件完整路径写入 release 日志（`AppLog` 无分级输出）的隐私残留问题；`mapIsolated` 改为只记录子项名。
 - 修复了通过 SAF 导入的独立图包标题直接沿用落盘副本文件名（形如 `8位hash_原文件名`）、把内部缓存命名暴露到图包列表的问题；改为优先采用原始 Uri 的显示名，已保存的条目在下次启动重新解析时自动纠正。
 - 修复了独立主题页与更新页返回按钮的无障碍描述误用「取消」的问题，改用新增文案 `nav_back`（返回）。
+- 修复了加密 7z 图包解锁后网格为空、提示「图包内未发现有效图片」的问题：native 层无法打开加密 7z（`nativeOpen` 抛 `UnsupportedOperationException: 7z archive contains unsupported compression method or encryption`），而条目枚举此前**没有** Java 回退（口令校验与解压都有）→ 为 `SevenZArchiveManager.getMediaEntries` 增加 commons-compress 枚举回退，加密 7z 现可正常列出条目并按需解压。
+- 修复了同一条归档既被手动导入又被根目录扫描时在列表中重复出现的问题：两条通路的 `id`/`directPath` 永远不同（导入项指向内部落盘副本），改为按来源 Uri 的原始文件名做跨通路去重，保留信息更完整的导入项。
 - 修复了所选目录由其它应用创建（例如 `Download/Turrit` 这类 0770 权限目录）时，其下压缩包因裸 `File` 不可读而被静默丢弃、整个目录误报「当前目录下没有找到图片文件夹或 ZIP/CBZ 压缩包」的问题：扫描在裸文件路径读不出任何内容时回退到 SAF provider 读取，只能经 provider 访问的归档不再丢弃，而是保留条目（卡片显示「待读取」）并在首次打开时经 ContentResolver 按需落盘，随后照常进行加密判定与解锁流程。
 - 修复了 `App.kt` 中 `NavDisplay` 路由 `contentKey` 回调每次重组调用 `AtomicInteger.getAndIncrement()` 导致进入大图查看器再退出返回缩略图网格时 `SaveableStateHolder` 与 `LazyGridState` 被销毁重建、丢失浏览滚动位置的缺陷；改为基于 `packId` 的确定性稳定 `contentKey`，并在 `ThumbnailGridScreen` 首帧同步命中内存图片缓存消除加载闪烁。
 - 修复了 `ArchiveExtractionCoordinator.extractThumbnailDirectResult` 校验 `SevenZSessionManager` 返回结果时错误要求目标磁盘文件必须存在，导致 Coil 内存直出模式下（`keepBitmapInMemory = true`）生成的内存 `Bitmap` 被全部丢弃、强行跌入兜底路径逐张从头重新解压整块 7z 固实包（Solid Block）造成多分钟卡死甚至 OOM 的根本缺陷；重构为优先采信未回收的有效内存 Bitmap 结果。
