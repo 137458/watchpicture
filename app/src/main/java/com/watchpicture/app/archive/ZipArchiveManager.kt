@@ -77,7 +77,12 @@ class ZipArchiveManager(
                 if (zip.isEncrypted) return true
                 zip.fileHeaders.any { it.isEncrypted }
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            com.watchpicture.app.util.AppLog.e(
+                "ZipArchive",
+                "判定 zip 加密状态失败: 文件=${file.name.take(48)} 体积=${file.length()}",
+                e
+            )
             false
         }
     }
@@ -117,7 +122,15 @@ class ZipArchiveManager(
                         .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
                         .toList()
                 }
-            } catch (_: Exception) {
+            } catch (e: Exception) {
+                // release 只保留 ERROR 级日志：条目为空会让用户看到「图包内未发现有效图片」，
+                // 必须留痕真实异常（截断副本 / 容器与扩展名不符 / 头部损坏）才能定位。
+                com.watchpicture.app.util.AppLog.e(
+                    "ZipArchive",
+                    "读取 zip 条目失败: 文件=${file.name.take(48)} 体积=${file.length()} " +
+                        "字符集=${charset?.name() ?: "默认"}",
+                    e
+                )
                 emptyList()
             }
         }

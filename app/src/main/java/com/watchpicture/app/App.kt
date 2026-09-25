@@ -14,6 +14,7 @@ import com.watchpicture.app.ui.screen.MainScreen
 import com.watchpicture.app.ui.screen.ThumbnailGridScreen
 import com.watchpicture.app.ui.screen.ThemeSettingsScreen
 import com.watchpicture.app.ui.screen.UpdateScreen
+import com.watchpicture.app.ui.screen.VideoPlayerScreen
 import com.watchpicture.app.ui.theme.WatchPictureTheme
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.nav.core.NavDisplay
@@ -112,6 +113,19 @@ fun App() {
                     packId = route.packId,
                     initialIndex = route.initialIndex,
                     viewModel = viewerViewModel,
+                    onBack = { backStack.removeLastOrNull() },
+                    onNavigate = navigate
+                )
+            }
+
+            entry<AppRoute.VideoPlayer>(
+                contentKey = { route -> "video#${route.packId}#${route.entryPath}" }
+            ) { route ->
+                VideoPlayerScreen(
+                    packId = route.packId,
+                    entryPath = route.entryPath,
+                    displayName = route.displayName,
+                    source = route.source,
                     onBack = { backStack.removeLastOrNull() }
                 )
             }

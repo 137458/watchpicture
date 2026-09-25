@@ -99,14 +99,15 @@ import coil3.size.Precision
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.archive.CacheFileLeases
+import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.coil.ZipImageSource
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.toImageModel
+import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.storage.ReadingMode
 import com.watchpicture.app.ui.component.VideoEntryPlaceholder
 import com.watchpicture.app.ui.component.bottombar.vibrancy
-import com.watchpicture.app.ui.component.playVideoEntry
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -201,7 +202,8 @@ fun GalleryViewerScreen(
     packId: String,
     initialIndex: Int,
     viewModel: ViewerViewModel,
-    onBack: () -> Unit
+    onBack: () -> Unit,
+    onNavigate: (AppRoute) -> Unit
 ) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val readingMode by viewModel.readingMode.collectAsStateWithLifecycle(initialValue = ReadingMode.LTR)
@@ -374,8 +376,20 @@ fun GalleryViewerScreen(
             ) { pageIndex ->
                 val image = images[pageIndex]
                 if (image.isVideo) {
-                    // 视频条目无法按图片解码，改为播放入口
-                    VideoPage(image = image)
+                    // 视频条目无法按图片解码，改为应用内播放入口
+                    VideoPage(
+                        image = image,
+                        onPlay = {
+                            onNavigate(
+                                AppRoute.VideoPlayer(
+                                    packId = image.packId,
+                                    entryPath = image.entryPath,
+                                    displayName = image.displayName,
+                                    source = VideoLauncher.playSourceOf(image)
+                                )
+                            )
+                        }
+                    )
                 } else {
                     ZoomableImage(
                         image = image,
@@ -1115,26 +1129,17 @@ private fun DetailItemRow(
 
 /**
  * 视频页：视频无法按图片解码渲染，这里提供明确的播放入口，
- * 点击后把条目交给系统播放器（压缩包内条目会按需落盘再共享）。
+ * 点击后进入应用内的 Media3 播放页（压缩包内条目会按需落盘再播放）。
  */
 @Composable
 private fun VideoPage(
-    image: PackImage
+    image: PackImage,
+    onPlay: () -> Unit
 ) {
-    val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    var isLaunching by remember(image.entryPath) { mutableStateOf(false) }
-
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .clickable(enabled = !isLaunching) {
-                isLaunching = true
-                coroutineScope.launch {
-                    playVideoEntry(context, image)
-                    isLaunching = false
-                }
-            },
+            .clickable { onPlay() },
         contentAlignment = Alignment.Center
     ) {
         Column(

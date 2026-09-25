@@ -50,6 +50,7 @@ import kotlinx.coroutines.launch
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.archive.ZipArchiveManager
+import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.toImageModel
@@ -57,7 +58,6 @@ import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.component.BlurredBar
 import com.watchpicture.app.ui.component.VideoEntryPlaceholder
 import com.watchpicture.app.ui.component.blurBackdropSource
-import com.watchpicture.app.ui.component.playVideoEntry
 import com.watchpicture.app.ui.component.rememberBlurBackdrop
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.basic.Icon
@@ -342,8 +342,14 @@ fun ThumbnailGridScreen(
                                 isLastViewed = index == currentBrowseState.lastViewedIndex,
                                 onClick = {
                                     if (item.isVideo) {
-                                        // 视频条目不走图片画廊，直接交给系统播放器
-                                        coroutineScope.launch { playVideoEntry(context, item) }
+                                        onNavigate(
+                                            AppRoute.VideoPlayer(
+                                                packId = item.packId,
+                                                entryPath = item.entryPath,
+                                                displayName = item.displayName,
+                                                source = VideoLauncher.playSourceOf(item)
+                                            )
+                                        )
                                     } else {
                                         ViewerViewModel.saveScrollPosition(
                                             packId,

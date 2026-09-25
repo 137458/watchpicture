@@ -243,7 +243,10 @@ class SafManager(
 
         // provider-only 归档（裸 File 读不到，例如目录由其它应用以 0770 创建）不能在此丢弃：
         // 保留条目与原始 Uri，首次打开时经 ContentResolver 按需落盘后即可浏览。
-        val directFile = resolveDirectFile(doc.uri)?.takeIf { it.exists() }
+        // 必须连 canRead() 一起判定：目录 0770 时裸路径 stat 可见但无读取权限，
+        // zip4j 拿到这种 File 会直接抛「no read access for the input zip file」，
+        // 表现为图包条目数为 0、点开得到「图包内未发现有效图片」。
+        val directFile = resolveDirectFile(doc.uri)?.takeIf { it.exists() && it.canRead() }
         if (directFile == null) {
             com.watchpicture.app.util.AppLog.e(
                 "SafScan",

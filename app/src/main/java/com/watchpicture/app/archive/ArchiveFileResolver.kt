@@ -275,11 +275,20 @@ class ArchiveFileResolver(
                 }
             }
 
-            if (tempFile.exists() && tempFile.length() > 0 && isValidArchive(tempFile)) {
+            val copiedSize = if (tempFile.exists()) tempFile.length() else 0L
+            // provider 声明了大小时必须严格比对：归档的表头魔数在文件开头，被截断的副本仍能通过
+            // isValidArchive，落盘后才会在解析中央目录时失败，症状是「图包内未发现有效图片」。
+            val sizeMatches = expectedSize == null || expectedSize == copiedSize
+            if (copiedSize > 0L && sizeMatches && isValidArchive(tempFile)) {
                 if (targetFile.exists()) targetFile.delete()
                 tempFile.renameTo(targetFile)
                 targetFile
             } else {
+                com.watchpicture.app.util.AppLog.e(
+                    "ArchiveMaterialize",
+                    "落盘副本校验失败: ${targetFile.name.take(48)} " +
+                        "期望体积=${expectedSize ?: "未知"} 实际体积=$copiedSize"
+                )
                 tempFile.delete()
                 null
             }
