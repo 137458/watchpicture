@@ -220,4 +220,23 @@ class ArchiveDiskCacheTest {
         // Budget 0 -> everything is evicted, oldest first
         assertEquals(listOf("/c/oldest", "/c/middle", "/c/newest"), planLruTrim(entries, maxBytes = 0L))
     }
+
+    @Test
+    fun `planLruTrim never evicts entries that are still in use`() {
+        val entries = listOf(
+            LruCacheEntry("/c/leased_oldest", 40L, lastModified = 100L),
+            LruCacheEntry("/c/middle", 40L, lastModified = 200L),
+            LruCacheEntry("/c/newest", 40L, lastModified = 300L)
+        )
+        val evictable = { entry: LruCacheEntry -> entry.path != "/c/leased_oldest" }
+
+        // 120 bytes total, budget 80 -> the oldest is protected, so the next oldest must go instead
+        assertEquals(listOf("/c/middle"), planLruTrim(entries, maxBytes = 80L, evictable = evictable))
+
+        // Even at budget 0 the protected entry must survive; its size still counts toward the total
+        assertEquals(
+            listOf("/c/middle", "/c/newest"),
+            planLruTrim(entries, maxBytes = 0L, evictable = evictable)
+        )
+    }
 }

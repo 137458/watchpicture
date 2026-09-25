@@ -25,7 +25,7 @@ class DeepFolderImageResolverTest {
         val txt = File(sub1, "info.txt").apply { writeText("hello") }
         val dsStore = File(sub2, ".DS_Store").apply { writeBytes(byteArrayOf(0)) }
 
-        val images = DeepFolderImageResolver.collectImages(rootDir)
+        val images = DeepFolderImageResolver.collectMedia(rootDir)
 
         assertEquals(3, images.size)
         // Check relative paths or filenames
@@ -38,7 +38,7 @@ class DeepFolderImageResolverTest {
         val emptyDir = tempFolder.newFolder("Empty")
         val txt = File(emptyDir, "readme.txt").apply { writeText("nothing") }
 
-        val images = DeepFolderImageResolver.collectImages(emptyDir)
+        val images = DeepFolderImageResolver.collectMedia(emptyDir)
         assertTrue(images.isEmpty())
     }
 }

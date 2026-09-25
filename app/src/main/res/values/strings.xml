@@ -16,7 +16,6 @@
     <string name="invalid_archive_error">无法打开该压缩包：格式不受支持或文件已损坏</string>
     <string name="video_no_player">未找到可用的视频播放器</string>
     <string name="video_tap_to_play">点击播放视频</string>
-    <string name="video_play_failed">无法播放该视频：文件读取失败</string>
 
     <!-- Bottom Bar Tabs -->
     <string name="tab_packs">图包</string>
@@ -42,7 +41,7 @@
     <string name="settings_cache_cleared">已释放 %1$s</string>
     <string name="settings_cache_empty">暂无可清理的缓存</string>
     <string name="settings_cache_auto_title">自动清理缓存</string>
-    <string name="settings_cache_auto_summary">启动与退到后台时按容量上限自动淘汰最久未使用的缓存</string>
+    <string name="settings_cache_auto_summary">启动应用时按容量上限自动淘汰最久未使用的缓存</string>
 
     <string name="settings_section_about">关于与更新</string>
     <string name="settings_version_title">当前版本</string>

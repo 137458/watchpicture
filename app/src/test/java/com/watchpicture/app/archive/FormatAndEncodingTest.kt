@@ -75,7 +75,7 @@ class FormatAndEncodingTest {
         }
 
         val manager = ZipArchiveManager()
-        val entries = manager.getImageEntries(zipFile)
+        val entries = manager.getMediaEntries(zipFile)
         assertEquals(1, entries.size)
         // Must contain the actual Chinese character, must NOT contain Unicode replacement character \uFFFD
         assertFalse("Entry name must not contain replacement character", entries[0].name.contains("\uFFFD"))

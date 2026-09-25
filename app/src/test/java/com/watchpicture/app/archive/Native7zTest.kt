@@ -49,7 +49,7 @@ class Native7zTest {
     @Test
     fun `SevenZArchiveManager seamlessly falls back to Commons Compress when native is absent`() {
         val manager = SevenZArchiveManager()
-        val entries = manager.getImageEntries(plain7z)
+        val entries = manager.getMediaEntries(plain7z)
         assertEquals(1, entries.size)
         assertEquals("photo.jpg", entries[0].name)
 

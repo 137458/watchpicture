@@ -3,14 +3,14 @@ package com.watchpicture.app.archive
 import java.io.File
 
 /**
- * Recursively inspects folder hierarchies to collect image files,
+ * Recursively inspects folder hierarchies to collect browsable media files (images and videos),
  * ensuring nested chapter folders and wrapper directories are properly detected.
  */
 object DeepFolderImageResolver {
 
     private val comparator = NaturalOrderComparator()
 
-    fun collectImages(dir: File): List<File> {
+    fun collectMedia(dir: File): List<File> {
         if (!dir.exists() || !dir.isDirectory) return emptyList()
 
         val results = mutableListOf<File>()

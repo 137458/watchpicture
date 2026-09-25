@@ -14,6 +14,7 @@ import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.PackItem
 import com.watchpicture.app.model.ZipPack
 import com.watchpicture.app.security.SessionPasswordStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -61,7 +62,8 @@ class SafManager(
      */
     private suspend fun scanFromDirectFile(rootDir: File): List<PackItem> {
         val children = rootDir.listFiles() ?: return emptyList()
-        return children.asIterable().mapIsolated("SafScan") { processDirectChild(it) }
+        return children.asIterable()
+            .mapIsolated(tag = "SafScan", describe = { it.name }) { processDirectChild(it) }
             .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
     }
 
@@ -71,7 +73,7 @@ class SafManager(
         }
 
         if (child.isDirectory) {
-            val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectImages(child)
+            val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectMedia(child)
             if (imageFiles.isNotEmpty()) {
                 val first = imageFiles.first()
                 val relPath = first.relativeTo(child).path.replace('\\', '/')
@@ -105,7 +107,7 @@ class SafManager(
 
             if (isZip || isCbz || is7z) {
                 val cachedPassword = passwordStore.get(child.absolutePath)
-                val entries = zipArchiveManager.getImageEntries(child, cachedPassword)
+                val entries = zipArchiveManager.getMediaEntries(child, cachedPassword)
                 val isEncrypted = if (entries.isNotEmpty()) entries.any { it.isEncrypted } else zipArchiveManager.isEncrypted(child)
 
                 val cover = entries.firstOrNull()?.let { entry ->
@@ -138,94 +140,93 @@ class SafManager(
 
     /**
      * Fallback scanning using standard Android DocumentFile for restricted SAF providers.
+     * 与直接文件系统路径一致，每个子项独立处理，单个子项失败不会清空整张图包列表。
      */
     private fun scanFromDocumentFile(context: Context, treeUri: Uri): List<PackItem> {
         val rootDoc = DocumentFile.fromTreeUri(context, treeUri) ?: return emptyList()
-        val files = rootDoc.listFiles()
-        val packs = mutableListOf<PackItem>()
-
-        for (doc in files) {
-            val name = doc.name ?: continue
-            if (name.startsWith(".") || name.equals("__MACOSX", ignoreCase = true)) {
-                continue
-            }
-
-            if (doc.isDirectory) {
-                val subFiles = doc.listFiles()
-                val images = subFiles.filter { it.isFile && ZipArchiveManager.isImageFile(it.name ?: "") }
-                    .sortedWith { a, b -> naturalOrderComparator.compare(a.name ?: "", b.name ?: "") }
-
-                if (images.isNotEmpty()) {
-                    val first = images.first()
-                    val cover = PackImage(
-                        packId = doc.uri.toString(),
-                        entryPath = first.name ?: "",
-                        displayName = first.name ?: "",
-                        isEncrypted = false,
-                        fileUri = first.uri.toString()
-                    )
-                    packs.add(
-                        DirectoryPack(
-                            id = doc.uri.toString(),
-                            name = name,
-                            uriString = doc.uri.toString(),
-                            directPath = null,
-                            itemCount = images.size,
-                            fileSize = doc.length(),
-                            lastModified = doc.lastModified(),
-                            coverImage = cover
-                        )
-                    )
-                }
-            } else if (doc.isFile) {
-                val lowerName = name.lowercase()
-                if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) {
-                    continue
-                }
-                val isZip = lowerName.endsWith(".zip")
-                val isCbz = lowerName.endsWith(".cbz")
-                val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
-
-                if (isZip || isCbz || is7z) {
-                    // Try to resolve direct file if possible
-                    val directFile = resolveDirectFile(doc.uri)
-                    if (directFile != null && directFile.exists()) {
-                        val cachedPassword = passwordStore.get(doc.uri.toString())
-                        val entries = zipArchiveManager.getImageEntries(directFile, cachedPassword)
-                        val isEncrypted = if (entries.isNotEmpty()) entries.any { it.isEncrypted } else zipArchiveManager.isEncrypted(directFile)
-
-                        val cover = entries.firstOrNull()?.let { entry ->
-                            PackImage(
-                                packId = doc.uri.toString(),
-                                entryPath = entry.name,
-                                displayName = entry.name.substringAfterLast('/'),
-                                isEncrypted = entry.isEncrypted,
-                                directFilePath = directFile.absolutePath,
-                                fileUri = doc.uri.toString()
-                            )
-                        }
-
-                        packs.add(
-                            ZipPack(
-                                id = doc.uri.toString(),
-                                name = name.substringBeforeLast('.'),
-                                uriString = doc.uri.toString(),
-                                directPath = directFile.absolutePath,
-                                itemCount = entries.size,
-                                isEncrypted = isEncrypted,
-                                fileSize = doc.length(),
-                                lastModified = doc.lastModified(),
-                                coverImage = cover,
-                                isCbz = isCbz,
-                                is7z = is7z
-                            )
+        return rootDoc.listFiles()
+            .mapNotNull { doc ->
+                runCatching { processDocumentChild(doc) }
+                    .onFailure { cause ->
+                        com.watchpicture.app.util.AppLog.e(
+                            "SafScan",
+                            "文档子项处理失败，已跳过: ${doc.name ?: doc.uri}",
+                            cause
                         )
                     }
-                }
+                    .getOrNull()
             }
+            .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+    }
+
+    private fun processDocumentChild(doc: DocumentFile): PackItem? {
+        val name = doc.name ?: return null
+        if (name.startsWith(".") || name.equals("__MACOSX", ignoreCase = true)) return null
+
+        if (doc.isDirectory) {
+            val media = doc.listFiles()
+                .filter { it.isFile && ZipArchiveManager.isMediaFile(it.name ?: "") }
+                .sortedWith { a, b -> naturalOrderComparator.compare(a.name ?: "", b.name ?: "") }
+
+            if (media.isEmpty()) return null
+            val first = media.first()
+            return DirectoryPack(
+                id = doc.uri.toString(),
+                name = name,
+                uriString = doc.uri.toString(),
+                directPath = null,
+                itemCount = media.size,
+                fileSize = doc.length(),
+                lastModified = doc.lastModified(),
+                coverImage = PackImage(
+                    packId = doc.uri.toString(),
+                    entryPath = first.name ?: "",
+                    displayName = first.name ?: "",
+                    isEncrypted = false,
+                    fileUri = first.uri.toString()
+                )
+            )
         }
 
-        return packs.sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
+        if (!doc.isFile) return null
+        val lowerName = name.lowercase()
+        if (com.watchpicture.app.archive.ArchiveFileResolver.isDisallowedExtension(lowerName)) return null
+        val isZip = lowerName.endsWith(".zip")
+        val isCbz = lowerName.endsWith(".cbz")
+        if (!(isZip || isCbz || lowerName.endsWith(".7z") || lowerName.endsWith(".cb7"))) return null
+
+        // Only archives resolvable to a real file can be listed here
+        val directFile = resolveDirectFile(doc.uri)?.takeIf { it.exists() } ?: return null
+        val cachedPassword = passwordStore.get(doc.uri.toString())
+        val entries = zipArchiveManager.getMediaEntries(directFile, cachedPassword)
+        val isEncrypted = if (entries.isNotEmpty()) {
+            entries.any { it.isEncrypted }
+        } else {
+            zipArchiveManager.isEncrypted(directFile)
+        }
+
+        return ZipPack(
+            id = doc.uri.toString(),
+            name = name.substringBeforeLast('.'),
+            uriString = doc.uri.toString(),
+            directPath = directFile.absolutePath,
+            itemCount = entries.size,
+            isEncrypted = isEncrypted,
+            fileSize = doc.length(),
+            lastModified = doc.lastModified(),
+            coverImage = entries.firstOrNull()?.let { entry ->
+                PackImage(
+                    packId = doc.uri.toString(),
+                    entryPath = entry.name,
+                    displayName = entry.name.substringAfterLast('/'),
+                    isEncrypted = entry.isEncrypted,
+                    directFilePath = directFile.absolutePath,
+                    fileUri = doc.uri.toString()
+                )
+            },
+            isCbz = isCbz,
+            is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7")
+        )
     }
 
     /**
@@ -310,15 +311,23 @@ class SafManager(
  *
  * 失败项只记录日志并被丢弃，不会中断整批处理：扫描图包时任何一个异常子项（损坏归档、
  * 不可读目录等）此前都会让 `awaitAll` 抛出，进而清空整张图包列表并误报“没有找到压缩包”。
+ *
+ * @param describe 生成用于日志的子项简述。刻意不直接打印子项本身，避免把用户文件的
+ *   完整路径写进 release 日志。
  */
 internal suspend fun <T, R : Any> Iterable<T>.mapIsolated(
     tag: String,
+    describe: (T) -> String,
     process: (T) -> R?
 ): List<R> = coroutineScope {
     map { item ->
         async(Dispatchers.IO) {
             runCatching { process(item) }
-                .onFailure { com.watchpicture.app.util.AppLog.e(tag, "子项处理失败，已跳过: $item", it) }
+                .onFailure { cause ->
+                    // 协程取消不是业务失败，必须继续向上传播，否则会吞掉取消信号
+                    if (cause is CancellationException) throw cause
+                    com.watchpicture.app.util.AppLog.e(tag, "子项处理失败，已跳过: ${describe(item)}", cause)
+                }
                 .getOrNull()
         }
     }

@@ -104,7 +104,7 @@ fun SettingsScreen(
     var isClearingCache by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
-        cacheSizeBytes = WatchPictureApp.instance.totalCacheSizeBytes()
+        cacheSizeBytes = WatchPictureApp.instance.cacheMaintenance.totalSizeBytes()
     }
 
     val themeSummary = "${themeAppearanceLabel(darkMode)} · ${themeColorSourceLabel(colorMode, seedColor)}"
@@ -266,8 +266,8 @@ fun SettingsScreen(
                                 if (!isClearingCache) {
                                     isClearingCache = true
                                     coroutineScope.launch {
-                                        val freed = WatchPictureApp.instance.clearAllCaches()
-                                        cacheSizeBytes = WatchPictureApp.instance.totalCacheSizeBytes()
+                                        val freed = WatchPictureApp.instance.cacheMaintenance.clearAll()
+                                        cacheSizeBytes = WatchPictureApp.instance.cacheMaintenance.totalSizeBytes()
                                         isClearingCache = false
                                         val message = if (freed > 0L) {
                                             context.getString(R.string.settings_cache_cleared, formatFileSize(freed))

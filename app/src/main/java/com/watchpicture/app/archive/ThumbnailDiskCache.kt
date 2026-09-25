@@ -567,29 +567,23 @@ class ThumbnailDiskCache(
     /**
      * 统计缓存目录当前占用的字节数（忽略写入中的 .tmp 半成品）。
      */
-    fun sizeOnDisk(): Long = directory.listFiles()
-        ?.filter { it.isFile && !it.name.endsWith(".tmp") }
-        ?.sumOf { it.length() }
-        ?: 0L
+    fun sizeOnDisk(): Long = cacheDirectorySize(directory)
 
     fun trimToSize() {
         globalLock.withLock {
             val files = directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") } ?: return
-            var totalSize = files.sumOf { it.length() }
-            currentSizeBytes.set(totalSize)
-            if (totalSize <= maxSizeBytes) return
+            val entries = files.map { LruCacheEntry(it.absolutePath, it.length(), it.lastModified()) }
+            currentSizeBytes.set(entries.sumOf { it.sizeBytes })
 
-            val sorted = files
-                .filter { !CacheFileLeases.isLeased(it.absolutePath) }
-                .sortedBy { it.lastModified() }
-            for (file in sorted) {
+            // 在途读取持有的租约文件不得淘汰，其占用仍计入总量
+            val victims = planLruTrim(entries, maxSizeBytes) { !CacheFileLeases.isLeased(it.path) }
+            var freed = 0L
+            for (path in victims) {
+                val file = java.io.File(path)
                 val size = file.length()
-                if (file.delete()) {
-                    totalSize -= size
-                    currentSizeBytes.addAndGet(-size)
-                    if (totalSize <= maxSizeBytes) break
-                }
+                if (file.delete()) freed += size
             }
+            if (freed > 0L) currentSizeBytes.addAndGet(-freed)
         }
     }
 

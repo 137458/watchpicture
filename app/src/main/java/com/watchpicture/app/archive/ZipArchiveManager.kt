@@ -83,11 +83,11 @@ class ZipArchiveManager(
     }
 
     /**
-     * Retrieves all valid image entries sorted in human-intuitive natural order.
+     * Retrieves all browsable media entries (images and videos) sorted in human-intuitive natural order.
      */
-    fun getImageEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
+    fun getMediaEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
         if (isSevenZFile(file)) {
-            return sevenZManager.getImageEntries(file, password)
+            return sevenZManager.getMediaEntries(file, password)
         }
 
         fun readEntries(charset: Charset?): List<ArchiveEntryInfo> {

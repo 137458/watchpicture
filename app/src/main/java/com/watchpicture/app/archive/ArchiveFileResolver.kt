@@ -130,7 +130,7 @@ class ArchiveFileResolver(
         val isCbz = lowerName.endsWith(".cbz")
         val is7z = lowerName.endsWith(".7z") || lowerName.endsWith(".cb7") || isValidSevenZArchive(file)
         val password = cachedPassword ?: passwordStore.get(file.absolutePath)
-        val entries = zipArchiveManager.getImageEntries(file, password)
+        val entries = zipArchiveManager.getMediaEntries(file, password)
         val isEncrypted = if (entries.isNotEmpty()) entries.any { it.isEncrypted } else zipArchiveManager.isEncrypted(file)
 
         val fallbackUri = uriString ?: "file://${file.absolutePath}"
@@ -178,17 +178,13 @@ class ArchiveFileResolver(
     }
 
     /**
-     * 统计 SAF 归档落盘缓存的当前占用字节数。
+     * 统计 SAF 归档落盘缓存的当前占用字节数（忽略写入中的 .tmp 半成品）。
      */
-    fun archiveCacheSizeBytes(context: Context): Long = openedArchivesDir(context)
-        .listFiles()
-        ?.filter { it.isFile }
-        ?.sumOf { it.length() }
-        ?: 0L
+    fun archiveCacheSizeBytes(context: Context): Long = cacheDirectorySize(openedArchivesDir(context))
 
     /**
      * 按 LRU 把 SAF 归档落盘缓存裁剪到 [maxBytes] 预算以内，返回释放的字节数。
-     * 仅在应用启动/退到后台等无在途读取的时机调用。
+     * 仅在应用启动（尚无任何归档被打开）时调用，避免删除在途读取的副本。
      */
     fun trimArchiveCache(context: Context, maxBytes: Long = OPENED_ARCHIVES_MAX_BYTES): Long =
         deleteFiles(planLruTrim(openedArchivesEntries(context), maxBytes))
@@ -204,7 +200,7 @@ class ArchiveFileResolver(
 
     private fun openedArchivesEntries(context: Context): List<LruCacheEntry> = openedArchivesDir(context)
         .listFiles()
-        ?.filter { it.isFile }
+        ?.filter { it.isFile && !it.name.endsWith(".tmp") }
         ?.map { LruCacheEntry(it.absolutePath, it.length(), it.lastModified()) }
         ?: emptyList()
 

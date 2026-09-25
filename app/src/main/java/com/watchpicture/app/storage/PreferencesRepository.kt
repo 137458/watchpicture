@@ -108,12 +108,6 @@ class PreferencesRepository(private val context: Context) {
             preferences[KEY_IGNORED_VERSION]
         }
 
-    val themeModeIndexFlow: Flow<Int> = context.settingsDataStore.data
-        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
-        .map { preferences ->
-            preferences[KEY_THEME_MODE_INDEX] ?: 3
-        }
-
     /**
      * 外观深浅模式: 0=跟随系统, 1=浅色, 2=深色。
      */
@@ -198,12 +192,6 @@ class PreferencesRepository(private val context: Context) {
     suspend fun saveIgnoredVersion(version: String) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_IGNORED_VERSION] = version
-        }
-    }
-
-    suspend fun saveThemeModeIndex(index: Int) {
-        context.settingsDataStore.edit { preferences ->
-            preferences[KEY_THEME_MODE_INDEX] = index
         }
     }
 

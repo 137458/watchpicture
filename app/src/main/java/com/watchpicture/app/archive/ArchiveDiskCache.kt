@@ -251,10 +251,7 @@ class ArchiveDiskCache(
     /**
      * 统计缓存目录当前占用的字节数（忽略写入中的 .tmp 半成品）。
      */
-    fun sizeOnDisk(): Long = directory.listFiles()
-        ?.filter { it.isFile && !it.name.endsWith(".tmp") }
-        ?.sumOf { it.length() }
-        ?: 0L
+    fun sizeOnDisk(): Long = cacheDirectorySize(directory)
 
     /**
      * Evicts oldest accessed files until total size is within [maxSizeBytes].
@@ -262,23 +259,18 @@ class ArchiveDiskCache(
     fun trimToSize() {
         globalLock.withLock {
             val files = directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") } ?: return
-            var totalSize = files.sumOf { it.length() }
-            currentSizeBytes.set(totalSize)
-            if (totalSize <= maxSizeBytes) return
+            val entries = files.map { LruCacheEntry(it.absolutePath, it.length(), it.lastModified()) }
+            currentSizeBytes.set(entries.sumOf { it.sizeBytes })
 
-            // Sort by last modified ascending (LRU). Files currently leased by an in-flight
-            // reader (e.g. Coil decoding the returned ImageSource) must not be deleted.
-            val sorted = files
-                .filter { !CacheFileLeases.isLeased(it.absolutePath) }
-                .sortedBy { it.lastModified() }
-            for (file in sorted) {
+            // 在途读取持有的租约文件不得淘汰，其占用仍计入总量
+            val victims = planLruTrim(entries, maxSizeBytes) { !CacheFileLeases.isLeased(it.path) }
+            var freed = 0L
+            for (path in victims) {
+                val file = File(path)
                 val size = file.length()
-                if (file.delete()) {
-                    totalSize -= size
-                    currentSizeBytes.addAndGet(-size)
-                    if (totalSize <= maxSizeBytes) break
-                }
+                if (file.delete()) freed += size
             }
+            if (freed > 0L) currentSizeBytes.addAndGet(-freed)
         }
     }
 
@@ -340,6 +332,14 @@ class ArchiveDiskCache(
 }
 
 /**
+ * 统计缓存目录占用的字节数（忽略写入中的 .tmp 半成品）。
+ */
+internal fun cacheDirectorySize(directory: File): Long = directory.listFiles()
+    ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+    ?.sumOf { it.length() }
+    ?: 0L
+
+/**
  * 缓存文件 LRU 淘汰所需的最小信息。
  */
 internal data class LruCacheEntry(
@@ -351,14 +351,22 @@ internal data class LruCacheEntry(
 /**
  * 计算把缓存裁剪到 [maxBytes] 预算以内需要删除的文件路径，按最久未使用（lastModified 升序）优先。
  * 当前占用未超预算时返回空列表。
+ *
+ * @param evictable 判定某条目当前是否允许删除；被占用的条目（例如仍有在途读取的租约文件）返回 false，
+ *   这类条目会被跳过，其占用仍计入总量。
  */
-internal fun planLruTrim(entries: List<LruCacheEntry>, maxBytes: Long): List<String> {
+internal fun planLruTrim(
+    entries: List<LruCacheEntry>,
+    maxBytes: Long,
+    evictable: (LruCacheEntry) -> Boolean = { true }
+): List<String> {
     val usable = entries.filter { it.sizeBytes > 0L }
     var remaining = usable.sumOf { it.sizeBytes }
     if (remaining <= maxBytes) return emptyList()
 
     val victims = mutableListOf<String>()
     for (entry in usable.sortedBy { it.lastModified }) {
+        if (!evictable(entry)) continue
         victims.add(entry.path)
         remaining -= entry.sizeBytes
         if (remaining <= maxBytes) break

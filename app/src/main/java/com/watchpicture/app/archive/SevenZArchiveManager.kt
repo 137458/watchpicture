@@ -78,9 +78,9 @@ class SevenZArchiveManager(
     }
 
     /**
-     * Retrieves all valid image entries sorted in human-intuitive natural order.
+     * Retrieves all browsable media entries (images and videos) sorted in human-intuitive natural order.
      */
-    fun getImageEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
+    fun getMediaEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
         if (!isValidSevenZArchive(file)) return emptyList()
 
         val cachedEntries = sessionManager.getEntries(file, password)

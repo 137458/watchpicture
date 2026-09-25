@@ -290,6 +290,40 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                 onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
             }
             is ZipPack -> {
+                // 落盘副本可能已被自动或手动清理：先按持久化的原始 Uri 重新落盘，
+                // 否则后续会以已删除的缓存路径为 packId 打开，得到空网格。
+                val direct = pack.directPath?.let { File(it) }
+                if (direct != null && !direct.exists() && pack.uriString.startsWith("content://")) {
+                    viewModelScope.launch {
+                        _uiState.update { it.copy(isLoading = true, errorMessage = null) }
+                        val restored = try {
+                            archiveFileResolver.resolve(app, Uri.parse(pack.uriString))
+                        } catch (e: Exception) {
+                            com.watchpicture.app.util.AppLog.e("PackClick", "重新落盘失败: ${pack.name}", e)
+                            null
+                        }
+                        if (restored == null) {
+                            _uiState.update {
+                                it.copy(
+                                    isLoading = false,
+                                    errorMessage = "缓存已清理，无法重新读取该压缩包，请重新导入"
+                                )
+                            }
+                            return@launch
+                        }
+                        val merged = restored.copy(id = pack.id, name = pack.name, uriString = pack.uriString)
+                        _uiState.update { state ->
+                            state.copy(
+                                isLoading = false,
+                                standalonePacks = state.standalonePacks.map { if (it.id == pack.id) merged else it },
+                                scannedPacks = state.scannedPacks.map { if (it.id == pack.id) merged else it }
+                            )
+                        }
+                        onPackClicked(merged, onNavigate)
+                    }
+                    return
+                }
+
                 if (!pack.isEncrypted) {
                     onNavigate(AppRoute.ThumbnailGrid(packId = pack.id, title = pack.name))
                 } else {
@@ -338,7 +372,7 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                                 // passwordStore.get(pack.id), which is only re-read on recomposition.
                                 val entries = try {
                                     withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
-                                        zipArchiveManager.getImageEntries(targetFile, lastPwd)
+                                        zipArchiveManager.getMediaEntries(targetFile, lastPwd)
                                     }
                                 } catch (e: Exception) {
                                     com.watchpicture.app.util.AppLog.e("PackClick", "Auto-unlock entries failed for ${pack.name}", e)
@@ -484,7 +518,7 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                 // Update item count and cover after unlocking
                 val t1 = System.currentTimeMillis()
                 val entries = withContext(com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher) {
-                    zipArchiveManager.getImageEntries(targetFile, password)
+                    zipArchiveManager.getMediaEntries(targetFile, password)
                 }
                 com.watchpicture.app.util.AppLog.i("Unlock", "entries=${entries.size} in ${System.currentTimeMillis() - t1}ms (total ${System.currentTimeMillis() - t0}ms)")
                 val updatedCover = entries.firstOrNull()?.let { entry ->

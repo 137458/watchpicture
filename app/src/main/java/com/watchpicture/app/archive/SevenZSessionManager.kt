@@ -205,7 +205,7 @@ open class SevenZSessionManager(
                                 .asSequence()
                                 .filter { it.index > targetEntry.index && !it.isDirectory }
                                 .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .filter { ZipArchiveManager.isMediaFile(it.path) }
                                 .take(lookahead)
                                 .toList()
 
@@ -232,7 +232,7 @@ open class SevenZSessionManager(
                                 .asSequence()
                                 .filter { it.index > targetEntry.index && !it.isDirectory }
                                 .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .filter { ZipArchiveManager.isMediaFile(it.path) }
                                 .take(lookahead)
                                 .toList()
 
@@ -303,7 +303,7 @@ open class SevenZSessionManager(
                     } else if (!targetFound) {
                         // In solid compression, intermediate bytes must be decoded anyway to reach target.
                         // Opportunistically caching them saves work and turns O(N^2) seek into O(N) linear work.
-                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                        if (!isDir && ZipArchiveManager.isMediaFile(entryName)) {
                             currentSz.getInputStream(entry).use { stream ->
                                 onEntryExtracted(entryName, stream)
                                 while (stream.read(discardBuffer) != -1) {
@@ -318,7 +318,7 @@ open class SevenZSessionManager(
                             }
                         }
                     } else if (targetFound && lookaheadRemaining > 0) {
-                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                        if (!isDir && ZipArchiveManager.isMediaFile(entryName)) {
                             currentSz.getInputStream(entry).use { stream ->
                                 onEntryExtracted(entryName, stream)
                                 while (stream.read(discardBuffer) != -1) {
@@ -420,7 +420,7 @@ open class SevenZSessionManager(
                                 .asSequence()
                                 .filter { it.index > targetEntry.index && !it.isDirectory }
                                 .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .filter { ZipArchiveManager.isMediaFile(it.path) }
                                 .take(lookahead)
                                 .toList()
 
@@ -460,7 +460,7 @@ open class SevenZSessionManager(
                                 .asSequence()
                                 .filter { it.index > targetEntry.index && !it.isDirectory }
                                 .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                                .filter { ZipArchiveManager.isImageFile(it.path) }
+                                .filter { ZipArchiveManager.isMediaFile(it.path) }
                                 .take(lookahead)
                                 .toList()
 
@@ -541,7 +541,7 @@ open class SevenZSessionManager(
                             }
                         }
                     } else if (session.currentEntryIndex < targetIdx) {
-                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                        if (!isDir && ZipArchiveManager.isMediaFile(entryName)) {
                             currentSz.getInputStream(entry).use { stream ->
                                 // Entries walked before the target are prefetched only; their
                                 // lease is released here so premature pins cannot block eviction.
@@ -555,7 +555,7 @@ open class SevenZSessionManager(
                             }
                         }
                     } else if (session.currentEntryIndex > targetIdx && lookaheadRemaining > 0) {
-                        if (!isDir && ZipArchiveManager.isImageFile(entryName)) {
+                        if (!isDir && ZipArchiveManager.isMediaFile(entryName)) {
                             currentSz.getInputStream(entry).use { stream ->
                                 thumbnailDiskCache.getOrPut(file, entryName, targetSizePx, password) { stream }
                             }
@@ -628,9 +628,9 @@ open class SevenZSessionManager(
     }
 
     /**
-     * Retrieves the next [count] image entries following [currentEntryName] in archive physical order.
+     * Retrieves the next [count] media entries following [currentEntryName] in archive physical order.
      */
-    fun getNextImageEntries(
+    fun getNextMediaEntries(
         file: File,
         currentEntryName: String,
         password: String?,
@@ -645,7 +645,7 @@ open class SevenZSessionManager(
                 .asSequence()
                 .filter { it.index > target.index && !it.isDirectory }
                 .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                .filter { ZipArchiveManager.isImageFile(it.path) }
+                .filter { ZipArchiveManager.isMediaFile(it.path) }
                 .take(count)
                 .map { it.path }
                 .toList()
@@ -661,7 +661,7 @@ open class SevenZSessionManager(
             .drop(idx + 1)
             .filter { !it.isDirectory }
             .filter { !ZipArchiveManager.isIgnoredFile(it.name) }
-            .filter { ZipArchiveManager.isImageFile(it.name) }
+            .filter { ZipArchiveManager.isMediaFile(it.name) }
             .take(count)
             .map { it.name }
             .toList()
@@ -694,7 +694,7 @@ open class SevenZSessionManager(
                 }
                 val native = session.nativeSession
                 if (native != null && !session.nativeFailed) {
-                    val encrypted = native.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isImageFile(it.path) }
+                    val encrypted = native.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isMediaFile(it.path) }
                     if (encrypted == null) {
                         session.verifiedPassword = password
                         return@withLock true
@@ -722,7 +722,7 @@ open class SevenZSessionManager(
                     return@withLock false
                 }
                 val sz = session.sevenZ ?: return@withLock false
-                val entry = sz.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isImageFile(it.name) } ?: run {
+                val entry = sz.entries.firstOrNull { !it.isDirectory && ZipArchiveManager.isMediaFile(it.name) } ?: run {
                     session.verifiedPassword = password
                     return@withLock true
                 }
@@ -812,7 +812,7 @@ open class SevenZSessionManager(
                 .asSequence()
                 .filter { !it.isDirectory }
                 .filter { !ZipArchiveManager.isIgnoredFile(it.path) }
-                .filter { ZipArchiveManager.isImageFile(it.path) }
+                .filter { ZipArchiveManager.isMediaFile(it.path) }
                 .map { entry ->
                     ArchiveEntryInfo(
                         name = entry.path,
@@ -829,7 +829,7 @@ open class SevenZSessionManager(
             .asSequence()
             .filter { !it.isDirectory }
             .filter { !ZipArchiveManager.isIgnoredFile(it.name) }
-            .filter { ZipArchiveManager.isImageFile(it.name) }
+            .filter { ZipArchiveManager.isMediaFile(it.name) }
             .map { entry ->
                 ArchiveEntryInfo(
                     name = entry.name,

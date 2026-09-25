@@ -74,7 +74,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
         val file = File(packId)
         if (file.exists()) {
             if (file.isDirectory) {
-                val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectImages(file)
+                val imageFiles = com.watchpicture.app.archive.DeepFolderImageResolver.collectMedia(file)
 
                 return imageFiles.map { img ->
                     val relPath = img.relativeTo(file).path.replace('\\', '/')
@@ -89,7 +89,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
             } else if (file.isFile) {
                 val password = passwordStore.get(packId)
                     ?: passwordStore.get(file.absolutePath)
-                val entries = zipArchiveManager.getImageEntries(file, password)
+                val entries = zipArchiveManager.getMediaEntries(file, password)
                 return entries.map { entry ->
                     PackImage(
                         packId = packId,

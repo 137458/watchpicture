@@ -57,7 +57,7 @@ class ZipArchiveManagerGbkTest {
         assertTrue("Must verify correct password on GBK archive", manager.verifyPassword(gbkZip, password))
         assertFalse("Must fail on wrong password", manager.verifyPassword(gbkZip, "BadPassword"))
 
-        val entries = manager.getImageEntries(gbkZip, password)
+        val entries = manager.getMediaEntries(gbkZip, password)
         assertEquals("Must discover both image entries", 2, entries.size)
 
         val stream = manager.getEntryInputStream(gbkZip, entries[0].name, password)

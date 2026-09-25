@@ -215,7 +215,7 @@ class ArchiveExtractionCoordinator(
 
             if (extractedFile != null && extractedFile.exists() && extractedFile.length() > 0L) {
                 if (lookahead > 0) {
-                    val nextEntries = sevenZSessionManager.getNextImageEntries(file, targetEntryName, password, lookahead)
+                    val nextEntries = sevenZSessionManager.getNextMediaEntries(file, targetEntryName, password, lookahead)
                     if (nextEntries.isNotEmpty()) {
                         // Background lookahead on the low-priority dispatcher; cancelled via
                         // activeSweepJob / purgeJobs management on session close.

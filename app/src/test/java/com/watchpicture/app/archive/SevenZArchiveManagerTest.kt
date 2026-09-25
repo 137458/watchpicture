@@ -109,7 +109,7 @@ class SevenZArchiveManagerTest {
 
     @Test
     fun `extracts plain 7z image entries in natural order and ignores non-images`() {
-        val entries = manager.getImageEntries(plain7z)
+        val entries = manager.getMediaEntries(plain7z)
         assertEquals(3, entries.size)
         assertEquals("2_page.jpg", entries[0].name)
         assertEquals("10_page.jpg", entries[1].name)
@@ -129,7 +129,7 @@ class SevenZArchiveManagerTest {
         if (!headerEncrypted7z.exists() || headerEncrypted7z.length() == 0L) return
         assertTrue(manager.isEncrypted(headerEncrypted7z))
 
-        val entries = manager.getImageEntries(headerEncrypted7z, null)
+        val entries = manager.getMediaEntries(headerEncrypted7z, null)
         assertTrue(entries.isEmpty())
 
         // Wrong password fails verification
@@ -148,14 +148,14 @@ class SevenZArchiveManagerTest {
     }
 
     @Test
-    fun `getImageEntries prewarms sessionManager even when password is null to avoid redundant archive opens`() {
+    fun `getMediaEntries prewarms sessionManager even when password is null to avoid redundant archive opens`() {
         val freshManager = SevenZArchiveManager()
         assertEquals(0, freshManager.sessionManager.activeSessionCount)
 
-        val entries = freshManager.getImageEntries(plain7z, password = null)
+        val entries = freshManager.getMediaEntries(plain7z, password = null)
         assertEquals(3, entries.size)
         assertEquals(
-            "getImageEntries should keep session warm in sessionManager for subsequent thumbnail/image loads",
+            "getMediaEntries should keep session warm in sessionManager for subsequent thumbnail/image loads",
             1,
             freshManager.sessionManager.activeSessionCount
         )

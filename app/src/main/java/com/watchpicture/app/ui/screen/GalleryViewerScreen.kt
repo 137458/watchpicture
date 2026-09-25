@@ -100,12 +100,13 @@ import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.archive.CacheFileLeases
 import com.watchpicture.app.coil.ZipImageSource
-import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.storage.ReadingMode
+import com.watchpicture.app.ui.component.VideoEntryPlaceholder
 import com.watchpicture.app.ui.component.bottombar.vibrancy
+import com.watchpicture.app.ui.component.playVideoEntry
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -952,19 +953,10 @@ private fun PageQuickViewBottomSheet(
                         .clickable { onSelectPage(index) }
                 ) {
                     if (isVideoItem) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .background(Color(0xFF1B1B1F)),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayCircleOutline,
-                                contentDescription = null,
-                                tint = Color.White,
-                                modifier = Modifier.size(30.dp)
-                            )
-                        }
+                        VideoEntryPlaceholder(
+                            modifier = Modifier.fillMaxSize(),
+                            iconSize = 30.dp
+                        )
                     } else if (thumbRequest != null) {
                         AsyncImage(
                             model = thumbRequest,
@@ -1139,15 +1131,8 @@ private fun VideoPage(
             .clickable(enabled = !isLaunching) {
                 isLaunching = true
                 coroutineScope.launch {
-                    val started = VideoLauncher.play(context, image)
+                    playVideoEntry(context, image)
                     isLaunching = false
-                    if (!started) {
-                        android.widget.Toast.makeText(
-                            context,
-                            context.getString(R.string.video_play_failed),
-                            android.widget.Toast.LENGTH_SHORT
-                        ).show()
-                    }
                 }
             },
         contentAlignment = Alignment.Center

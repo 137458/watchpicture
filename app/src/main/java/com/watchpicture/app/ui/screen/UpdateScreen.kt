@@ -672,10 +672,18 @@ private fun SafeAppIcon(modifier: Modifier = Modifier) {
             modifier = modifier,
         )
     } else {
-        Image(
-            painter = painterResource(id = R.drawable.ic_launcher_foreground),
-            contentDescription = stringResource(R.string.app_name),
-            modifier = modifier,
-        )
+        // 前景层是透明底的 108dp 矢量，单独使用会缺自适应图标的渐变底色，这里补一层底色与超椭圆裁切
+        Box(
+            modifier = modifier
+                .clip(SquircleShape(12.dp))
+                .background(Color(0xFF0E2F73)),
+            contentAlignment = Alignment.Center,
+        ) {
+            Image(
+                painter = painterResource(id = R.drawable.ic_launcher_foreground),
+                contentDescription = stringResource(R.string.app_name),
+                modifier = Modifier.fillMaxSize(),
+            )
+        }
     }
 }

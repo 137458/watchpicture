@@ -22,7 +22,7 @@ import java.io.FileOutputStream
  */
 object VideoLauncher {
 
-    private const val PLAYBACK_DIR = "playback"
+    internal const val PLAYBACK_DIR = "playback"
     private const val COPY_BUFFER_SIZE = 64 * 1024
 
     /** 调起系统播放器播放 [item]，返回是否成功发起播放。 */
@@ -109,7 +109,8 @@ object VideoLauncher {
         }
     }
 
-    private fun playbackDir(context: Context): File =
+    /** 播放临时副本目录，同时由 [CacheMaintenance] 纳入容量预算与清理。 */
+    internal fun playbackDir(context: Context): File =
         File(context.cacheDir, PLAYBACK_DIR).apply { mkdirs() }
 
     private fun playbackFileName(item: PackImage): String {

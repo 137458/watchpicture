@@ -49,14 +49,15 @@ import coil3.request.bitmapConfig
 import kotlinx.coroutines.launch
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
-import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.archive.ZipArchiveManager
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.component.BlurredBar
+import com.watchpicture.app.ui.component.VideoEntryPlaceholder
 import com.watchpicture.app.ui.component.blurBackdropSource
+import com.watchpicture.app.ui.component.playVideoEntry
 import com.watchpicture.app.ui.component.rememberBlurBackdrop
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.basic.Icon
@@ -342,15 +343,7 @@ fun ThumbnailGridScreen(
                                 onClick = {
                                     if (item.isVideo) {
                                         // 视频条目不走图片画廊，直接交给系统播放器
-                                        coroutineScope.launch {
-                                            if (!VideoLauncher.play(context, item)) {
-                                                android.widget.Toast.makeText(
-                                                    context,
-                                                    context.getString(R.string.video_no_player),
-                                                    android.widget.Toast.LENGTH_SHORT
-                                                ).show()
-                                            }
-                                        }
+                                        coroutineScope.launch { playVideoEntry(context, item) }
                                     } else {
                                         ViewerViewModel.saveScrollPosition(
                                             packId,
@@ -418,19 +411,7 @@ private fun ThumbnailItem(
             .clickable(onClick = onClick)
     ) {
         if (isVideo) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color(0xFF1B1B1F)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(34.dp)
-                )
-            }
+            VideoEntryPlaceholder(modifier = Modifier.fillMaxSize())
         } else if (request != null) {
             AsyncImage(
                 model = request,

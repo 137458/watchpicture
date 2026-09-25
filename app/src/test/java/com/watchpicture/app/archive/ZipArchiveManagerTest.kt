@@ -63,7 +63,7 @@ class ZipArchiveManagerTest {
     @Test
     fun `lists image entries with natural sorting and filters non-images and macOS artifacts`() {
         val manager = ZipArchiveManager()
-        val entries = manager.getImageEntries(plainZip)
+        val entries = manager.getMediaEntries(plainZip)
 
         assertEquals(2, entries.size)
         // 2_page.jpg must come before 10_page.jpg by natural sort
@@ -85,7 +85,7 @@ class ZipArchiveManagerTest {
     @Test
     fun `streams entry content without writing to disk`() {
         val manager = ZipArchiveManager()
-        val entries = manager.getImageEntries(aesZip, password = correctPassword)
+        val entries = manager.getMediaEntries(aesZip, password = correctPassword)
         val inputStream = manager.getEntryInputStream(aesZip, entries[0].name, password = correctPassword)
         val readBytes = inputStream.use { it.readBytes() }
         assertArrayEquals(testImageBytes, readBytes)
@@ -136,7 +136,7 @@ class ZipArchiveManagerTest {
         assertTrue(manager.verifyPassword(zipCryptoFile, cryptoPassword))
         assertFalse("Wrong password must fail for ZipCrypto", manager.verifyPassword(zipCryptoFile, "WrongCryptoPass"))
 
-        val entries = manager.getImageEntries(zipCryptoFile, cryptoPassword)
+        val entries = manager.getMediaEntries(zipCryptoFile, cryptoPassword)
         assertEquals(1, entries.size)
         val stream = manager.getEntryInputStream(zipCryptoFile, entries[0].name, cryptoPassword)
         val bytes = stream.use { it.readBytes() }
@@ -156,7 +156,7 @@ class ZipArchiveManagerTest {
         }
 
         assertFalse(manager.isEncrypted(sevenZFile))
-        val entries = manager.getImageEntries(sevenZFile)
+        val entries = manager.getMediaEntries(sevenZFile)
         assertEquals(1, entries.size)
         assertEquals("page_01.jpg", entries[0].name)
 
