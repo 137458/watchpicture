@@ -10,9 +10,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -27,6 +30,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -49,6 +53,7 @@ import androidx.media3.common.AudioAttributes
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import com.watchpicture.app.R
 import com.watchpicture.app.archive.VideoLauncher
@@ -100,6 +105,8 @@ fun VideoPlayerScreen(
     var isScrubbing by remember { mutableStateOf(false) }
     var scrubPositionMs by remember { mutableLongStateOf(0L) }
     var controlsVisible by remember { mutableStateOf(true) }
+    // 视频声明显示比例（含像素宽高比）。0 表示尚未解码出画面尺寸。
+    var videoAspectRatio by remember { mutableFloatStateOf(0f) }
 
     val player = remember {
         ExoPlayer.Builder(context).build().apply {
@@ -122,6 +129,15 @@ fun VideoPlayerScreen(
 
             override fun onIsPlayingChanged(playing: Boolean) {
                 isPlaying = playing
+            }
+
+            override fun onVideoSizeChanged(videoSize: VideoSize) {
+                // Surface 必须按视频自身的显示比例分配尺寸，否则解码器会把画面拉满整块
+                // Surface（用户看到的就是「比例诡异」的拉伸画面）。
+                if (videoSize.width > 0 && videoSize.height > 0) {
+                    videoAspectRatio =
+                        videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+                }
             }
 
             override fun onPlayerError(error: PlaybackException) {
@@ -193,12 +209,24 @@ fun VideoPlayerScreen(
                 indication = null
             ) { controlsVisible = !controlsVisible }
     ) {
-        AndroidView(
-            factory = { ctx ->
-                SurfaceView(ctx).also { surface -> player.setVideoSurfaceView(surface) }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+        BoxWithConstraints(
+            modifier = Modifier.fillMaxSize(),
+            contentAlignment = Alignment.Center
+        ) {
+            val containerAspectRatio = if (maxHeight > 0.dp) maxWidth / maxHeight else 0f
+            val videoModifier = when {
+                videoAspectRatio <= 0f -> Modifier.fillMaxSize()
+                videoAspectRatio > containerAspectRatio ->
+                    Modifier.fillMaxWidth().aspectRatio(videoAspectRatio)
+                else -> Modifier.fillMaxHeight().aspectRatio(videoAspectRatio)
+            }
+            AndroidView(
+                factory = { ctx ->
+                    SurfaceView(ctx).also { surface -> player.setVideoSurfaceView(surface) }
+                },
+                modifier = videoModifier
+            )
+        }
 
         val message = errorMessage
         if (message != null) {
