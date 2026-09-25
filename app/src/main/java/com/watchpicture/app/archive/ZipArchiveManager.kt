@@ -23,6 +23,9 @@ class ZipArchiveManager(
             "jpg", "jpeg", "png", "webp", "gif", "bmp", "avif", "heic", "heif",
             "jfif", "pjpeg", "pjp", "tiff", "tif", "ico", "svg"
         )
+        private val SUPPORTED_VIDEO_EXTENSIONS = setOf(
+            "mp4", "m4v", "mkv", "webm", "mov", "avi", "3gp", "flv", "wmv", "mpg", "mpeg", "ts"
+        )
         private val naturalOrderComparator = NaturalOrderComparator()
 
         fun isImageFile(fileName: String): Boolean {
@@ -30,6 +33,21 @@ class ZipArchiveManager(
             val ext = name.substringAfterLast('.', "")
             return ext in SUPPORTED_IMAGE_EXTENSIONS
         }
+
+        /**
+         * 是否为可播放的视频文件。视频会被纳入图包条目列表，但无法按图片解码显示，
+         * 缩略图与播放分别走视频帧解码与系统播放器。
+         */
+        fun isVideoFile(fileName: String): Boolean {
+            val name = fileName.lowercase(Locale.ROOT)
+            val ext = name.substringAfterLast('.', "")
+            return ext in SUPPORTED_VIDEO_EXTENSIONS
+        }
+
+        /**
+         * 图包条目判定：可在图包中列出与浏览的媒体文件（图片或视频）。
+         */
+        fun isMediaFile(fileName: String): Boolean = isImageFile(fileName) || isVideoFile(fileName)
 
         fun isIgnoredFile(fileName: String): Boolean {
             val normalized = fileName.replace('\\', '/')
@@ -88,7 +106,7 @@ class ZipArchiveManager(
                         .asSequence()
                         .filter { !it.isDirectory }
                         .filter { !isIgnoredFile(it.fileName) }
-                        .filter { isImageFile(it.fileName) }
+                        .filter { isMediaFile(it.fileName) }
                         .map { header ->
                             ArchiveEntryInfo(
                                 name = header.fileName,

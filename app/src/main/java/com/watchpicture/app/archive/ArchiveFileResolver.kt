@@ -29,6 +29,15 @@ class ArchiveFileResolver(
     companion object {
         private const val BUFFER_SIZE = 64 * 1024 // 64KB high-speed stream buffer
 
+        /**
+         * SAF 归档落盘缓存目录的容量预算。该目录保存的是通过 ContentProvider 打开的整包副本，
+         * 单个大包可达数百 MB 且此前没有任何上限，是缓存占满存储的主因。
+         */
+        const val OPENED_ARCHIVES_MAX_BYTES = 512L * 1024 * 1024 // 512 MB
+
+        /** SAF 归档落盘缓存的目录名（位于 cacheDir 下）。 */
+        const val OPENED_ARCHIVES_DIR = "opened_archives"
+
         private val FORBIDDEN_EXTENSIONS = setOf(
             "apk", "xapk", "apks", "apkm", "aab", "jar", "aar", "dex", "ipa"
         )
@@ -158,7 +167,7 @@ class ArchiveFileResolver(
     fun deleteArchiveCache(filePath: String): Boolean {
         return try {
             val file = File(filePath)
-            if (file.exists() && file.parentFile?.name == "opened_archives") {
+            if (file.exists() && file.parentFile?.name == OPENED_ARCHIVES_DIR) {
                 file.delete()
             } else {
                 false
@@ -166,6 +175,47 @@ class ArchiveFileResolver(
         } catch (_: Exception) {
             false
         }
+    }
+
+    /**
+     * 统计 SAF 归档落盘缓存的当前占用字节数。
+     */
+    fun archiveCacheSizeBytes(context: Context): Long = openedArchivesDir(context)
+        .listFiles()
+        ?.filter { it.isFile }
+        ?.sumOf { it.length() }
+        ?: 0L
+
+    /**
+     * 按 LRU 把 SAF 归档落盘缓存裁剪到 [maxBytes] 预算以内，返回释放的字节数。
+     * 仅在应用启动/退到后台等无在途读取的时机调用。
+     */
+    fun trimArchiveCache(context: Context, maxBytes: Long = OPENED_ARCHIVES_MAX_BYTES): Long =
+        deleteFiles(planLruTrim(openedArchivesEntries(context), maxBytes))
+
+    /**
+     * 清空 SAF 归档落盘缓存，返回释放的字节数。被清掉的条目在下次打开时会按需重新落盘。
+     */
+    fun clearArchiveCache(context: Context): Long =
+        deleteFiles(openedArchivesEntries(context).map { it.path })
+
+    private fun openedArchivesDir(context: Context): File =
+        File(context.cacheDir, OPENED_ARCHIVES_DIR)
+
+    private fun openedArchivesEntries(context: Context): List<LruCacheEntry> = openedArchivesDir(context)
+        .listFiles()
+        ?.filter { it.isFile }
+        ?.map { LruCacheEntry(it.absolutePath, it.length(), it.lastModified()) }
+        ?: emptyList()
+
+    private fun deleteFiles(paths: List<String>): Long {
+        var freed = 0L
+        for (path in paths) {
+            val file = File(path)
+            val length = file.length()
+            if (file.delete()) freed += length
+        }
+        return freed
     }
 
     /**
@@ -194,7 +244,7 @@ class ArchiveFileResolver(
         val rawName = queryDisplayName(context, uri) ?: "archive_${System.currentTimeMillis()}.zip"
         val decodedName = try { Uri.decode(rawName) } catch (_: Exception) { rawName } ?: rawName
         val safeName = decodedName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
-        val cacheDir = File(context.cacheDir, "opened_archives").apply { mkdirs() }
+        val cacheDir = File(context.cacheDir, OPENED_ARCHIVES_DIR).apply { mkdirs() }
 
         // Generate stable cache file name based on Uri hash and filename
         val uriHash = (uri.toString().hashCode().toLong() and 0xFFFFFFFFL).toString(16)

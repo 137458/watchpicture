@@ -12,6 +12,7 @@ import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.screen.GalleryViewerScreen
 import com.watchpicture.app.ui.screen.MainScreen
 import com.watchpicture.app.ui.screen.ThumbnailGridScreen
+import com.watchpicture.app.ui.screen.ThemeSettingsScreen
 import com.watchpicture.app.ui.screen.UpdateScreen
 import com.watchpicture.app.ui.theme.WatchPictureTheme
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
@@ -27,7 +28,7 @@ import top.yukonga.miuix.kmp.nav.transition.NavTransitions
 fun App() {
     val prefsRepo = WatchPictureApp.instance.preferencesRepository
     val darkMode by prefsRepo.darkModeFlow.collectAsStateWithLifecycle(initialValue = 0)
-    val colorMode by prefsRepo.colorModeFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val colorMode by prefsRepo.colorModeFlow.collectAsStateWithLifecycle(initialValue = 1)
     val seedColor by prefsRepo.seedColorFlow.collectAsStateWithLifecycle(initialValue = 0xFF2196F3L)
     val amoledDark by prefsRepo.amoledDarkFlow.collectAsStateWithLifecycle(initialValue = false)
     val paletteStyleIndex by prefsRepo.paletteStyleIndexFlow.collectAsStateWithLifecycle(initialValue = 0)
@@ -77,6 +78,14 @@ fun App() {
                 swipeDismiss = NavSwipeDirection.LeftToRight,
             ) {
                 UpdateScreen(
+                    onBack = { backStack.removeLastOrNull() }
+                )
+            }
+
+            entry<AppRoute.ThemeSettings>(
+                swipeDismiss = NavSwipeDirection.LeftToRight,
+            ) {
+                ThemeSettingsScreen(
                     onBack = { backStack.removeLastOrNull() }
                 )
             }

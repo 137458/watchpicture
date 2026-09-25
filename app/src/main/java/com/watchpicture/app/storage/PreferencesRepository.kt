@@ -25,6 +25,26 @@ enum class ReadingMode {
 }
 
 /**
+ * 外观深浅模式默认值: 0=跟随系统, 1=浅色, 2=深色。
+ * 未显式保存过时，从旧版单一索引 theme_mode_index 平滑派生。
+ */
+internal fun resolveDefaultDarkMode(legacyThemeModeIndex: Int?): Int = when (legacyThemeModeIndex) {
+    1, 4 -> 1
+    2, 5 -> 2
+    else -> 0
+}
+
+/**
+ * 色彩来源默认值: 0=动态色彩(壁纸莫奈取色), 1=默认固定色板, 2=预置/自定义种子色。
+ * 未显式保存过时，仅当旧版索引明确指向莫奈模式(3/4/5)才沿用动态取色，其余一律回落默认固定色板。
+ */
+internal fun resolveDefaultColorMode(legacyThemeModeIndex: Int?): Int = when (legacyThemeModeIndex) {
+    0, 1, 2 -> 1
+    3, 4, 5 -> 0
+    else -> 1
+}
+
+/**
  * DataStore-backed repository storing user preferences including
  * the last authorized directory URI, preferred sorting order, and reading direction.
  */
@@ -45,6 +65,7 @@ class PreferencesRepository(private val context: Context) {
         private val KEY_USE_SPEC_2025 = booleanPreferencesKey("use_spec_2025")
         private val KEY_AMOLED_DARK = booleanPreferencesKey("amoled_dark")
         private val KEY_WIDE_SCREEN_RAIL = booleanPreferencesKey("wide_screen_rail")
+        private val KEY_AUTO_CLEAN_CACHE = booleanPreferencesKey("auto_clean_cache")
     }
 
     val lastRootUriFlow: Flow<String?> = context.settingsDataStore.data
@@ -95,29 +116,20 @@ class PreferencesRepository(private val context: Context) {
 
     /**
      * 外观深浅模式: 0=跟随系统, 1=浅色, 2=深色。
-     * 若未显式保存，则从旧版 theme_mode_index 平滑派生。
      */
     val darkModeFlow: Flow<Int> = context.settingsDataStore.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { preferences ->
-            preferences[KEY_DARK_MODE] ?: when (preferences[KEY_THEME_MODE_INDEX]) {
-                1, 4 -> 1
-                2, 5 -> 2
-                else -> 0
-            }
+            preferences[KEY_DARK_MODE] ?: resolveDefaultDarkMode(preferences[KEY_THEME_MODE_INDEX])
         }
 
     /**
      * 色彩模式: 0=动态色彩(壁纸莫奈取色), 1=默认固定色板, 2=预置/自定义种子色。
-     * 若未显式保存，则从旧版 theme_mode_index 平滑派生。
      */
     val colorModeFlow: Flow<Int> = context.settingsDataStore.data
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { preferences ->
-            preferences[KEY_COLOR_MODE] ?: when (preferences[KEY_THEME_MODE_INDEX]) {
-                0, 1, 2 -> 1
-                else -> 0
-            }
+            preferences[KEY_COLOR_MODE] ?: resolveDefaultColorMode(preferences[KEY_THEME_MODE_INDEX])
         }
 
     val seedColorFlow: Flow<Long> = context.settingsDataStore.data
@@ -148,6 +160,15 @@ class PreferencesRepository(private val context: Context) {
         .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
         .map { preferences ->
             preferences[KEY_WIDE_SCREEN_RAIL] ?: true
+        }
+
+    /**
+     * 是否在启动与退到后台时自动把磁盘缓存裁剪到容量预算内（默认开启）。
+     */
+    val autoCleanCacheFlow: Flow<Boolean> = context.settingsDataStore.data
+        .catch { if (it is IOException) emit(emptyPreferences()) else throw it }
+        .map { preferences ->
+            preferences[KEY_AUTO_CLEAN_CACHE] ?: true
         }
 
     suspend fun saveLastRootUri(uriString: String) {
@@ -225,6 +246,12 @@ class PreferencesRepository(private val context: Context) {
     suspend fun saveWideScreenRail(enabled: Boolean) {
         context.settingsDataStore.edit { preferences ->
             preferences[KEY_WIDE_SCREEN_RAIL] = enabled
+        }
+    }
+
+    suspend fun saveAutoCleanCache(enabled: Boolean) {
+        context.settingsDataStore.edit { preferences ->
+            preferences[KEY_AUTO_CLEAN_CACHE] = enabled
         }
     }
 

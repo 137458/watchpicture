@@ -76,6 +76,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
@@ -95,10 +96,13 @@ import coil3.compose.AsyncImage
 import coil3.request.ImageRequest
 import coil3.request.bitmapConfig
 import coil3.size.Precision
+import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.archive.CacheFileLeases
 import com.watchpicture.app.coil.ZipImageSource
+import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.model.PackImage
+import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.storage.ReadingMode
 import com.watchpicture.app.ui.component.bottombar.vibrancy
@@ -336,9 +340,11 @@ fun GalleryViewerScreen(
                 }
 
                 val validIndices = prefetchIndices.filter { it in images.indices }
-                val targetModels = validIndices.mapNotNull { idx ->
-                    images[idx].toImageModel(sessionPassword)
-                }
+                val targetModels = validIndices
+                    .filterNot { images[it].isVideo }
+                    .mapNotNull { idx ->
+                        images[idx].toImageModel(sessionPassword)
+                    }
 
                 val zipGroups = targetModels.filterIsInstance<ZipImageSource>()
                     .groupBy { it.zipFile }
@@ -366,16 +372,21 @@ fun GalleryViewerScreen(
                     .then(if (viewerBackdrop != null) Modifier.layerBackdrop(viewerBackdrop) else Modifier)
             ) { pageIndex ->
                 val image = images[pageIndex]
-                ZoomableImage(
-                    image = image,
-                    sessionPassword = sessionPassword,
-                    onSingleTap = { isImmersive = !isImmersive },
-                    onZoomChanged = { isZoomed ->
-                        if (pageIndex == pagerState.currentPage) {
-                            isCurrentPageZoomed = isZoomed
+                if (image.isVideo) {
+                    // 视频条目无法按图片解码，改为播放入口
+                    VideoPage(image = image)
+                } else {
+                    ZoomableImage(
+                        image = image,
+                        sessionPassword = sessionPassword,
+                        onSingleTap = { isImmersive = !isImmersive },
+                        onZoomChanged = { isZoomed ->
+                            if (pageIndex == pagerState.currentPage) {
+                                isCurrentPageZoomed = isZoomed
+                            }
                         }
-                    }
-                )
+                    )
+                }
             }
 
             val currentDisplayPage = (sliderScrubbingPage ?: pagerState.currentPage) + 1
@@ -909,15 +920,20 @@ private fun PageQuickViewBottomSheet(
                 key = { index, item -> "${index}_${item.entryPath}" }
             ) { index, item ->
                 val isSelected = index == currentPage
-                val thumbModel = remember(item, sessionPassword) {
-                    item.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 300)
+                val isVideoItem = item.isVideo
+                val thumbModel = remember(item, sessionPassword, isVideoItem) {
+                    if (isVideoItem) null else item.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 300)
                 }
                 val thumbRequest = remember(thumbModel) {
-                    ImageRequest.Builder(context)
-                        .data(thumbModel)
-                        .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
-                        .precision(Precision.INEXACT)
-                        .build()
+                    if (thumbModel == null) {
+                        null
+                    } else {
+                        ImageRequest.Builder(context)
+                            .data(thumbModel)
+                            .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+                            .precision(Precision.INEXACT)
+                            .build()
+                    }
                 }
 
                 Box(
@@ -935,12 +951,28 @@ private fun PageQuickViewBottomSheet(
                         )
                         .clickable { onSelectPage(index) }
                 ) {
-                    AsyncImage(
-                        model = thumbRequest,
-                        contentDescription = item.displayName,
-                        contentScale = ContentScale.Crop,
-                        modifier = Modifier.fillMaxSize()
-                    )
+                    if (isVideoItem) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(Color(0xFF1B1B1F)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayCircleOutline,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(30.dp)
+                            )
+                        }
+                    } else if (thumbRequest != null) {
+                        AsyncImage(
+                            model = thumbRequest,
+                            contentDescription = item.displayName,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.fillMaxSize()
+                        )
+                    }
 
                     // Page Number Badge
                     Box(
@@ -1086,6 +1118,60 @@ private fun DetailItemRow(
             modifier = Modifier.weight(1f),
             textAlign = TextAlign.End
         )
+    }
+}
+
+/**
+ * 视频页：视频无法按图片解码渲染，这里提供明确的播放入口，
+ * 点击后把条目交给系统播放器（压缩包内条目会按需落盘再共享）。
+ */
+@Composable
+private fun VideoPage(
+    image: PackImage
+) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+    var isLaunching by remember(image.entryPath) { mutableStateOf(false) }
+
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .clickable(enabled = !isLaunching) {
+                isLaunching = true
+                coroutineScope.launch {
+                    val started = VideoLauncher.play(context, image)
+                    isLaunching = false
+                    if (!started) {
+                        android.widget.Toast.makeText(
+                            context,
+                            context.getString(R.string.video_play_failed),
+                            android.widget.Toast.LENGTH_SHORT
+                        ).show()
+                    }
+                }
+            },
+        contentAlignment = Alignment.Center
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(14.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.PlayCircleOutline,
+                contentDescription = stringResource(R.string.video_tap_to_play),
+                tint = Color.White,
+                modifier = Modifier.size(84.dp)
+            )
+            Text(
+                text = image.displayName,
+                style = MiuixTheme.textStyles.body1,
+                color = Color.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                textAlign = TextAlign.Center,
+                modifier = Modifier.padding(horizontal = 32.dp)
+            )
+        }
     }
 }
 

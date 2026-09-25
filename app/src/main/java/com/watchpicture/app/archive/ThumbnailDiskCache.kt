@@ -564,6 +564,14 @@ class ThumbnailDiskCache(
         return null
     }
 
+    /**
+     * 统计缓存目录当前占用的字节数（忽略写入中的 .tmp 半成品）。
+     */
+    fun sizeOnDisk(): Long = directory.listFiles()
+        ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+        ?.sumOf { it.length() }
+        ?: 0L
+
     fun trimToSize() {
         globalLock.withLock {
             val files = directory.listFiles()?.filter { it.isFile && !it.name.endsWith(".tmp") } ?: return

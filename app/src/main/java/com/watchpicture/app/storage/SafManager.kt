@@ -57,16 +57,11 @@ class SafManager(
 
     /**
      * Scans pack items using high-speed concurrent java.io.File system access.
+     * 每个子项独立处理，单个子项的失败不会中断整批扫描。
      */
-    private suspend fun scanFromDirectFile(rootDir: File): List<PackItem> = coroutineScope {
-        val children = rootDir.listFiles() ?: return@coroutineScope emptyList()
-        val deferredPacks = children.map { child ->
-            async(Dispatchers.IO) {
-                processDirectChild(child)
-            }
-        }
-        deferredPacks.awaitAll()
-            .filterNotNull()
+    private suspend fun scanFromDirectFile(rootDir: File): List<PackItem> {
+        val children = rootDir.listFiles() ?: return emptyList()
+        return children.asIterable().mapIsolated("SafScan") { processDirectChild(it) }
             .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
     }
 
@@ -308,4 +303,25 @@ class SafManager(
     private fun isValidVolumeId(volumeId: String): Boolean {
         return volumeId.isNotEmpty() && volumeId.matches(Regex("[A-Za-z0-9_.-]+"))
     }
+}
+
+/**
+ * 并发处理 [this] 中的每一个子项，并对单个子项的失败做隔离。
+ *
+ * 失败项只记录日志并被丢弃，不会中断整批处理：扫描图包时任何一个异常子项（损坏归档、
+ * 不可读目录等）此前都会让 `awaitAll` 抛出，进而清空整张图包列表并误报“没有找到压缩包”。
+ */
+internal suspend fun <T, R : Any> Iterable<T>.mapIsolated(
+    tag: String,
+    process: (T) -> R?
+): List<R> = coroutineScope {
+    map { item ->
+        async(Dispatchers.IO) {
+            runCatching { process(item) }
+                .onFailure { com.watchpicture.app.util.AppLog.e(tag, "子项处理失败，已跳过: $item", it) }
+                .getOrNull()
+        }
+    }
+        .awaitAll()
+        .filterNotNull()
 }

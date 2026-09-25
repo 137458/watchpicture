@@ -14,6 +14,9 @@
     <string name="open_archive">打开压缩包</string>
     <string name="open_archive_summary">直接选取并浏览单个 ZIP/CBZ 图集</string>
     <string name="invalid_archive_error">无法打开该压缩包：格式不受支持或文件已损坏</string>
+    <string name="video_no_player">未找到可用的视频播放器</string>
+    <string name="video_tap_to_play">点击播放视频</string>
+    <string name="video_play_failed">无法播放该视频：文件读取失败</string>
 
     <!-- Bottom Bar Tabs -->
     <string name="tab_packs">图包</string>
@@ -22,6 +25,7 @@
 
     <!-- Settings Screen -->
     <string name="settings_title">设置</string>
+    <string name="theme_settings_title">主题与色彩</string>
     <string name="settings_section_general">常规浏览</string>
     <string name="settings_reading_mode_title">画廊翻页方向</string>
     <string name="settings_reading_mode_ltr">从左往右 (LTR)</string>
@@ -31,6 +35,15 @@
     <string name="settings_clear_passwords_title">清除已记住的临时解密密码</string>
     <string name="settings_clear_passwords_summary">清除当前会话中为加密图包缓存的所有密码</string>
     <string name="settings_clear_passwords_done">已清除所有临时会话密码</string>
+    <string name="settings_section_storage">存储与缓存</string>
+    <string name="settings_cache_usage_title">缓存占用</string>
+    <string name="settings_cache_clear_title">立即清理缓存</string>
+    <string name="settings_cache_clear_summary">清除归档解压缓存、缩略图缓存与 SAF 临时副本</string>
+    <string name="settings_cache_cleared">已释放 %1$s</string>
+    <string name="settings_cache_empty">暂无可清理的缓存</string>
+    <string name="settings_cache_auto_title">自动清理缓存</string>
+    <string name="settings_cache_auto_summary">启动与退到后台时按容量上限自动淘汰最久未使用的缓存</string>
+
     <string name="settings_section_about">关于与更新</string>
     <string name="settings_version_title">当前版本</string>
     <string name="settings_github_repo">开源仓库</string>

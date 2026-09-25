@@ -8,13 +8,19 @@
 - 重构大图查看器（`GalleryViewerScreen`）为 Miuix 液态毛玻璃双层悬浮胶囊架构：引入实时背景模糊采样（`viewerBackdrop` + `ViewerGlassSurface`）、上下滑入/滑出物理过渡动效、悬浮双行信息顶栏、支持日漫 RTL 自动镜像与触觉刻度反馈的进度胶囊（`ChapterNavigator`）以及拖拽实时页码预览气泡；底部多功能工具栏（`BottomReaderBar`）新增屏幕旋转锁定（跟随系统/竖屏/横屏）、定时自动翻页幻灯片、3 列网格缩略图速览跳页抽屉（`WindowBottomSheet`）与图片元数据详情弹窗。
 - 升级软件更新页（`UpdateScreen`）为 HyperOS 3.0 动态流光极光架构：引入 AGSL `BgEffectBackground` 极光流体背景着色器随滚动视差平滑淡出，支持横竖屏自适应 Hero 布局、Markdown 发行日志卡片与 GitHub Releases 历史版本直达入口。
 - 新增平板与横屏宽屏（`>= 600dp`）自适应侧边导航栏（`NavigationRail`），并支持在设置中自由开启或关闭。
+- 新增磁盘缓存自动清理与设置页「存储与缓存」区块：显示三类缓存总占用、支持一键清理并回显释放量，以及自动清理开关（默认开启）；为此前完全没有容量上限的 SAF 归档落盘副本目录 `opened_archives` 引入 512MB 预算与 LRU 裁剪（`planLruTrim`），在应用启动与退到后台时执行。
+- 图包条目支持视频（`PackImage.isVideo` / `ZipArchiveManager.isVideoFile`）：视频与图片一同计入图包条目与页数，缩略图网格、图包封面与画廊速览对视频展示播放入口，点击交给系统播放器；压缩包内的视频条目按需流式落盘到 `cacheDir/playback` 后经 `FileProvider` 共享（`VideoLauncher`）。
 
 ### 优化
+- 将「主题与色彩」整块配置从设置页拆分至独立页面（新增 `ThemeSettingsScreen` 与 `AppRoute.ThemeSettings` 路由），承载深浅外观、AMOLED 纯黑、动态色彩开关、主题种子色、调色板风格、2025 色彩规范与宽屏侧边导航栏；设置页该区块收敛为一行入口，并回显「深浅外观 · 色彩来源」当前状态摘要。
+- 色彩来源默认值调整为「默认色板」且默认关闭动态色彩（莫奈取色），避免首次启动继承壁纸取色导致界面主色不可预期；旧版显式选择过莫奈模式的用户仍保留动态取色，关闭动态色彩开关时统一回落默认色板。
 - 全面推广 `BlurredBar` 顶栏渐进式纹理模糊至图包列表页（`PackListScreen`）、缩略图网格页（`ThumbnailGridScreen`）与设置页（`SettingsScreen`），并在图包列表页接入 Miuix `PullToRefresh` 阻尼下拉刷新。
 - 重构设置页「画廊翻页方向」与「默认排序方式」为 Miuix 原生 `WindowDropdownPreference` 下拉选择菜单，消除盲点循环切换；将图包列表排序弹窗升级为 `Card` + `RadioButtonPreference` 单选体系。
 - 为缩略图网格页与软件更新页路由启用 `NavSwipeDirection.LeftToRight` 左边缘滑动预测返回手势，并将卡片封面、缩略图、角标与弹窗统一升级为连续曲率超椭圆 `SquircleShape`。
 
 ### 修复
+- 修复了图包扫描 `SafManager.scanFromDirectFile` 并发处理子项后直接 `awaitAll()` 传播异常，导致所选目录中任何一个异常子项（损坏归档、不可读目录等）都会让整次扫描失败、图包列表被清空并误报「当前目录下没有找到图片文件夹或 ZIP/CBZ 压缩包」的缺陷；改为 `mapIsolated` 对每个子项做失败隔离，异常子项仅记日志跳过，其余图包正常列出。
+- 修复了视频文件被图片扩展名过滤静默丢弃（图包内视频完全不显示）以及视频条目误入图片解码、缩略图预读与画廊预取管线导致无谓解压整段视频的问题；条目枚举统一改用 `isMediaFile`，`toImageModel` 对视频直接短路返回。
 - 修复了 `App.kt` 中 `NavDisplay` 路由 `contentKey` 回调每次重组调用 `AtomicInteger.getAndIncrement()` 导致进入大图查看器再退出返回缩略图网格时 `SaveableStateHolder` 与 `LazyGridState` 被销毁重建、丢失浏览滚动位置的缺陷；改为基于 `packId` 的确定性稳定 `contentKey`，并在 `ThumbnailGridScreen` 首帧同步命中内存图片缓存消除加载闪烁。
 - 修复了 `ArchiveExtractionCoordinator.extractThumbnailDirectResult` 校验 `SevenZSessionManager` 返回结果时错误要求目标磁盘文件必须存在，导致 Coil 内存直出模式下（`keepBitmapInMemory = true`）生成的内存 `Bitmap` 被全部丢弃、强行跌入兜底路径逐张从头重新解压整块 7z 固实包（Solid Block）造成多分钟卡死甚至 OOM 的根本缺陷；重构为优先采信未回收的有效内存 Bitmap 结果。
 - 修复了从缩略图网格点击图片跳转至大图画廊时，`ThumbnailGridScreen.onDispose` 立即无差别调用 `purgeCache()` 释放 Native 固实块缓存，导致大图查看器载入首张原图时缓存已被清空、不得不从第 0 字节全量重新解压固实块的问题；重构为 30 秒延迟析构（`scheduleCachePurge`），并在大图与缩略图请求发起时主动取消待执行清理（`cancelCachePurge`）。

@@ -21,6 +21,7 @@ import com.watchpicture.app.ui.component.SquircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
@@ -38,6 +39,7 @@ import coil3.request.bitmapConfig
 import com.watchpicture.app.model.DirectoryPack
 import com.watchpicture.app.model.PackItem
 import com.watchpicture.app.model.ZipPack
+import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.toImageModel
 import top.yukonga.miuix.kmp.basic.Card
 import top.yukonga.miuix.kmp.basic.Icon
@@ -139,13 +141,14 @@ fun PackCard(
                             modifier = Modifier.fillMaxSize()
                         )
                     } else {
-                        // Empty / default icon
+                        // 无封面或封面为视频（视频不走图片解码）：展示占位图标
+                        val coverIsVideo = pack.coverImage?.isVideo == true
                         Box(
                             modifier = Modifier.fillMaxSize(),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Folder,
+                                imageVector = if (coverIsVideo) Icons.Default.PlayArrow else Icons.Default.Folder,
                                 contentDescription = null,
                                 tint = MiuixTheme.colorScheme.onSurfaceSecondary.copy(alpha = 0.4f),
                                 modifier = Modifier.size(44.dp)

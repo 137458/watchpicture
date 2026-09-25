@@ -175,6 +175,7 @@ fun MainScreen(
                         1 -> SettingsScreen(
                             contentPadding = tabContentPadding,
                             onNavigateToUpdate = { onNavigate(AppRoute.Update) },
+                            onNavigateToThemeSettings = { onNavigate(AppRoute.ThemeSettings) },
                         )
                     }
                 }

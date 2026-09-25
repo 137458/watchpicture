@@ -117,7 +117,7 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
 
         if (docFile != null && docFile.isDirectory) {
             val list = docFile.listFiles()
-            return list.filter { it.isFile && ZipArchiveManager.isImageFile(it.name ?: "") }
+            return list.filter { it.isFile && ZipArchiveManager.isMediaFile(it.name ?: "") }
                 .sortedWith { a, b -> naturalOrderComparator.compare(a.name ?: "", b.name ?: "") }
                 .map { doc ->
                     PackImage(

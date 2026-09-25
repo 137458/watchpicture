@@ -249,6 +249,14 @@ class ArchiveDiskCache(
     }
 
     /**
+     * 统计缓存目录当前占用的字节数（忽略写入中的 .tmp 半成品）。
+     */
+    fun sizeOnDisk(): Long = directory.listFiles()
+        ?.filter { it.isFile && !it.name.endsWith(".tmp") }
+        ?.sumOf { it.length() }
+        ?: 0L
+
+    /**
      * Evicts oldest accessed files until total size is within [maxSizeBytes].
      */
     fun trimToSize() {
@@ -329,4 +337,31 @@ class ArchiveDiskCache(
         val bytes = md.digest(raw.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
     }
+}
+
+/**
+ * 缓存文件 LRU 淘汰所需的最小信息。
+ */
+internal data class LruCacheEntry(
+    val path: String,
+    val sizeBytes: Long,
+    val lastModified: Long
+)
+
+/**
+ * 计算把缓存裁剪到 [maxBytes] 预算以内需要删除的文件路径，按最久未使用（lastModified 升序）优先。
+ * 当前占用未超预算时返回空列表。
+ */
+internal fun planLruTrim(entries: List<LruCacheEntry>, maxBytes: Long): List<String> {
+    val usable = entries.filter { it.sizeBytes > 0L }
+    var remaining = usable.sumOf { it.sizeBytes }
+    if (remaining <= maxBytes) return emptyList()
+
+    val victims = mutableListOf<String>()
+    for (entry in usable.sortedBy { it.lastModified }) {
+        victims.add(entry.path)
+        remaining -= entry.sizeBytes
+        if (remaining <= maxBytes) break
+    }
+    return victims
 }

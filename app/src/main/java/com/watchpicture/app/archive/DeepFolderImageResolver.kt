@@ -37,7 +37,7 @@ object DeepFolderImageResolver {
 
             if (file.isDirectory) {
                 traverse(rootDir, file, outList)
-            } else if (file.isFile && ZipArchiveManager.isImageFile(name)) {
+            } else if (file.isFile && ZipArchiveManager.isMediaFile(name)) {
                 outList.add(file)
             }
         }

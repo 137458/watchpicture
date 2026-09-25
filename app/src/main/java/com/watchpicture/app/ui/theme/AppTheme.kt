@@ -45,6 +45,24 @@ val PaletteStyleOptions: List<Pair<ThemePaletteStyle, String>> = listOf(
 )
 
 /**
+ * 深浅外观模式名称，用于设置页入口的当前状态摘要。
+ */
+fun themeAppearanceLabel(darkMode: Int): String = when (darkMode) {
+    1 -> "浅色"
+    2 -> "深色"
+    else -> "跟随系统"
+}
+
+/**
+ * 色彩来源名称: 0=动态色彩, 1=默认色板, 2=预置种子色(回显色名)或自定义种子色。
+ */
+fun themeColorSourceLabel(colorMode: Int, seedColor: Long): String = when (colorMode) {
+    0 -> "动态色彩"
+    1 -> "默认色板"
+    else -> PresetColors.firstOrNull { it.second == seedColor }?.first ?: "自定义"
+}
+
+/**
  * 兼容旧版单一索引的主题调色板模式解析。
  * 0=跟随系统, 1=浅色, 2=深色, 3=莫奈跟随系统, 4=莫奈浅色, 5=莫奈深色，其余默认 MonetSystem。
  */
@@ -141,7 +159,7 @@ fun buildMiuixThemeController(
 @Composable
 fun WatchPictureTheme(
     darkMode: Int = 0,
-    colorMode: Int = 0,
+    colorMode: Int = 1,
     seedColor: Long = 0xFF2196F3L,
     amoledDark: Boolean = false,
     paletteStyleIndex: Int = 0,

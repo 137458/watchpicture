@@ -11,6 +11,8 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import com.watchpicture.app.model.SortOption
 import com.watchpicture.app.ui.theme.applyAmoledColors
 import com.watchpicture.app.ui.theme.resolveColorSchemeMode
+import com.watchpicture.app.ui.theme.themeAppearanceLabel
+import com.watchpicture.app.ui.theme.themeColorSourceLabel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
@@ -178,5 +180,52 @@ class PreferencesRepositoryTest {
         assertEquals(Color(0xFF2C2C2C), amoled.surfaceContainerHighest)
         assertEquals(base.primary, amoled.primary)
         assertEquals(base.onSurface, amoled.onSurface)
+    }
+
+    @Test
+    fun `resolveDefaultColorMode defaults to the fixed default palette when nothing was ever saved`() {
+        // 全新安装（无 theme_mode_index）必须落到默认固定色板，而不是动态取色
+        assertEquals(1, resolveDefaultColorMode(legacyThemeModeIndex = null))
+
+        // 旧版显式选择过浅色/深色/跟随系统的固定配色，保持默认色板
+        assertEquals(1, resolveDefaultColorMode(legacyThemeModeIndex = 0))
+        assertEquals(1, resolveDefaultColorMode(legacyThemeModeIndex = 1))
+        assertEquals(1, resolveDefaultColorMode(legacyThemeModeIndex = 2))
+
+        // 旧版显式选择过莫奈取色的用户保持动态色彩，不被强行改写
+        assertEquals(0, resolveDefaultColorMode(legacyThemeModeIndex = 3))
+        assertEquals(0, resolveDefaultColorMode(legacyThemeModeIndex = 4))
+        assertEquals(0, resolveDefaultColorMode(legacyThemeModeIndex = 5))
+
+        // 越界脏数据同样回落默认固定色板
+        assertEquals(1, resolveDefaultColorMode(legacyThemeModeIndex = 99))
+        assertEquals(1, resolveDefaultColorMode(legacyThemeModeIndex = -1))
+    }
+
+    @Test
+    fun `resolveDefaultDarkMode follows system and honours legacy light dark selections`() {
+        assertEquals(0, resolveDefaultDarkMode(legacyThemeModeIndex = null))
+        assertEquals(0, resolveDefaultDarkMode(legacyThemeModeIndex = 0))
+        assertEquals(1, resolveDefaultDarkMode(legacyThemeModeIndex = 1))
+        assertEquals(2, resolveDefaultDarkMode(legacyThemeModeIndex = 2))
+        assertEquals(1, resolveDefaultDarkMode(legacyThemeModeIndex = 4))
+        assertEquals(2, resolveDefaultDarkMode(legacyThemeModeIndex = 5))
+        assertEquals(0, resolveDefaultDarkMode(legacyThemeModeIndex = 99))
+    }
+
+    @Test
+    fun `theme summary labels describe appearance and colour source for the settings entry`() {
+        assertEquals("跟随系统", themeAppearanceLabel(0))
+        assertEquals("浅色", themeAppearanceLabel(1))
+        assertEquals("深色", themeAppearanceLabel(2))
+        assertEquals("跟随系统", themeAppearanceLabel(42))
+
+        assertEquals("动态色彩", themeColorSourceLabel(colorMode = 0, seedColor = 0xFF2196F3L))
+        assertEquals("默认色板", themeColorSourceLabel(colorMode = 1, seedColor = 0xFF2196F3L))
+        // 预置种子色回显中文色名
+        assertEquals("紫色", themeColorSourceLabel(colorMode = 2, seedColor = 0xFF7B1FA2L))
+        assertEquals("金黄", themeColorSourceLabel(colorMode = 2, seedColor = 0xFFF9A825L))
+        // 非预置色值视为自定义取色
+        assertEquals("自定义", themeColorSourceLabel(colorMode = 2, seedColor = 0xFF123456L))
     }
 }

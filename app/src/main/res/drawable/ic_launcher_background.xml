@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 对角渐变底色：左上亮蓝过渡到右下近黑，形成斜向光泽 -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="0"
+                android:startY="0"
+                android:endX="108"
+                android:endY="108">
+                <item
+                    android:offset="0"
+                    android:color="#FF1B5AD1" />
+                <item
+                    android:offset="0.55"
+                    android:color="#FF0E2F73" />
+                <item
+                    android:offset="1"
+                    android:color="#FF050E22" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- 朝阳位置的暖色辉光，与前景朝阳共构光源 -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="68"
+                android:centerY="46"
+                android:gradientRadius="52">
+                <item
+                    android:offset="0"
+                    android:color="#4DFFC24B" />
+                <item
+                    android:offset="0.45"
+                    android:color="#1FFF9B1F" />
+                <item
+                    android:offset="1"
+                    android:color="#00FF9B1F" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

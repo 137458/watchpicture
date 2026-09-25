@@ -191,4 +191,33 @@ class ArchiveDiskCacheTest {
         assertEquals(file1.absolutePath, file2.absolutePath)
         assertEquals("Writer must not be called again", 1, writerInvocations)
     }
+
+    @Test
+    fun `planLruTrim keeps everything when cache already fits the budget`() {
+        val entries = listOf(
+            LruCacheEntry("/c/a", 10L, lastModified = 100L),
+            LruCacheEntry("/c/b", 10L, lastModified = 200L)
+        )
+
+        assertEquals(emptyList<String>(), planLruTrim(entries, maxBytes = 100L))
+        assertEquals(emptyList<String>(), planLruTrim(emptyList(), maxBytes = 0L))
+    }
+
+    @Test
+    fun `planLruTrim evicts least recently used files until the budget is met`() {
+        val entries = listOf(
+            LruCacheEntry("/c/newest", 40L, lastModified = 300L),
+            LruCacheEntry("/c/oldest", 40L, lastModified = 100L),
+            LruCacheEntry("/c/middle", 40L, lastModified = 200L)
+        )
+
+        // 120 bytes total, budget 80 -> must drop exactly the least recently used file
+        assertEquals(listOf("/c/oldest"), planLruTrim(entries, maxBytes = 80L))
+
+        // Budget 40 -> must drop the two oldest files, keeping only the newest
+        assertEquals(listOf("/c/oldest", "/c/middle"), planLruTrim(entries, maxBytes = 40L))
+
+        // Budget 0 -> everything is evicted, oldest first
+        assertEquals(listOf("/c/oldest", "/c/middle", "/c/newest"), planLruTrim(entries, maxBytes = 0L))
+    }
 }

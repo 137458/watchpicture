@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -31,6 +32,7 @@ import com.watchpicture.app.model.SortOption
 import com.watchpicture.app.storage.ReadingMode
 import com.watchpicture.app.ui.component.BlurredBar
 import com.watchpicture.app.ui.component.blurBackdropSource
+import com.watchpicture.app.ui.component.formatFileSize
 import com.watchpicture.app.ui.component.rememberBlurBackdrop
 import com.watchpicture.app.update.UpdateManager
 import kotlinx.coroutines.launch
@@ -56,27 +58,13 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
-import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material.icons.filled.Check
-import androidx.compose.material.icons.filled.Palette
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextAlign
-import com.watchpicture.app.ui.component.SquircleShape
-import com.watchpicture.app.ui.theme.PaletteStyleOptions
-import com.watchpicture.app.ui.theme.PresetColors
+import com.watchpicture.app.ui.theme.themeAppearanceLabel
+import com.watchpicture.app.ui.theme.themeColorSourceLabel
 import top.yukonga.miuix.kmp.theme.MiuixTheme
 import top.yukonga.miuix.kmp.basic.Button
 import top.yukonga.miuix.kmp.basic.ButtonDefaults
-import top.yukonga.miuix.kmp.basic.ColorPicker
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.TextField
@@ -88,6 +76,7 @@ import top.yukonga.miuix.kmp.basic.TextField
 fun SettingsScreen(
     contentPadding: PaddingValues,
     onNavigateToUpdate: () -> Unit,
+    onNavigateToThemeSettings: () -> Unit,
 ) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
@@ -100,26 +89,25 @@ fun SettingsScreen(
     val updateManager = remember { UpdateManager(context) }
 
     val darkMode by prefsRepo.darkModeFlow.collectAsStateWithLifecycle(initialValue = 0)
-    val colorMode by prefsRepo.colorModeFlow.collectAsStateWithLifecycle(initialValue = 0)
+    val colorMode by prefsRepo.colorModeFlow.collectAsStateWithLifecycle(initialValue = 1)
     val seedColor by prefsRepo.seedColorFlow.collectAsStateWithLifecycle(initialValue = 0xFF2196F3L)
-    val paletteStyleIndex by prefsRepo.paletteStyleIndexFlow.collectAsStateWithLifecycle(initialValue = 0)
-    val useSpec2025 by prefsRepo.useSpec2025Flow.collectAsStateWithLifecycle(initialValue = false)
-    val amoledDark by prefsRepo.amoledDarkFlow.collectAsStateWithLifecycle(initialValue = false)
-    val wideScreenRail by prefsRepo.wideScreenRailFlow.collectAsStateWithLifecycle(initialValue = true)
     val readingMode by prefsRepo.readingModeFlow.collectAsStateWithLifecycle(initialValue = ReadingMode.LTR)
     val sortOption by prefsRepo.sortOptionFlow.collectAsStateWithLifecycle(initialValue = SortOption.NAME_ASC)
     val savedPasswords by passwordBookRepo.passwordsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val autoSavePassword by passwordBookRepo.autoSavePasswordFlow.collectAsStateWithLifecycle(initialValue = true)
+    val autoCleanCache by prefsRepo.autoCleanCacheFlow.collectAsStateWithLifecycle(initialValue = true)
 
-    val isSystemDark = isSystemInDarkTheme()
-    val isDarkAppearance = darkMode == 2 || (darkMode == 0 && isSystemDark)
-
-    var showColorPickerDialog by remember { mutableStateOf(false) }
     var showPasswordBookDialog by remember { mutableStateOf(false) }
     var newPasswordInput by remember { mutableStateOf("") }
     var showPlainSavedPasswords by remember { mutableStateOf(false) }
+    var cacheSizeBytes by remember { mutableStateOf(0L) }
+    var isClearingCache by remember { mutableStateOf(false) }
 
-    val paletteStyleLabels = remember { PaletteStyleOptions.map { it.second } }
+    LaunchedEffect(Unit) {
+        cacheSizeBytes = WatchPictureApp.instance.totalCacheSizeBytes()
+    }
+
+    val themeSummary = "${themeAppearanceLabel(darkMode)} · ${themeColorSourceLabel(colorMode, seedColor)}"
 
     val readingModes = remember { listOf(ReadingMode.LTR, ReadingMode.RTL) }
     val readingModeOptions = listOf(
@@ -187,167 +175,12 @@ fun SettingsScreen(
                 ),
             ) {
                 item {
-                    SmallTitle(text = "主题与色彩")
-                    ThemePreviewCard()
-                    Spacer(modifier = Modifier.height(10.dp))
-
+                    SmallTitle(text = stringResource(R.string.theme_settings_title))
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = 16.dp, vertical = 14.dp)
-                        ) {
-                            Text(
-                                text = "深浅外观",
-                                style = MiuixTheme.textStyles.headline2,
-                                fontWeight = FontWeight.Medium,
-                                color = colorScheme.onSurface
-                            )
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                listOf(
-                                    0 to "跟随系统",
-                                    1 to "浅色",
-                                    2 to "深色"
-                                ).forEach { (modeVal, label) ->
-                                    AppearanceModeChip(
-                                        selected = darkMode == modeVal,
-                                        label = label,
-                                        onClick = {
-                                            coroutineScope.launch {
-                                                prefsRepo.saveDarkMode(modeVal)
-                                            }
-                                        },
-                                        modifier = Modifier.weight(1f)
-                                    )
-                                }
-                            }
-                        }
-
-                        SwitchPreference(
-                            title = "AMOLED 纯黑",
-                            summary = if (isDarkAppearance) {
-                                "将背景替换为纯黑以节省 OLED 电量"
-                            } else {
-                                "仅在深色外观模式下生效"
-                            },
-                            checked = amoledDark,
-                            enabled = isDarkAppearance,
-                            onCheckedChange = { enabled ->
-                                coroutineScope.launch {
-                                    prefsRepo.saveAmoledDark(enabled)
-                                }
-                            },
-                        )
-
-                        SwitchPreference(
-                            title = "动态色彩 (莫奈取色)",
-                            summary = "从系统壁纸自动提取主色调",
-                            checked = colorMode == 0,
-                            onCheckedChange = { useDynamic ->
-                                coroutineScope.launch {
-                                    prefsRepo.saveColorMode(if (useDynamic) 0 else 2)
-                                }
-                            },
-                        )
-
-                        if (colorMode != 0) {
-                            Column(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 4.dp, bottom = 12.dp)
-                            ) {
-                                Text(
-                                    text = "主题种子色",
-                                    style = MiuixTheme.textStyles.body2,
-                                    fontWeight = FontWeight.Medium,
-                                    color = colorScheme.onSurfaceSecondary,
-                                    modifier = Modifier.padding(horizontal = 16.dp)
-                                )
-                                Spacer(modifier = Modifier.height(10.dp))
-                                val isPresetSeed = colorMode == 2 && PresetColors.any { it.second == seedColor }
-                                val isCustomSeed = colorMode == 2 && !isPresetSeed
-
-                                LazyRow(
-                                    contentPadding = PaddingValues(horizontal = 16.dp),
-                                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                                ) {
-                                    // Miuix 经典固定配色方案 (colorMode == 1)
-                                    item {
-                                        SeedColorOptionItem(
-                                            name = "默认色板",
-                                            color = Color(0xFF3482FF),
-                                            isSelected = colorMode == 1,
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    prefsRepo.saveColorMode(1)
-                                                }
-                                            }
-                                        )
-                                    }
-
-                                    // 10 种精选种子色 (colorMode == 2)
-                                    items(PresetColors) { (name, colorLong) ->
-                                        SeedColorOptionItem(
-                                            name = name,
-                                            color = Color(colorLong),
-                                            isSelected = colorMode == 2 && seedColor == colorLong,
-                                            onClick = {
-                                                coroutineScope.launch {
-                                                    prefsRepo.saveSeedColor(colorLong)
-                                                    prefsRepo.saveColorMode(2)
-                                                }
-                                            }
-                                        )
-                                    }
-
-                                    // 自定义取色器 (colorMode == 2)
-                                    item {
-                                        CustomSeedColorItem(
-                                            color = Color(seedColor),
-                                            isSelected = isCustomSeed,
-                                            onClick = { showColorPickerDialog = true }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-
-                        WindowDropdownPreference(
-                            title = "调色板风格",
-                            summary = "控制莫奈与种子色衍生调色板的饱和度与色相策略",
-                            items = paletteStyleLabels,
-                            selectedIndex = paletteStyleIndex.coerceIn(0, paletteStyleLabels.lastIndex),
-                            onSelectedIndexChange = { index ->
-                                coroutineScope.launch {
-                                    prefsRepo.savePaletteStyleIndex(index)
-                                }
-                            },
-                        )
-
-                        SwitchPreference(
-                            title = "2025 色彩规范 (Spec2025)",
-                            summary = "启用 Material 3 2025 扩展高对比调色板算法",
-                            checked = useSpec2025,
-                            onCheckedChange = { enabled ->
-                                coroutineScope.launch {
-                                    prefsRepo.saveUseSpec2025(enabled)
-                                }
-                            },
-                        )
-
-                        SwitchPreference(
-                            title = "宽屏侧边导航栏",
-                            summary = "宽屏或平板设备上使用左侧导航栏替代悬浮底栏",
-                            checked = wideScreenRail,
-                            onCheckedChange = { enabled ->
-                                coroutineScope.launch {
-                                    prefsRepo.saveWideScreenRail(enabled)
-                                }
-                            },
+                        ArrowPreference(
+                            title = stringResource(R.string.theme_settings_title),
+                            summary = themeSummary,
+                            onClick = onNavigateToThemeSettings,
                         )
                     }
 
@@ -411,6 +244,50 @@ fun SettingsScreen(
                             onClick = {
                                 passwordStore.clear()
                                 Toast.makeText(context, context.getString(R.string.settings_clear_passwords_done), Toast.LENGTH_SHORT).show()
+                            },
+                        )
+                    }
+
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
+
+                item {
+                    SmallTitle(text = stringResource(R.string.settings_section_storage))
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        BasicComponent(
+                            title = stringResource(R.string.settings_cache_usage_title),
+                            summary = formatFileSize(cacheSizeBytes),
+                        )
+
+                        ArrowPreference(
+                            title = stringResource(R.string.settings_cache_clear_title),
+                            summary = stringResource(R.string.settings_cache_clear_summary),
+                            onClick = {
+                                if (!isClearingCache) {
+                                    isClearingCache = true
+                                    coroutineScope.launch {
+                                        val freed = WatchPictureApp.instance.clearAllCaches()
+                                        cacheSizeBytes = WatchPictureApp.instance.totalCacheSizeBytes()
+                                        isClearingCache = false
+                                        val message = if (freed > 0L) {
+                                            context.getString(R.string.settings_cache_cleared, formatFileSize(freed))
+                                        } else {
+                                            context.getString(R.string.settings_cache_empty)
+                                        }
+                                        Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
+                                    }
+                                }
+                            },
+                        )
+
+                        SwitchPreference(
+                            title = stringResource(R.string.settings_cache_auto_title),
+                            summary = stringResource(R.string.settings_cache_auto_summary),
+                            checked = autoCleanCache,
+                            onCheckedChange = { enabled ->
+                                coroutineScope.launch {
+                                    prefsRepo.saveAutoCleanCache(enabled)
+                                }
                             },
                         )
                     }
@@ -606,311 +483,6 @@ fun SettingsScreen(
                 }
             }
         }
-
-        if (showColorPickerDialog) {
-            ColorPickerDialog(
-                show = showColorPickerDialog,
-                initialColor = Color(seedColor),
-                onDismiss = { showColorPickerDialog = false },
-                onConfirm = { pickedColor ->
-                    val argbLong = (pickedColor.toArgb().toLong() and 0xFFFFFFFFL) or 0xFF000000L
-                    coroutineScope.launch {
-                        prefsRepo.saveSeedColor(argbLong)
-                        prefsRepo.saveColorMode(2)
-                    }
-                    showColorPickerDialog = false
-                }
-            )
-        }
     }
 }
 
-@Composable
-private fun ThemePreviewCard() {
-    val colorScheme = MiuixTheme.colorScheme
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Column(
-            modifier = Modifier.padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Text(
-                text = "当前主题预览",
-                style = MiuixTheme.textStyles.body2,
-                color = colorScheme.onSurfaceSecondary
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .weight(1f)
-                        .height(56.dp)
-                        .clip(SquircleShape(12.dp))
-                        .background(colorScheme.primary)
-                        .padding(12.dp),
-                    contentAlignment = Alignment.BottomStart
-                ) {
-                    Text(
-                        text = "主色调",
-                        color = colorScheme.onPrimary,
-                        style = MiuixTheme.textStyles.body2,
-                        fontWeight = FontWeight.Medium
-                    )
-                }
-
-                Box(
-                    modifier = Modifier
-                        .weight(2f)
-                        .height(56.dp)
-                        .clip(SquircleShape(12.dp))
-                        .background(colorScheme.surface)
-                        .border(1.dp, colorScheme.dividerLine, SquircleShape(12.dp))
-                        .padding(horizontal = 12.dp),
-                    contentAlignment = Alignment.CenterStart
-                ) {
-                    Column {
-                        Text(
-                            text = "表面与正文对比",
-                            color = colorScheme.onSurface,
-                            style = MiuixTheme.textStyles.body2,
-                            fontWeight = FontWeight.Medium
-                        )
-                        Text(
-                            text = "次级说明与容器灰阶层次",
-                            color = colorScheme.onSurfaceSecondary,
-                            style = MiuixTheme.textStyles.footnote1
-                        )
-                    }
-                }
-            }
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                listOf(
-                    colorScheme.surfaceContainer,
-                    colorScheme.surfaceContainerHigh,
-                    colorScheme.surfaceContainerHighest
-                ).forEach { containerColor ->
-                    Box(
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(20.dp)
-                            .clip(SquircleShape(6.dp))
-                            .background(containerColor)
-                            .border(0.5.dp, colorScheme.dividerLine, SquircleShape(6.dp))
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun AppearanceModeChip(
-    selected: Boolean,
-    label: String,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier
-) {
-    val backgroundColor by animateColorAsState(
-        targetValue = if (selected) {
-            MiuixTheme.colorScheme.primary
-        } else {
-            MiuixTheme.colorScheme.surfaceContainerHigh
-        },
-        label = "chip_bg"
-    )
-    val contentColor by animateColorAsState(
-        targetValue = if (selected) {
-            MiuixTheme.colorScheme.onPrimary
-        } else {
-            MiuixTheme.colorScheme.onSurface
-        },
-        label = "chip_fg"
-    )
-
-    Box(
-        modifier = modifier
-            .height(38.dp)
-            .clip(SquircleShape(10.dp))
-            .background(backgroundColor)
-            .clickable(onClick = onClick),
-        contentAlignment = Alignment.Center
-    ) {
-        Text(
-            text = label,
-            style = MiuixTheme.textStyles.body2,
-            color = contentColor,
-            fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal,
-            textAlign = TextAlign.Center
-        )
-    }
-}
-
-@Composable
-private fun SeedColorOptionItem(
-    name: String,
-    color: Color,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(SquircleShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(6.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(color)
-                .then(
-                    if (isSelected) {
-                        Modifier.border(3.dp, MiuixTheme.colorScheme.onSurface, CircleShape)
-                    } else {
-                        Modifier.border(1.dp, MiuixTheme.colorScheme.dividerLine, CircleShape)
-                    }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            if (isSelected) {
-                Icon(
-                    imageVector = Icons.Default.Check,
-                    contentDescription = null,
-                    tint = Color.White,
-                    modifier = Modifier.size(22.dp)
-                )
-            }
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = name,
-            style = MiuixTheme.textStyles.footnote1,
-            color = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceSecondary,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-private fun CustomSeedColorItem(
-    color: Color,
-    isSelected: Boolean,
-    onClick: () -> Unit
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .clip(SquircleShape(12.dp))
-            .clickable(onClick = onClick)
-            .padding(6.dp)
-    ) {
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(CircleShape)
-                .background(if (isSelected) color else MiuixTheme.colorScheme.surfaceContainerHigh)
-                .then(
-                    if (isSelected) {
-                        Modifier.border(3.dp, MiuixTheme.colorScheme.onSurface, CircleShape)
-                    } else {
-                        Modifier.border(1.dp, MiuixTheme.colorScheme.dividerLine, CircleShape)
-                    }
-                ),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                imageVector = if (isSelected) Icons.Default.Check else Icons.Default.Palette,
-                contentDescription = "自定义颜色",
-                tint = if (isSelected) Color.White else MiuixTheme.colorScheme.onSurface,
-                modifier = Modifier.size(22.dp)
-            )
-        }
-        Spacer(modifier = Modifier.height(6.dp))
-        Text(
-            text = "自定义",
-            style = MiuixTheme.textStyles.footnote1,
-            color = if (isSelected) MiuixTheme.colorScheme.primary else MiuixTheme.colorScheme.onSurfaceSecondary,
-            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-        )
-    }
-}
-
-@Composable
-private fun ColorPickerDialog(
-    show: Boolean,
-    initialColor: Color,
-    onDismiss: () -> Unit,
-    onConfirm: (Color) -> Unit
-) {
-    var selectedColor by remember(initialColor) { mutableStateOf(initialColor) }
-    var hexText by remember(initialColor) {
-        val hex = String.format("%06X", 0xFFFFFF and initialColor.toArgb())
-        mutableStateOf("#$hex")
-    }
-
-    WindowDialog(
-        title = "自定义种子色",
-        summary = "拖动取色器或输入十六进制色值，自动衍生全套 Miuix 色板",
-        show = show,
-        onDismissRequest = onDismiss,
-    ) {
-        Column(
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-            modifier = Modifier.fillMaxWidth()
-        ) {
-            ColorPicker(
-                color = selectedColor,
-                onColorChanged = { newColor ->
-                    selectedColor = newColor
-                    val hex = String.format("%06X", 0xFFFFFF and newColor.toArgb())
-                    hexText = "#$hex"
-                },
-                showPreview = true,
-            )
-
-            TextField(
-                value = hexText,
-                onValueChange = { input ->
-                    val cleaned = input.uppercase().take(7)
-                    hexText = cleaned
-                    val rawHex = cleaned.removePrefix("#")
-                    if (rawHex.length == 6) {
-                        rawHex.toLongOrNull(16)?.let { rgb ->
-                            selectedColor = Color(rgb or 0xFF000000L)
-                        }
-                    }
-                },
-                label = "HEX (#RRGGBB)",
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth()
-            )
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("取消")
-                }
-                Button(
-                    onClick = { onConfirm(selectedColor) },
-                    colors = ButtonDefaults.buttonColorsPrimary(),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Text("确定")
-                }
-            }
-        }
-    }
-}

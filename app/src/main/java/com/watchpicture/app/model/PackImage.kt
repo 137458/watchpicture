@@ -20,6 +20,13 @@ data class PackImage(
 )
 
 /**
+ * 该条目是否为视频。视频同样计入图包条目，但无法按图片解码渲染，
+ * 缩略图走视频帧解码、播放交给系统播放器。
+ */
+val PackImage.isVideo: Boolean
+    get() = ZipArchiveManager.isVideoFile(displayName)
+
+/**
  * Resolves the appropriate Coil image model (File, ZipImageSource, or Uri)
  * for thumbnail preview and fullscreen viewing.
  */
@@ -29,6 +36,9 @@ fun PackImage.toImageModel(
     isThumbnail: Boolean = false,
     targetSizePx: Int = 360
 ): Any? {
+    // 视频条目不参与图片解码：交给图片管线会白白解压整段视频并解码失败
+    if (isVideo) return null
+
     val store = passwordStore
         ?: runCatching { com.watchpicture.app.WatchPictureApp.instance.sessionPasswordStore }.getOrNull()
     // Only the pack's own canonical password participates here. The global

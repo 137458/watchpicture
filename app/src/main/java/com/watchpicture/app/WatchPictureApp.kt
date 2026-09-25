@@ -8,8 +8,20 @@ import com.watchpicture.app.archive.ZipArchiveManager
 import com.watchpicture.app.coil.ZipImageFetcher
 import com.watchpicture.app.coil.ZipImageKeyer
 import com.watchpicture.app.security.SessionPasswordStore
+import com.watchpicture.app.util.AppLog
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class WatchPictureApp : Application(), SingletonImageLoader.Factory {
+
+    /**
+     * 应用级后台作用域：承载缓存维护等不绑定任何界面生命周期的长任务。
+     */
+    private val maintenanceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     val zipArchiveManager: ZipArchiveManager by lazy { ZipArchiveManager() }
     val sessionPasswordStore: SessionPasswordStore by lazy { SessionPasswordStore() }
@@ -81,6 +93,46 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
         } catch (_: Throwable) {}
 
         SingletonImageLoader.setSafe { newImageLoader(this) }
+
+        scheduleAutoCacheClean()
+    }
+
+    /**
+     * 统计全部磁盘缓存占用：归档条目缓存 + 缩略图缓存 + SAF 归档落盘副本。
+     */
+    suspend fun totalCacheSizeBytes(): Long = withContext(Dispatchers.IO) {
+        archiveDiskCache.sizeOnDisk() +
+            thumbnailDiskCache.sizeOnDisk() +
+            archiveFileResolver.archiveCacheSizeBytes(this@WatchPictureApp)
+    }
+
+    /**
+     * 清空全部磁盘缓存，返回实际释放的字节数。
+     * SAF 归档落盘副本被清掉后，相关图包在下次打开时会按需重新落盘。
+     */
+    suspend fun clearAllCaches(): Long = withContext(Dispatchers.IO) {
+        val before = totalCacheSizeBytes()
+        archiveDiskCache.clearAll()
+        thumbnailDiskCache.clearAll()
+        archiveFileResolver.clearArchiveCache(this@WatchPictureApp)
+        (before - totalCacheSizeBytes()).coerceAtLeast(0L)
+    }
+
+    /**
+     * 按容量预算裁剪磁盘缓存。归档条目缓存与缩略图缓存在写入时已自淘汰，
+     * 这里额外处理此前完全没有上限的 SAF 归档落盘副本。
+     */
+    fun scheduleAutoCacheClean() {
+        maintenanceScope.launch {
+            try {
+                if (!preferencesRepository.autoCleanCacheFlow.first()) return@launch
+                archiveDiskCache.trimToSize()
+                thumbnailDiskCache.trimToSize()
+                archiveFileResolver.trimArchiveCache(this@WatchPictureApp)
+            } catch (e: Throwable) {
+                AppLog.e("CacheClean", "自动清理缓存失败", e)
+            }
+        }
     }
 
     override fun newImageLoader(context: Context): ImageLoader {
@@ -129,6 +181,8 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
                     }
                     zipArchiveManager.handlePool.closeAll()
                     zipArchiveManager.sevenZManager.sessionManager.closeAll()
+                    // 退到后台且无在途读取时，顺带按容量预算裁剪磁盘缓存
+                    scheduleAutoCacheClean()
                 }
                 // 前台临界：RUNNING_CRITICAL(15) —— 清空全部内存缓存、句柄、7z 会话并裁剪磁盘缓存
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {

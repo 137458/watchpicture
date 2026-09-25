@@ -16,6 +16,9 @@ sealed interface AppRoute : NavKey {
     data object Update : AppRoute
 
     @Serializable
+    data object ThemeSettings : AppRoute
+
+    @Serializable
     data class ThumbnailGrid(val packId: String, val title: String) : AppRoute
 
     @Serializable

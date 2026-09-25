@@ -42,6 +42,28 @@ class FormatAndEncodingTest {
     }
 
     @Test
+    fun `isVideoFile recognises playable video containers and rejects images`() {
+        assertTrue(ZipArchiveManager.isVideoFile("clip.MP4"))
+        assertTrue(ZipArchiveManager.isVideoFile("clip.m4v"))
+        assertTrue(ZipArchiveManager.isVideoFile("clip.mkv"))
+        assertTrue(ZipArchiveManager.isVideoFile("clip.webm"))
+        assertTrue(ZipArchiveManager.isVideoFile("clip.mov"))
+        assertTrue(ZipArchiveManager.isVideoFile("clip.avi"))
+        assertTrue(ZipArchiveManager.isVideoFile("clip.3gp"))
+        assertFalse(ZipArchiveManager.isVideoFile("page.jpg"))
+        assertFalse(ZipArchiveManager.isVideoFile("archive.zip"))
+    }
+
+    @Test
+    fun `isMediaFile lists both images and videos as browsable pack entries`() {
+        assertTrue("图片应作为图包条目", ZipArchiveManager.isMediaFile("page_01.jpg"))
+        assertTrue("视频应作为图包条目", ZipArchiveManager.isMediaFile("clip_01.mp4"))
+        assertTrue("视频应作为图包条目", ZipArchiveManager.isMediaFile("clip_02.MKV"))
+        assertFalse("非媒体文件不应作为图包条目", ZipArchiveManager.isMediaFile("readme.txt"))
+        assertFalse("压缩包本身不应作为条目", ZipArchiveManager.isMediaFile("inner.zip"))
+    }
+
+    @Test
     fun `ZipArchiveManager automatically recovers GBK chinese entries without replacement character`() {
         val zipFile = tempFolder.newFile("chinese_test.zip")
         ZipFile(zipFile).use { zip ->

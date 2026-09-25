@@ -27,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -36,6 +37,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -47,8 +49,10 @@ import coil3.request.bitmapConfig
 import kotlinx.coroutines.launch
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
+import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.archive.ZipArchiveManager
 import com.watchpicture.app.model.PackImage
+import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.component.BlurredBar
@@ -92,6 +96,8 @@ fun ThumbnailGridScreen(
         initialFirstVisibleItemScrollOffset = savedBrowseState.firstVisibleItemScrollOffset
     )
     val backdrop = rememberBlurBackdrop()
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val passwordStore = WatchPictureApp.instance.sessionPasswordStore
     val sessionPassword = remember(packId) { passwordStore.get(packId) }
 
@@ -334,18 +340,31 @@ fun ThumbnailGridScreen(
                                 index = index + 1,
                                 isLastViewed = index == currentBrowseState.lastViewedIndex,
                                 onClick = {
-                                    ViewerViewModel.saveScrollPosition(
-                                        packId,
-                                        lazyGridState.firstVisibleItemIndex,
-                                        lazyGridState.firstVisibleItemScrollOffset
-                                    )
-                                    ViewerViewModel.saveLastViewedIndex(packId, index)
-                                    onNavigate(
-                                        AppRoute.GalleryViewer(
-                                            packId = packId,
-                                            initialIndex = index
+                                    if (item.isVideo) {
+                                        // 视频条目不走图片画廊，直接交给系统播放器
+                                        coroutineScope.launch {
+                                            if (!VideoLauncher.play(context, item)) {
+                                                android.widget.Toast.makeText(
+                                                    context,
+                                                    context.getString(R.string.video_no_player),
+                                                    android.widget.Toast.LENGTH_SHORT
+                                                ).show()
+                                            }
+                                        }
+                                    } else {
+                                        ViewerViewModel.saveScrollPosition(
+                                            packId,
+                                            lazyGridState.firstVisibleItemIndex,
+                                            lazyGridState.firstVisibleItemScrollOffset
                                         )
-                                    )
+                                        ViewerViewModel.saveLastViewedIndex(packId, index)
+                                        onNavigate(
+                                            AppRoute.GalleryViewer(
+                                                packId = packId,
+                                                initialIndex = index
+                                            )
+                                        )
+                                    }
                                 }
                             )
                         }
@@ -364,8 +383,10 @@ private fun ThumbnailItem(
     isLastViewed: Boolean = false,
     onClick: () -> Unit
 ) {
-    val model: Any? = remember(image, sessionPassword) {
-        image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
+    val isVideo = image.isVideo
+    val model: Any? = remember(image, sessionPassword, isVideo) {
+        // 视频条目无法按图片解码，跳过 Coil 请求改渲染播放占位
+        if (isVideo) null else image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
     }
 
     val context = androidx.compose.ui.platform.LocalContext.current
@@ -396,7 +417,21 @@ private fun ThumbnailItem(
             .background(MiuixTheme.colorScheme.surfaceContainerHigh)
             .clickable(onClick = onClick)
     ) {
-        if (request != null) {
+        if (isVideo) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .background(Color(0xFF1B1B1F)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.PlayArrow,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(34.dp)
+                )
+            }
+        } else if (request != null) {
             AsyncImage(
                 model = request,
                 contentDescription = image.displayName,
