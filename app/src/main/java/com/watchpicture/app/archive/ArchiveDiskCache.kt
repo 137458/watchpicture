@@ -26,7 +26,7 @@ class ArchiveDiskCache(
 
     companion object {
         const val DEFAULT_MAX_CACHE_SIZE = 512L * 1024 * 1024 // 512 MB
-        private const val BUFFER_SIZE = 64 * 1024 // 64 KB streaming buffer
+        private const val BUFFER_SIZE = 128 * 1024 // 128 KB streaming buffer for high-throughput big pictures
         private const val STRIPE_COUNT = 64
     }
 

@@ -98,4 +98,23 @@ class PackImageModelTest {
         val zipSource = model as ZipImageSource
         assertEquals("unlockedPass", zipSource.password)
     }
+
+    @Test
+    fun `resolves downsampled ZipImageSource for single image file when isThumbnail is true`() {
+        val imageFile = tempFolder.newFile("huge_photo.jpg")
+        val image = PackImage(
+            packId = "pack_single",
+            entryPath = "huge_photo.jpg",
+            displayName = "huge_photo.jpg",
+            directFilePath = imageFile.absolutePath
+        )
+
+        val thumbModel = image.toImageModel(isThumbnail = true, targetSizePx = 360)
+        assertTrue("Single image file must resolve to ZipImageSource when isThumbnail=true", thumbModel is ZipImageSource)
+        val source = thumbModel as ZipImageSource
+        assertEquals(imageFile.absolutePath, source.zipFile.absolutePath)
+        assertEquals("huge_photo.jpg", source.entryName)
+        assertTrue(source.isThumbnail)
+        assertEquals(360, source.targetSizePx)
+    }
 }

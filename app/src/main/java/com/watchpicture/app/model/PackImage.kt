@@ -66,7 +66,19 @@ fun PackImage.toImageModel(
                     File(direct, entryPath)
                 }
             }
-            ZipArchiveManager.isImageFile(direct.name) -> direct
+            ZipArchiveManager.isImageFile(direct.name) -> {
+                if (isThumbnail) {
+                    ZipImageSource(
+                        zipFile = direct,
+                        entryName = direct.name,
+                        password = null,
+                        isThumbnail = true,
+                        targetSizePx = targetSizePx
+                    )
+                } else {
+                    direct
+                }
+            }
             else -> ZipImageSource(
                 zipFile = direct,
                 entryName = entryPath,

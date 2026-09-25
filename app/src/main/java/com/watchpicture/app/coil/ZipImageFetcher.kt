@@ -99,6 +99,18 @@ class ZipImageFetcher(
                 ) {
                     if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
                         java.io.FileInputStream(cachedFull)
+                    } else if (data.zipFile.isDirectory) {
+                        val cleanName = data.entryName.trimStart('/', '\\')
+                        val directEntry = File(data.zipFile, cleanName)
+                        val resolved = if (directEntry.exists() && directEntry.isFile) {
+                            directEntry
+                        } else {
+                            val alt = File(data.zipFile, cleanName.replace('\\', '/'))
+                            if (alt.exists() && alt.isFile) alt else directEntry
+                        }
+                        java.io.FileInputStream(resolved)
+                    } else if (data.zipFile.isFile && ZipArchiveManager.isImageFile(data.zipFile.name)) {
+                        java.io.FileInputStream(data.zipFile)
                     } else {
                         // Stream directly into downsampler, 0 full-res disk dump!
                         zipArchiveManager.getEntryInputStream(
@@ -144,6 +156,35 @@ class ZipImageFetcher(
         }
 
         // Branch 2: Full-res viewing and Telephoto tile subsampling pipeline
+        if (data.zipFile.isDirectory) {
+            val cleanName = data.entryName.trimStart('/', '\\')
+            val directEntry = File(data.zipFile, cleanName)
+            val resolved = if (directEntry.exists() && directEntry.isFile) {
+                directEntry
+            } else {
+                val alt = File(data.zipFile, cleanName.replace('\\', '/'))
+                if (alt.exists() && alt.isFile) alt else directEntry
+            }
+            return@withContext SourceFetchResult(
+                source = ImageSource(
+                    file = resolved.toOkioPath(),
+                    fileSystem = options.fileSystem
+                ),
+                mimeType = mimeType,
+                dataSource = DataSource.DISK
+            )
+        }
+        if (data.zipFile.isFile && ZipArchiveManager.isImageFile(data.zipFile.name)) {
+            return@withContext SourceFetchResult(
+                source = ImageSource(
+                    file = data.zipFile.toOkioPath(),
+                    fileSystem = options.fileSystem
+                ),
+                mimeType = mimeType,
+                dataSource = DataSource.DISK
+            )
+        }
+
         if (diskCache != null) {
             val cachedFile = if (extractCoord != null) {
                 extractCoord.extractHighPriority(data.zipFile, data.entryName, password)

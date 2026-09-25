@@ -1298,13 +1298,12 @@ private fun ZoomableImage(
                 .clickable { onSingleTap() },
             contentAlignment = Alignment.Center
         ) {
-            // Immediate preview base layer: prevents black screen while full resolution loads.
-            // 活动页用屏幕级预览（足够清晰），邻页仍用 360px 以复用网格缓存、避免额外解码。
-            val previewSizePx = if (isActivePage) previewTargetSizePx else 360
-            val thumbModel = remember(image, sessionPassword, previewSizePx) {
-                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = previewSizePx)
+            // 1. 0ms 即时缩略图占位底图：尺寸严格对齐网格（360px），100% 命中 Coil 内存缓存瞬时渲染，彻底告别黑屏
+            val thumbModel = remember(image, sessionPassword) {
+                image.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
             }
             val thumbRequest = remember(thumbModel) {
+                if (thumbModel == null) return@remember null
                 val entryName = when (thumbModel) {
                     is ZipImageSource -> thumbModel.entryName
                     is File -> thumbModel.name
@@ -1313,28 +1312,86 @@ private fun ZoomableImage(
                 val hasAlpha = entryName.endsWith(".png") || entryName.endsWith(".webp") || entryName.endsWith(".gif")
                 ImageRequest.Builder(context)
                     .data(thumbModel)
-                    .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
+                    .size(360, 360)
                     .precision(Precision.INEXACT)
+                    .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
                     .build()
             }
 
-            AsyncImage(
-                model = thumbRequest,
-                contentDescription = null,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
-            )
+            if (thumbRequest != null) {
+                AsyncImage(
+                    model = thumbRequest,
+                    contentDescription = null,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
 
-            // High-resolution interactive ZoomableAsyncImage is only activated when resolvedFile is ready
-            if (fullRequest != null) {
+            // 2. Telephoto 超清原图分块磁贴渲染层：配置 placeholderMemoryCacheKey 内存无缝衔接
+            val thumbMemoryKey = remember(thumbModel) {
+                when (thumbModel) {
+                    is ZipImageSource -> {
+                        val pwdHash = thumbModel.password?.hashCode()?.toString(16) ?: "none"
+                        "zip://${thumbModel.zipFile.absolutePath}#mod=${thumbModel.zipFile.lastModified()}#${thumbModel.entryName}#pwd=$pwdHash#thumb#sz=360"
+                    }
+                    is File -> thumbModel.absolutePath
+                    else -> null
+                }
+            }
+
+            val finalFullRequest = remember(fullRequest, thumbMemoryKey) {
+                fullRequest?.newBuilder()?.apply {
+                    if (thumbMemoryKey != null) {
+                        placeholderMemoryCacheKey(thumbMemoryKey)
+                    }
+                }?.build()
+            }
+
+            if (finalFullRequest != null) {
                 ZoomableAsyncImage(
-                    model = fullRequest,
+                    model = finalFullRequest,
                     contentDescription = image.displayName,
                     state = zoomableState,
                     onClick = { onSingleTap() },
                     modifier = Modifier.fillMaxSize()
                 )
             }
+
+            // 3. 原图加载状态视觉指示：大体积图片解压/解码过程中（!zoomableState.isImageDisplayed）呈现微型非侵入指示
+            val isFullLoaded = fullRequest != null && zoomableState.isImageDisplayed
+            AnimatedVisibility(
+                visible = !isFullLoaded && isActivePage,
+                enter = fadeIn(tween(180)),
+                exit = fadeOut(tween(180)),
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 16.dp, bottom = 96.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(CircleShape)
+                        .background(Color.Black.copy(alpha = 0.55f))
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        InfiniteProgressIndicator(
+                            modifier = Modifier.size(12.dp),
+                            color = Color.White
+                        )
+                        Text(
+                            text = "高清加载中",
+                            fontSize = 11.sp,
+                            color = Color.White.copy(alpha = 0.85f),
+                            fontWeight = FontWeight.Medium
+                        )
+                    }
+                }
+            }
         }
     }
 }
+

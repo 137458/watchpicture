@@ -13,14 +13,17 @@
 - 新增应用内视频播放页（`VideoPlayerScreen` + `AppRoute.VideoPlayer`，Media3/ExoPlayer）：视频条目（含压缩包内条目）点击后直接在图包内播放，带播放/暂停、进度拖拽、时间显示与沉浸式全屏，不再跳出到第三方播放器；按视频声明的显示比例（含像素宽高比）为 Surface 分配尺寸做信箱式适配，避免画面被拉满整块屏幕造成比例失真；仅在本机解码器无法播放时才提供「用其它播放器打开」兜底入口。
 
 ### 优化
+- 深度优化大图查看页与超大体积图片加载链路（`GalleryViewerScreen` / `ZoomableImage` / `ArchiveDiskCache`）：全屏即时占位底图尺寸严格对齐网格标准缩略图（360px），100% 同步命中 Coil 内存缓存（0ms 首帧瞬时出图），彻底消除点入大图页时的黑屏等待；全尺寸原图请求绑定 `placeholderMemoryCacheKey` 内存无缝衔接；`ArchiveDiskCache` 大图流式解压 I/O 缓冲区扩容至 128KB 显著提升 10MB~50MB 超大图片的解压吞吐量；在后台原图分块瓦片渲染（`BitmapRegionDecoder`）就绪前提供轻量非侵入加载指示，就绪后平滑过渡至超清原图。
 - 将「主题与色彩」整块配置从设置页拆分至独立页面（新增 `ThemeSettingsScreen` 与 `AppRoute.ThemeSettings` 路由），承载深浅外观、AMOLED 纯黑、动态色彩开关、主题种子色、调色板风格、2025 色彩规范与宽屏侧边导航栏；设置页该区块收敛为一行入口，并回显「深浅外观 · 色彩来源」当前状态摘要。
 - 色彩来源默认值调整为「默认色板」且默认关闭动态色彩（莫奈取色），避免首次启动继承壁纸取色导致界面主色不可预期；旧版显式选择过莫奈模式的用户仍保留动态取色，关闭动态色彩开关时统一回落默认色板。
 - 全面推广 `BlurredBar` 顶栏渐进式纹理模糊至图包列表页（`PackListScreen`）、缩略图网格页（`ThumbnailGridScreen`）与设置页（`SettingsScreen`），并在图包列表页接入 Miuix `PullToRefresh` 阻尼下拉刷新。
 - 重构设置页「画廊翻页方向」与「默认排序方式」为 Miuix 原生 `WindowDropdownPreference` 下拉选择菜单，消除盲点循环切换；将图包列表排序弹窗升级为 `Card` + `RadioButtonPreference` 单选体系。
 - 为缩略图网格页与软件更新页路由启用 `NavSwipeDirection.LeftToRight` 左边缘滑动预测返回手势，并将卡片封面、缩略图、角标与弹窗统一升级为连续曲率超椭圆 `SquircleShape`。
-- 大图加载链路专项优化：全屏查看器占位预览按屏幕物理长边分档（`viewerPreviewTargetPx`，720p/1080p/1440p 屏分别取 720/1080/1440），解压落盘期间显示的占位图从 360px 糊图提升到接近屏幕清晰度，且与归档解压共用同一次读取、不增加额外解压；`HorizontalPager` 开启相邻页预组合（`beyondViewportPageCount = 1`）并让相邻页复用 360px 网格缩略图，翻页时的归档落盘与 Coil 解码提前完成；`ArchiveExtractionCoordinator.prefetch` 改为逐条目持锁 + 等待前台交互落盘请求（`interactiveRequestCount`）清空后再继续，避免后台预取长时间霸占归档锁导致「翻页要等预取跑完」。
+- `HorizontalPager` 开启相邻页预组合（`beyondViewportPageCount = 1`）并让相邻页复用 360px 网格缩略图，翻页时的归档落盘与 Coil 解码提前完成；`ArchiveExtractionCoordinator.prefetch` 改为逐条目持锁 + 等待前台交互落盘请求（`interactiveRequestCount`）清空后再继续，避免后台预取长时间霸占归档锁导致「翻页要等预取跑完」。
 
 ### 修复
+- 修复了大图查看页因请求 1080px/1440px 占位预览导致 Coil 内存缓存无法复用网格 360px 缩略图、且与后台高优先级原图解压并发争抢归档文件互斥锁，造成缩略图被阻塞在原图解压之后、「不显示缩略图，必须要等到原图加载出来以后才会显示」的核心缺陷。
+- 修复了单张大图文件在 `toImageModel(isThumbnail = true)` 时直接交出原始 File 导致全量解码几千万像素原图造成内存暴涨的问题，重构为通过 `ZipImageSource` 下采样管线生成 360px 缩略图；同时修复了 `ZipImageFetcher` 对普通文件夹解压目录及独立图片文件未做特化处理导致打开缩略图时抛出 ZipException 的缺陷。
 - 修复了经 ContentResolver 落盘的 SAF 归档副本只校验表头魔数、不校验 provider 声明体积的问题：被截断的副本同样能通过 `isValidArchive`（ZIP 中央目录位于文件尾部），落盘后解析失败，症状是打开图包得到「图包内未发现有效图片」；落盘改为严格比对 provider 声明体积，不一致即判为失败并留痕，同时为 zip 条目枚举与加密状态判定补上真实异常日志。
 - 修复了 `ZipImageMapper` 在命中归档落盘缓存时 `CacheFileLeases.acquire` 后永不释放、把大图缓存文件永久钉住的问题：该 mapper 交出的是裸 `File`，没有随 Coil 请求结束释放的钩子，导致被钉住的文件既不能被 LRU 淘汰也不能被清理，`archive_cache` 只增不减；改为不在 mapper 内获取租约，读取窗口的租约由消费方持有（全屏页已在 `ZoomableImage` 的 `DisposableEffect` 中按页面存活期持有，覆盖 Coil/Telephoto 的整个读取过程）。
 - 修复了图包扫描 `SafManager` 在直接文件系统路径并发 `awaitAll()`、以及 DocumentFile 回退路径逐项循环中均未隔离子项失败，导致所选目录中任何一个异常子项（损坏归档、不可读目录等）都会让整次扫描失败、图包列表被清空并误报「当前目录下没有找到图片文件夹或 ZIP/CBZ 压缩包」的缺陷；两条路径统一改为逐子项失败隔离（`mapIsolated` / `processDocumentChild`），异常子项仅记日志跳过，其余图包正常列出。

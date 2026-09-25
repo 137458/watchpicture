@@ -237,4 +237,74 @@ class ZipImageFetcherTest {
         val fullCached = archiveDiskCache.get(sevenZFile, "7z_thumb.jpg", null)
         assertNull("7z thumbnail MUST NOT dump full-res image to ArchiveDiskCache", fullCached)
     }
+
+    @Test
+    fun `fetches thumbnail from directory folder without zip error`() = runBlocking<Unit> {
+        val folder = tempFolder.newFolder("unpacked_album")
+        val imageFile = File(folder, "pic.jpg")
+        imageFile.writeBytes(sampleBytes)
+
+        val manager = ZipArchiveManager()
+        val thumbCacheDir = tempFolder.newFolder("thumb_cache_dir")
+        val thumbnailDiskCache = com.watchpicture.app.archive.ThumbnailDiskCache(thumbCacheDir)
+
+        val thumbData = ZipImageSource(
+            zipFile = folder,
+            entryName = "pic.jpg",
+            isThumbnail = true,
+            targetSizePx = 360
+        )
+
+        val options = Options(
+            context = object : android.content.ContextWrapper(null) {},
+            fileSystem = FileSystem.SYSTEM
+        )
+
+        val fetcher = ZipImageFetcher(
+            data = thumbData,
+            options = options,
+            zipArchiveManager = manager,
+            thumbnailDiskCache = thumbnailDiskCache
+        )
+        val result = fetcher.fetch()
+
+        assertTrue(result is SourceFetchResult)
+        val thumbCached = thumbnailDiskCache.get(folder, "pic.jpg", 360, null)
+        assertNotNull("Directory thumbnail should be downsampled and cached", thumbCached)
+    }
+
+    @Test
+    fun `fetches thumbnail for standalone image file without zip error`() = runBlocking<Unit> {
+        val imageFile = tempFolder.newFile("standalone.jpg")
+        imageFile.writeBytes(sampleBytes)
+
+        val manager = ZipArchiveManager()
+        val thumbCacheDir = tempFolder.newFolder("thumb_cache_standalone")
+        val thumbnailDiskCache = com.watchpicture.app.archive.ThumbnailDiskCache(thumbCacheDir)
+
+        val thumbData = ZipImageSource(
+            zipFile = imageFile,
+            entryName = "standalone.jpg",
+            isThumbnail = true,
+            targetSizePx = 360
+        )
+
+        val options = Options(
+            context = object : android.content.ContextWrapper(null) {},
+            fileSystem = FileSystem.SYSTEM
+        )
+
+        val fetcher = ZipImageFetcher(
+            data = thumbData,
+            options = options,
+            zipArchiveManager = manager,
+            thumbnailDiskCache = thumbnailDiskCache
+        )
+        val result = fetcher.fetch()
+
+        assertTrue(result is SourceFetchResult)
+        val thumbCached = thumbnailDiskCache.get(imageFile, "standalone.jpg", 360, null)
+        assertNotNull("Standalone image thumbnail should be cached", thumbCached)
+    }
 }
+
