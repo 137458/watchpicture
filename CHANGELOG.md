@@ -9,7 +9,7 @@
 - 升级软件更新页（`UpdateScreen`）为 HyperOS 3.0 动态流光极光架构：引入 AGSL `BgEffectBackground` 极光流体背景着色器随滚动视差平滑淡出，支持横竖屏自适应 Hero 布局、Markdown 发行日志卡片与 GitHub Releases 历史版本直达入口。
 - 新增平板与横屏宽屏（`>= 600dp`）自适应侧边导航栏（`NavigationRail`），并支持在设置中自由开启或关闭。
 - 新增磁盘缓存自动清理与设置页「存储与缓存」区块：显示四类落盘数据（归档条目缓存、缩略图缓存、SAF 归档落盘副本、视频播放临时副本）的总占用、支持一键清理并回显释放量，以及自动清理开关（默认开启）；为此前完全没有容量上限的 SAF 归档落盘副本目录 `opened_archives` 与视频播放副本目录 `playback` 引入容量预算与 LRU 裁剪（统一走 `planLruTrim`，被租约占用的在途文件不参与淘汰），在应用启动（尚无归档被打开）时执行，缓存统计/清理/自动裁剪职责收敛到 `CacheMaintenance`。
-- 图包条目支持视频（`PackImage.isVideo` / `ZipArchiveManager.isVideoFile`）：视频与图片一同计入图包条目与页数，覆盖文件夹图包、ZIP/CBZ 与 7z/CB7 的全部条目枚举路径；缩略图网格、图包封面与画廊速览对视频展示统一播放入口（`VideoEntryPlaceholder`），点击交给系统播放器；压缩包内的视频条目按需流式落盘到 `cacheDir/playback` 后经 `FileProvider` 共享（`VideoLauncher`）。
+- 图包条目支持视频（`PackImage.isVideo` / `ZipArchiveManager.isVideoFile`）：视频与图片一同计入图包条目与页数，覆盖文件夹图包、ZIP/CBZ 与 7z/CB7 的全部条目枚举路径；缩略图网格、图包封面与画廊速览对视频展示统一播放入口（`VideoEntryPlaceholder`）；压缩包内的视频条目按需流式落盘到 `cacheDir/playback` 后供播放使用（`VideoLauncher`）。
 - 新增应用内视频播放页（`VideoPlayerScreen` + `AppRoute.VideoPlayer`，Media3/ExoPlayer）：视频条目（含压缩包内条目）点击后直接在图包内播放，带播放/暂停、进度拖拽、时间显示与沉浸式全屏，不再跳出到第三方播放器；按视频声明的显示比例（含像素宽高比）为 Surface 分配尺寸做信箱式适配，避免画面被拉满整块屏幕造成比例失真；仅在本机解码器无法播放时才提供「用其它播放器打开」兜底入口。
 
 ### 优化
