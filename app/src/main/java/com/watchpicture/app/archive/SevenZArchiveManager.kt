@@ -22,6 +22,28 @@ class SevenZArchiveManager(
         private val naturalOrderComparator = NaturalOrderComparator()
         private const val SEVEN_Z_SIGNATURE_LEN = 6
 
+        // Header 加密包登记：解锁前（无密码）无法枚举条目是 7z 规范行为，登记后
+        // 无密码调用直接快速失败，避免每次列表刷新重复 native 失败 + Commons 尝试。
+        private val headerEncryptedPaths: MutableSet<String> =
+            java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+
+        private fun headerKey(file: File): String =
+            try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
+
+        @JvmStatic
+        internal fun rememberHeaderEncrypted(file: File) {
+            headerEncryptedPaths.add(headerKey(file))
+        }
+
+        @JvmStatic
+        internal fun isHeaderEncryptedRemembered(file: File): Boolean =
+            headerEncryptedPaths.contains(headerKey(file))
+
+        @JvmStatic
+        internal fun forgetHeaderEncryptedForTest(file: File) {
+            headerEncryptedPaths.remove(headerKey(file))
+        }
+
         /**
          * Quickly tests if a file starts with valid 7z magic bytes (0x37, 0x7A, 0xBC, 0xAF, 0x27, 0x1C).
          */
@@ -48,6 +70,7 @@ class SevenZArchiveManager(
      * Determines whether the 7z archive is encrypted (either header encryption or entry content encryption).
      */
     fun isEncrypted(file: File): Boolean {
+        if (isHeaderEncryptedRemembered(file)) return true
         if (!isValidSevenZArchive(file)) return false
         val existingEntries = sessionManager.getEntries(file, null)
         if (existingEntries != null && existingEntries.isNotEmpty()) {
@@ -66,6 +89,7 @@ class SevenZArchiveManager(
                 }
             }
         } catch (_: PasswordRequiredException) {
+            rememberHeaderEncrypted(file)
             true // Encrypted header requires a password to even read metadata
         } catch (e: Exception) {
             val msg = e.message?.lowercase(Locale.ROOT) ?: ""
@@ -81,6 +105,7 @@ class SevenZArchiveManager(
      * Retrieves all browsable media entries (images and videos) sorted in human-intuitive natural order.
      */
     fun getMediaEntries(file: File, password: String? = null): List<ArchiveEntryInfo> {
+        if (password.isNullOrEmpty() && isHeaderEncryptedRemembered(file)) return emptyList()
         if (!isValidSevenZArchive(file)) return emptyList()
 
         val cachedEntries = sessionManager.getEntries(file, password)
@@ -125,6 +150,9 @@ class SevenZArchiveManager(
                     .sortedWith { a, b -> naturalOrderComparator.compare(a.name, b.name) }
                     .toList()
             }
+        } catch (e: PasswordRequiredException) {
+            if (password.isNullOrEmpty()) rememberHeaderEncrypted(file)
+            emptyList()
         } catch (_: Exception) {
             emptyList()
         }
