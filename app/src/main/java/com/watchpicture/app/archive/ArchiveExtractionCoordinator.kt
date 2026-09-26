@@ -12,6 +12,7 @@ import kotlinx.coroutines.withContext
 import org.apache.commons.compress.archivers.sevenz.SevenZFile
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Global coordinator for archive image extraction.
@@ -533,40 +534,45 @@ class ArchiveExtractionCoordinator(
                 return@withContext
             }
 
-            val mutex = getLockFor(file)
-            mutex.withLock {
-                if (powerThermalManager?.isThrottled == true) return@withLock
-                val targets = uncached.filter { name ->
-                    thumbnailDiskCache.get(file, name, targetSizePx, password) == null
+            // ZIP 条目互不固实：每条目独立流（native ZipFile 由 libcore 对共享 RAF 串行化读，
+            // AES/ZipCrypto 路径每流独享 RandomAccessFile），ThumbnailDiskCache 为条纹锁原子写，
+            // 无需 7z 固实包的单线程顺序约束；也不整批持有归档互斥锁——整批持锁会让
+            // 前台交互请求在扫描让路等待期间与之互锁。按核数并行提取（调研 P1 项）。
+            val targets = uncached.filter { name ->
+                thumbnailDiskCache.get(file, name, targetSizePx, password) == null
+            }
+            if (targets.isEmpty()) return@withContext
+
+            val completed = AtomicInteger(0)
+            val total = targets.size
+            runParallelBatch(
+                items = targets,
+                workerCount = ArchiveDispatchers.parallelSweepConcurrency,
+                dispatcher = ArchiveDispatchers.parallelSweepDispatcher
+            ) { name ->
+                if (powerThermalManager?.isThrottled == true) return@runParallelBatch
+
+                // Cooperative yield while foreground requests (Coil thumbnails / viewer) are in
+                // flight, so interactive decryption gets the CPU instead of this background sweep.
+                while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
+                    kotlinx.coroutines.delay(80)
                 }
-                if (targets.isEmpty()) return@withLock
+                if (!kotlinx.coroutines.currentCoroutineContext().isActive) return@runParallelBatch
 
-                var count = 0
-                var consecutiveGenerated = 0
-                val total = targets.size
-                for (name in targets) {
-                    if (powerThermalManager?.isThrottled == true) break
-
-                    // Cooperative yield while foreground requests (Coil thumbnails / viewer) are in
-                    // flight, so interactive decryption gets the CPU instead of this background sweep.
-                    while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
-                        kotlinx.coroutines.delay(80)
+                var completedThisItem = false
+                runCatching {
+                    thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
+                        zipArchiveManager.getEntryInputStream(file, name, password)
                     }
-                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
-
-                    runCatching {
-                        thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
-                            zipArchiveManager.getEntryInputStream(file, name, password)
-                        }
-                        count++
-                        consecutiveGenerated++
-                        onProgress?.invoke(count, total)
-                    }
-                    kotlinx.coroutines.yield()
-                    if (consecutiveGenerated >= BATCH_COOLING_INTERVAL) {
-                        consecutiveGenerated = 0
-                        kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
-                    }
+                    val done = completed.incrementAndGet()
+                    onProgress?.invoke(done, total)
+                    completedThisItem = true
+                }
+                kotlinx.coroutines.yield()
+                // 全局热节流节奏：每完成 BATCH_COOLING_INTERVAL 个条目小憩一次，
+                // 避免并行worker持续满载导致 SoC 热节流。
+                if (completedThisItem && completed.get() % BATCH_COOLING_INTERVAL == 0) {
+                    kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
                 }
             }
         } finally {

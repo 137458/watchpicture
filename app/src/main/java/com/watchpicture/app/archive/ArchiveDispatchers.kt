@@ -60,4 +60,16 @@ object ArchiveDispatchers {
     val backgroundSweepDispatcher: CoroutineDispatcher = Executors
         .newFixedThreadPool(2, backgroundThreadFactory)
         .asCoroutineDispatcher()
+
+    /**
+     * 并行批量提取线程池（调研 P1 项）：独立（非固实）ZIP 条目的批量扫描并行化。
+     * 后台优先级维持 EAS 调度在能效核集群；并行度封顶 4 线程，给前台交互的
+     * [decompressDispatcher]（3..6 前台优先级线程）让出大核。
+     */
+    val parallelSweepConcurrency: Int =
+        Runtime.getRuntime().availableProcessors().coerceIn(2, 4)
+
+    val parallelSweepDispatcher: CoroutineDispatcher = Executors
+        .newFixedThreadPool(parallelSweepConcurrency, backgroundThreadFactory)
+        .asCoroutineDispatcher()
 }
