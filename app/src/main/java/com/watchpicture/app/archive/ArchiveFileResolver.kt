@@ -277,15 +277,36 @@ class ArchiveFileResolver(
 
         val tempFile = File(cacheDir, "${targetFile.name}.tmp")
         return try {
-            val inputStream: InputStream = resolver.openInputStream(uri) ?: return null
-            BufferedInputStream(inputStream, BUFFER_SIZE).use { input ->
-                BufferedOutputStream(FileOutputStream(tempFile), BUFFER_SIZE).use { output ->
-                    val buffer = ByteArray(BUFFER_SIZE)
-                    var bytesRead: Int
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
+            val copied = runCatching {
+                // U1: openFileDescriptor 拿 provider 侧 fd（绕开 FUSE），FileChannel.transferTo
+                // 底层即 sendfile（minSdk 24 全兼容），落盘零 CPU 级拷贝。provider 返回管道 fd
+                // （size()=0、sendfile 不适用）或任何失败时回退 openInputStream 流式复制。
+                resolver.openFileDescriptor(uri, "r")?.use { pfd ->
+                    java.io.FileInputStream(pfd.fileDescriptor).channel.use { source ->
+                        java.io.FileOutputStream(tempFile).channel.use { target ->
+                            val size = source.size()
+                            if (size <= 0L) return@use false
+                            var position = 0L
+                            while (position < size) {
+                                position += source.transferTo(position, size - position, target)
+                            }
+                            true
+                        }
                     }
-                    output.flush()
+                } ?: false
+            }.getOrDefault(false)
+
+            if (!copied) {
+                val inputStream: InputStream = resolver.openInputStream(uri) ?: return null
+                BufferedInputStream(inputStream, BUFFER_SIZE).use { input ->
+                    BufferedOutputStream(FileOutputStream(tempFile), BUFFER_SIZE).use { output ->
+                        val buffer = ByteArray(BUFFER_SIZE)
+                        var bytesRead: Int
+                        while (input.read(buffer).also { bytesRead = it } != -1) {
+                            output.write(buffer, 0, bytesRead)
+                        }
+                        output.flush()
+                    }
                 }
             }
 

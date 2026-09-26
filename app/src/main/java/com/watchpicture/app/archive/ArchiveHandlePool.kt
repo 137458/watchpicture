@@ -44,6 +44,11 @@ class ArchiveHandlePool(
         val lastModified: Long
     )
 
+    private class NativeZipHandle(
+        val session: NativeZipSession,
+        val lastModified: Long
+    )
+
     // The full password (not just an int hash) is part of the key: int hashes collide for
     // different passwords, which would silently reuse a handle opened with the wrong password
     // and decrypt/corrupt data.
@@ -105,6 +110,16 @@ class ArchiveHandlePool(
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, NativeHandle>?): Boolean {
             if (size > maxPoolSize && eldest != null) {
                 runCatching { eldest.value.zipFile.close() }
+                return true
+            }
+            return false
+        }
+    }
+
+    private val nativeZipPool = object : LinkedHashMap<String, NativeZipHandle>(maxPoolSize, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, NativeZipHandle>?): Boolean {
+            if (size > maxPoolSize && eldest != null) {
+                runCatching { eldest.value.session.close() }
                 return true
             }
             return false
@@ -292,6 +307,42 @@ class ArchiveHandlePool(
     }
 
     /**
+     * Obtains a pooled native ZIP engine session (调研 Z3 项) for unencrypted archive reads.
+     *
+     * Session is shared across threads by design (the engine only shares the read-only
+     * mmap region; every extraction allocates per-call state). Only [NativeZipSession.extractToFile]
+     * is safe on a pooled session: direct buffers hold engine-owned memory until close,
+     * so short-lived per-entry sessions must be used for those.
+     * 64-bit process only — whole-file mmap on 32-bit risks ENOMEM (调研 §9.3).
+     */
+    fun openNativeZipSession(file: File): NativeZipSession? {
+        if (!nativeZipEngineEnabled) return null
+        val path = file.absolutePath
+        val lastModified = file.lastModified()
+        return lock.withLock {
+            val existing = nativeZipPool[path]
+            val handle = if (existing != null && existing.lastModified == lastModified) {
+                existing
+            } else {
+                existing?.let { runCatching { it.session.close() } }
+                val session = NativeZipSession.open(path) ?: return@withLock null
+                val created = NativeZipHandle(session, lastModified)
+                nativeZipPool[path] = created
+                created
+            }
+            handle.session
+        }
+    }
+
+    private val nativeZipEngineEnabled: Boolean by lazy {
+        NativeZip.isAvailable && try {
+            android.os.Process.is64Bit()
+        } catch (_: Throwable) {
+            false
+        }
+    }
+
+    /**
      * Explicitly closes and removes cached handles for a file.
      */
     fun close(file: File) {
@@ -299,6 +350,9 @@ class ArchiveHandlePool(
         lock.withLock {
             nativePool.remove(path)?.let {
                 runCatching { it.zipFile.close() }
+            }
+            nativeZipPool.remove(path)?.let {
+                runCatching { it.session.close() }
             }
             val keysToRemove = encryptedPool.keys.filter { it.path == path }
             for (k in keysToRemove) {
@@ -318,6 +372,10 @@ class ArchiveHandlePool(
                 runCatching { h.zipFile.close() }
             }
             nativePool.clear()
+            for (h in nativeZipPool.values) {
+                runCatching { h.session.close() }
+            }
+            nativeZipPool.clear()
             for (h in encryptedPool.values) {
                 runCatching { h.close() }
             }

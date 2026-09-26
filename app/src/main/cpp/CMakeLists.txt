@@ -55,3 +55,48 @@ target_link_libraries(
     native7z
     ${log-lib}
 )
+
+# ---------------------------------------------------------------------------
+# nativezip: self-built native ZIP engine (research item Z3)
+# Whole-file read-only mmap container parsing + STORED zero-copy slices +
+# whole-buffer DEFLATE inflate. Primary inflate backend is the vendored
+# libdeflate (MIT, app/src/main/cpp/zip_engine); when absent the engine
+# falls back to the NDK system zlib (raw deflate, inflateInit2(-MAX_WBITS)).
+# ---------------------------------------------------------------------------
+set(NATIVEZIP_SOURCES nativezip_jni.cpp)
+set(NATIVEZIP_HAS_LIBDEFLATE OFF)
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/zip_engine/lib/deflate_decompress.c")
+    set(NATIVEZIP_HAS_LIBDEFLATE ON)
+    list(APPEND NATIVEZIP_SOURCES
+        zip_engine/lib/deflate_decompress.c
+        zip_engine/lib/utils.c
+    )
+endif()
+
+add_library(
+    nativezip
+    SHARED
+    ${NATIVEZIP_SOURCES}
+)
+
+if(NATIVEZIP_HAS_LIBDEFLATE)
+    target_compile_definitions(nativezip PRIVATE NATIVEZIP_USE_LIBDEFLATE)
+    target_include_directories(nativezip PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/zip_engine
+        ${CMAKE_CURRENT_SOURCE_DIR}/zip_engine/lib
+    )
+endif()
+
+target_link_libraries(
+    nativezip
+    ${log-lib}
+)
+
+if(NOT NATIVEZIP_HAS_LIBDEFLATE)
+    # zlib fallback backend (raw deflate streaming inflate)
+    target_link_libraries(
+        nativezip
+        z
+    )
+endif()

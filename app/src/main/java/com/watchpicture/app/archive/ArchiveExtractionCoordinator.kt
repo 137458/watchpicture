@@ -192,6 +192,26 @@ class ArchiveExtractionCoordinator(
     }
 
     private fun extractZipEntry(file: File, entryName: String, password: String?): File {
+        // Z3 native 引擎优先：mmap 容器 + libdeflate inflate，解压即写 fd 零中间拷贝；
+        // 引擎不支持加密条目，加密与任何失败回退 java.util.zip.ZipFile 流式路径。
+        if (password.isNullOrEmpty()) {
+            val session = zipArchiveManager.handlePool.openNativeZipSession(file)
+            if (session != null) {
+                val entry = session.findEntry(entryName)
+                if (entry != null && !entry.isDirectory) {
+                    val extracted = runCatching {
+                        archiveDiskCache.putDirect(file, entryName, password) { tempFile ->
+                            if (!session.extractToFile(entry.index, tempFile)) {
+                                throw java.io.IOException("NativeZip extractToFile failed for $entryName")
+                            }
+                        }
+                    }.getOrNull()
+                    if (extracted != null && extracted.exists() && extracted.length() > 0L) {
+                        return extracted
+                    }
+                }
+            }
+        }
         return archiveDiskCache.getOrPut(file, entryName, password) {
             zipArchiveManager.getEntryInputStream(file, entryName, password)
         }
@@ -561,11 +581,37 @@ class ArchiveExtractionCoordinator(
 
                 var completedThisItem = false
                 runCatching {
-                    thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
-                        zipArchiveManager.getEntryInputStream(file, name, password)
+                    // Z3 native direct-buffer 优先（未加密）：STORED 零拷贝 mmap 切片 /
+                    // DEFLATE 解压进引擎缓冲，缩略图下采样直接消费 ByteBuffer。
+                    // DEFLATE 缓冲由引擎持有至 session close，故用 per-entry 短命
+                    // session——池化会线性累积内存；open 成本（mmap+CD 解析）相对
+                    // 解压+解码可忽略。
+                    var nativeDone = false
+                    if (password.isNullOrEmpty() && !file.isDirectory) {
+                        NativeZipSession.open(file.absolutePath)?.use { session ->
+                            val entry = session.findEntry(name)
+                            val buffer = entry?.let { session.extractToDirectBuffer(it.index) }
+                            if (buffer != null) {
+                                thumbnailDiskCache.getOrPutResultFromByteBuffer(
+                                    zipFile = file,
+                                    entryName = name,
+                                    targetSizePx = targetSizePx,
+                                    password = password,
+                                    buffer = buffer
+                                )
+                                val done = completed.incrementAndGet()
+                                onProgress?.invoke(done, total)
+                                nativeDone = true
+                            }
+                        }
                     }
-                    val done = completed.incrementAndGet()
-                    onProgress?.invoke(done, total)
+                    if (!nativeDone) {
+                        thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
+                            zipArchiveManager.getEntryInputStream(file, name, password)
+                        }
+                        val done = completed.incrementAndGet()
+                        onProgress?.invoke(done, total)
+                    }
                     completedThisItem = true
                 }
                 kotlinx.coroutines.yield()

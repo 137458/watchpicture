@@ -11,10 +11,12 @@ import coil3.fetch.SourceFetchResult
 import coil3.request.Options
 import com.watchpicture.app.archive.ArchiveDiskCache
 import com.watchpicture.app.archive.CacheFileLeases
+import com.watchpicture.app.archive.MemFdPipeline
 import com.watchpicture.app.archive.ZipArchiveManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okio.Path.Companion.toOkioPath
+import okio.Path.Companion.toPath
 import java.io.File
 import java.io.IOException
 import java.util.Locale
@@ -40,6 +42,9 @@ class ZipImageFetcher(
     companion object {
         // Run decompression and decoding exclusively on energy-efficient LITTLE CPU cores
         private val decompressDispatcher = com.watchpicture.app.archive.ArchiveDispatchers.decompressDispatcher
+
+        // D2 memfd 冷路径的解压流拷贝缓冲
+        private const val MEMFD_COPY_BUFFER = 128 * 1024
     }
 
     override suspend fun fetch(): FetchResult = withContext(decompressDispatcher) {
@@ -171,7 +176,52 @@ class ZipImageFetcher(
         }
 
         if (diskCache != null) {
-            val cachedFile = if (extractCoord != null) {
+            // 磁盘缓存命中（预取已填）→ 磁盘文件优先，零额外成本
+            val cachedFile = diskCache.get(data.zipFile, data.entryName, password)
+            if (cachedFile != null && cachedFile.exists() && cachedFile.length() > 0L) {
+                val cachedFileLease = leaseVerified(cachedFile)
+                if (cachedFileLease != null) {
+                    return@withContext SourceFetchResult(
+                        source = ImageSource(
+                            file = cachedFile.toOkioPath(),
+                            fileSystem = options.fileSystem,
+                            closeable = cachedFileLease
+                        ),
+                        mimeType = mimeType,
+                        dataSource = DataSource.DISK
+                    )
+                }
+                // 淘汰竞态 → 走下方冷路径重新解压
+            }
+
+            // D2 memfd 冷路径（API 30+）：未命中条目解压进匿名内存文件再交给瓦片子采样，
+            // 省去整图落盘写与闪存磨损；/proc/self/fd 路径对 BRD 是等价的文件态输入。
+            // 任何失败（低版本/系统调用拒绝）都回退 extractHighPriority 磁盘写路径。
+            if (MemFdPipeline.isAvailable) {
+                val memFd = MemFdPipeline.getOrPut(
+                    MemFdPipeline.cacheKey(data.zipFile, data.entryName, password)
+                ) { out ->
+                    zipArchiveManager.getEntryInputStream(
+                        file = data.zipFile,
+                        entryName = data.entryName,
+                        password = password
+                    ).use { input ->
+                        input.copyTo(out, MEMFD_COPY_BUFFER)
+                    }
+                }
+                if (memFd != null) {
+                    return@withContext SourceFetchResult(
+                        source = ImageSource(
+                            file = memFd.path.toPath(),
+                            fileSystem = options.fileSystem
+                        ),
+                        mimeType = mimeType,
+                        dataSource = DataSource.MEMORY
+                    )
+                }
+            }
+
+            val extractedFile = if (extractCoord != null) {
                 extractCoord.extractHighPriority(data.zipFile, data.entryName, password)
             } else {
                 diskCache.getOrPut(
@@ -187,11 +237,11 @@ class ZipImageFetcher(
                 }
             }
 
-            val cachedFileLease = leaseVerified(cachedFile)
+            val cachedFileLease = leaseVerified(extractedFile)
                 ?: throw IOException("Cached entry evicted before decode: '${data.entryName}'")
             return@withContext SourceFetchResult(
                 source = ImageSource(
-                    file = cachedFile.toOkioPath(),
+                    file = extractedFile.toOkioPath(),
                     fileSystem = options.fileSystem,
                     closeable = cachedFileLease
                 ),
