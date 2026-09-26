@@ -176,8 +176,10 @@ fun ThumbnailGridScreen(
                             val totalSize = displayImages.size
                             if (totalSize > 0) {
                                 val lastIndex = lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstIndex
-                                val start = (firstIndex - 30).coerceAtLeast(0)
-                                val end = (lastIndex + 30).coerceAtMost(totalSize - 1)
+                                // 预取窗口不对称：向后远大于向前。7z 固实包顺序解压下"往后多取"
+                                // 几乎免费（顺路解压），ZIP 条目独立、缩略图体积小，磁盘缓存预算充足。
+                                val start = (firstIndex - PREFETCH_BEHIND_ITEMS).coerceAtLeast(0)
+                                val end = (lastIndex + PREFETCH_AHEAD_ITEMS).coerceAtMost(totalSize - 1)
                                 if (start <= end) {
                                     val sublist = displayImages.subList(start, end + 1)
                                     val entryNames = sublist.map { it.entryPath }
@@ -373,6 +375,9 @@ fun ThumbnailGridScreen(
         }
     }
 }
+
+private const val PREFETCH_BEHIND_ITEMS = 30
+private const val PREFETCH_AHEAD_ITEMS = 150
 
 @Composable
 private fun ThumbnailItem(

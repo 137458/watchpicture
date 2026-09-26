@@ -13,6 +13,7 @@
 - 新增应用内视频播放页（`VideoPlayerScreen` + `AppRoute.VideoPlayer`，Media3/ExoPlayer）：视频条目（含压缩包内条目）点击后直接在图包内播放，带播放/暂停、进度拖拽、时间显示与沉浸式全屏，不再跳出到第三方播放器；按视频声明的显示比例（含像素宽高比）为 Surface 分配尺寸做信箱式适配，避免画面被拉满整块屏幕造成比例失真；仅在本机解码器无法播放时才提供「用其它播放器打开」兜底入口。
 
 ### 优化
+- 缩略图网格滚动预取窗口扩大：滚动停止后的后台预取范围由可视区前后各 30 张调整为向前 30 / 向后 150 张（约 10 屏），减少快速下滚时的空白格子；7z 固实包顺序解压下向后多取近乎零边际成本。
 - 新增自研 native ZIP 引擎（`NativeZip`，调研 Z3 项）：整文件只读 mmap 容器解析（EOCD / ZIP64 / extra field 0x0001），inflate 后端优先 vendor 的 libdeflate（MIT，缺失时回退 NDK 系统 zlib）；未加密 ZIP 的归档落盘（解压即写 fd 零中间拷贝）与缩略图扫描（STORED 条目零拷贝 mmap 切片直接消费 ByteBuffer）走引擎优先路径，CRC32 按需跳过；64 位进程限定，加密条目与任何失败自动回退既有流式管线。
 - 新增 memfd 大图冷路径（`MemFdPipeline`，调研 D2 项）：全尺寸图片在磁盘缓存未命中时解压进匿名内存文件（`Os.memfd_create`，API 30+），经 `/proc/self/fd` 以等价文件态 ImageSource 交给 Coil/Telephoto，BRD 瓦片子采样照常 mmap，省去整图 30~80ms 落盘写与闪存磨损；仅当前页±预读页持有（条目数+字节双上限 LRU），低内存回调全量释放；API < 30 或任何失败自动回退磁盘缓存路径，密钥仅以单向摘要参与缓存键。
 - SAF 归档落盘提速（调研 U1 项）：`openFileDescriptor` 拿 provider 侧 fd（绕开 FUSE），`FileChannel.transferTo`（sendfile，minSdk 24 全兼容）零 CPU 级拷贝落盘；provider 返回管道 fd 或失败时回退原流式复制。
