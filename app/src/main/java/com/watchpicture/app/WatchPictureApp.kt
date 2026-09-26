@@ -140,6 +140,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
                     archiveDiskCache.trimToSize()
                     thumbnailDiskCache.trimToSize()
                     com.watchpicture.app.archive.SevenZKeyCache.clear()
+                    com.watchpicture.app.archive.ZipAesKeyCache.clear()
                 }
                 // 后台各档：UI_HIDDEN(20)/BACKGROUND(40)/MODERATE(60) —— 压缩 Coil 缓存并关闭空闲句柄/7z 缓冲
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
@@ -159,6 +160,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
                     archiveDiskCache.trimToSize()
                     thumbnailDiskCache.trimToSize()
                     com.watchpicture.app.archive.SevenZKeyCache.clear()
+                    com.watchpicture.app.archive.ZipAesKeyCache.clear()
                 }
                 // 前台低内存：RUNNING_LOW(10) —— 压缩 Coil 缓存并回收空闲 7z 会话
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_LOW -> {
@@ -179,6 +181,7 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             zipArchiveManager.handlePool.closeAll()
             zipArchiveManager.sevenZManager.sessionManager.closeAll()
             com.watchpicture.app.archive.SevenZKeyCache.clear()
+            com.watchpicture.app.archive.ZipAesKeyCache.clear()
         } catch (_: Throwable) {}
     }
 

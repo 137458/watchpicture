@@ -13,6 +13,7 @@
 - 新增应用内视频播放页（`VideoPlayerScreen` + `AppRoute.VideoPlayer`，Media3/ExoPlayer）：视频条目（含压缩包内条目）点击后直接在图包内播放，带播放/暂停、进度拖拽、时间显示与沉浸式全屏，不再跳出到第三方播放器；按视频声明的显示比例（含像素宽高比）为 Surface 分配尺寸做信箱式适配，避免画面被拉满整块屏幕造成比例失真；仅在本机解码器无法播放时才提供「用其它播放器打开」兜底入口。
 
 ### 优化
+- 重写加密 ZIP（WinZip AES）解密内核为 JCE 硬件加速管线（`ZipAesJceStreamFactory`）：AES 密钥流由平台 Conscrypt（BoringSSL ARMv8 硬件 AES 指令）批量产出（256KB 每次 JNI 往返），PBKDF2-HMAC-SHA1 派生改用 Conscrypt `Mac` 手写 1000 轮循环并按盐进程级缓存（`ZipAesKeyCache`，仅驻留内存），HMAC-SHA1-80 完整性校验移至流末尾整段比对，替代 Zip4j 纯 Java 内核逐 16 字节加解密的实现（解密吞吐提升 1~2 个数量级）；错误密码在派生校验值比对时即刻抛出，密文篡改在流末尾抛出 IO 异常，ZipCrypto 条目与回退路径保持 Zip4j 兼容。同步将 Zip4j 读取管线缓冲由默认 4KB 扩容至 256KB（`ArchiveHandlePool.ZIP4J_STREAM_BUFFER_SIZE`）；句柄池中 Zip4j 实例现仅承担中央目录解析并在查到条目后立即归还，并发流数量不再受实例池上限约束。
 - 深度优化大图查看页与超大体积图片加载链路（`GalleryViewerScreen` / `ZoomableImage` / `ArchiveDiskCache`）：全屏即时占位底图尺寸严格对齐网格标准缩略图（360px），100% 同步命中 Coil 内存缓存（0ms 首帧瞬时出图），彻底消除点入大图页时的黑屏等待；全尺寸原图请求绑定 `placeholderMemoryCacheKey` 内存无缝衔接；`ArchiveDiskCache` 大图流式解压 I/O 缓冲区扩容至 128KB 显著提升 10MB~50MB 超大图片的解压吞吐量；在后台原图分块瓦片渲染（`BitmapRegionDecoder`）就绪前提供轻量非侵入加载指示，就绪后平滑过渡至超清原图。
 - 将「主题与色彩」整块配置从设置页拆分至独立页面（新增 `ThemeSettingsScreen` 与 `AppRoute.ThemeSettings` 路由），承载深浅外观、AMOLED 纯黑、动态色彩开关、主题种子色、调色板风格、2025 色彩规范与宽屏侧边导航栏；设置页该区块收敛为一行入口，并回显「深浅外观 · 色彩来源」当前状态摘要。
 - 色彩来源默认值调整为「默认色板」且默认关闭动态色彩（莫奈取色），避免首次启动继承壁纸取色导致界面主色不可预期；旧版显式选择过莫奈模式的用户仍保留动态取色，关闭动态色彩开关时统一回落默认色板。

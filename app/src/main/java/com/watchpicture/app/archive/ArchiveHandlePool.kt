@@ -1,6 +1,11 @@
 package com.watchpicture.app.archive
 
 import net.lingala.zip4j.ZipFile as Zip4jFile
+import net.lingala.zip4j.io.inputstream.ZipInputStream as Zip4jInputStream
+import net.lingala.zip4j.io.inputstream.ZipStandardSplitFileInputStream
+import net.lingala.zip4j.model.FileHeader
+import net.lingala.zip4j.model.Zip4jConfig
+import net.lingala.zip4j.model.enums.EncryptionMethod
 import java.io.File
 import java.io.InputStream
 import java.nio.charset.Charset
@@ -21,7 +26,16 @@ class ArchiveHandlePool(
     companion object {
         const val DEFAULT_MAX_POOL_SIZE = 4
         const val DEFAULT_MAX_INSTANCES_PER_ARCHIVE = 4
+
+        /**
+         * Zip4j 读取管线默认 4KB 缓冲（调研 Z2 项）：每条目读取的 fill() 粒度过细，
+         * 扩容到 256KB 后大图条目吞吐显著提升。仅影响 Zip4j 流（ZipCrypto / 回退路径），
+         * AES 条目由 [ZipAesJceStreamFactory] 自带同规格缓冲。
+         */
+        const val ZIP4J_STREAM_BUFFER_SIZE = 256 * 1024
     }
+
+    private val aesStreamFactory = ZipAesJceStreamFactory()
 
     private val lock = ReentrantLock()
 
@@ -84,62 +98,6 @@ class ArchiveHandlePool(
             }
             idleInstances.clear()
             allInstances.clear()
-        }
-    }
-
-    private class PooledZip4jInputStream(
-        private val delegate: InputStream,
-        private val lockTarget: Any,
-        private val onClose: () -> Unit
-    ) : InputStream() {
-        private val closed = java.util.concurrent.atomic.AtomicBoolean(false)
-
-        override fun read(): Int = synchronized(lockTarget) {
-            if (closed.get()) throw java.io.IOException("Stream closed")
-            delegate.read()
-        }
-
-        override fun read(b: ByteArray): Int = synchronized(lockTarget) {
-            if (closed.get()) throw java.io.IOException("Stream closed")
-            delegate.read(b, 0, b.size)
-        }
-
-        override fun read(b: ByteArray, off: Int, len: Int): Int = synchronized(lockTarget) {
-            if (closed.get()) throw java.io.IOException("Stream closed")
-            delegate.read(b, off, len)
-        }
-
-        override fun skip(n: Long): Long = synchronized(lockTarget) {
-            if (closed.get()) throw java.io.IOException("Stream closed")
-            delegate.skip(n)
-        }
-
-        override fun available(): Int = synchronized(lockTarget) {
-            if (closed.get()) 0 else delegate.available()
-        }
-
-        override fun mark(readlimit: Int) = synchronized(lockTarget) {
-            delegate.mark(readlimit)
-        }
-
-        override fun reset() = synchronized(lockTarget) {
-            delegate.reset()
-        }
-
-        override fun markSupported(): Boolean = synchronized(lockTarget) {
-            delegate.markSupported()
-        }
-
-        override fun close() {
-            if (closed.compareAndSet(false, true)) {
-                try {
-                    synchronized(lockTarget) {
-                        delegate.close()
-                    }
-                } finally {
-                    onClose()
-                }
-            }
         }
     }
 
@@ -240,10 +198,14 @@ class ArchiveHandlePool(
     }
 
     /**
-     * Obtains an InputStream for an entry in an encrypted ZIP using Zip4j,
-     * or directly from a local directory if file is a directory.
-     * Each concurrent stream borrows an isolated Zip4jFile instance from the handle's object pool
-     * and synchronizes read access to eliminate underlying RandomAccessFile pointer collision.
+     * Obtains an InputStream for an entry in an encrypted ZIP, or directly from a local
+     * directory if file is a directory.
+     *
+     * The pooled Zip4j instance is only used for central-directory header lookup and is
+     * released immediately afterwards; the returned stream owns its dedicated
+     * RandomAccessFile, so concurrent stream count is no longer capped by the instance pool.
+     * WinZip AES entries take the JCE hardware-accelerated pipeline ([ZipAesJceStreamFactory]);
+     * ZipCrypto entries stay on Zip4j with an enlarged read buffer.
      */
     fun openEncryptedEntryStream(
         file: File,
@@ -273,29 +235,59 @@ class ArchiveHandlePool(
 
         val zip4jInstance = handle.borrow(charset) ?: return null
 
-        val stream = try {
+        val header = try {
             val normalized = entryName.replace('\\', '/')
-            val header = zip4jInstance.getFileHeader(entryName)
+            zip4jInstance.getFileHeader(entryName)
                 ?: zip4jInstance.getFileHeader(normalized)
                 ?: zip4jInstance.fileHeaders.firstOrNull { it.fileName.replace('\\', '/') == normalized }
-
-            if (header == null) {
-                handle.release(zip4jInstance)
-                return null
-            }
-            zip4jInstance.getInputStream(header)
         } catch (_: Exception) {
             handle.release(zip4jInstance)
             return null
         }
 
-        if (stream == null) {
+        if (header == null) {
             handle.release(zip4jInstance)
             return null
         }
+        handle.release(zip4jInstance)
 
-        return PooledZip4jInputStream(stream, zip4jInstance) {
-            handle.release(zip4jInstance)
+        return if (header.isEncrypted && header.encryptionMethod == EncryptionMethod.AES) {
+            // JCE 管线：错误密码在 verifier 校验时即抛 ZipException(WRONG_PASSWORD)。
+            aesStreamFactory.open(file, header, password.toCharArray())
+        } else {
+            openZip4jCryptoEntryStream(file, header, password, charset)
+        }
+    }
+
+    /**
+     * Builds a Zip4j stream for a (ZipCrypto) entry with an enlarged read buffer,
+     * bypassing [Zip4jFile.getInputStream] whose buffer size is fixed at 4KB.
+     */
+    private fun openZip4jCryptoEntryStream(
+        file: File,
+        header: FileHeader,
+        password: String,
+        charset: Charset?
+    ): InputStream? {
+        val splitStream = try {
+            // 非分卷归档：numberOfThisDisk 恒为 0。
+            ZipStandardSplitFileInputStream(file, false, 0)
+        } catch (_: Exception) {
+            return null
+        }
+        return try {
+            splitStream.prepareExtractionForFileHeader(header)
+            val config = Zip4jConfig(charset, ZIP4J_STREAM_BUFFER_SIZE, true)
+            val stream = Zip4jInputStream(splitStream, password.toCharArray(), config)
+            if (stream.getNextEntry(header, false) == null) {
+                stream.close()
+                null
+            } else {
+                stream
+            }
+        } catch (_: Exception) {
+            runCatching { splitStream.close() }
+            null
         }
     }
 
