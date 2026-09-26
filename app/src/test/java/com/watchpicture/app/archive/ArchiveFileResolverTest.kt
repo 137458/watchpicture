@@ -226,4 +226,43 @@ class ArchiveFileResolverTest {
 
         assertNull("Jar or AAR archives must not be resolved as picture pack", resolver.createZipPackFromFile(jarFile))
     }
+
+    // ---- isDirectlyReadable：裸路径可读性门控（目录 0770 等 provider-only 场景的放行依据） ----
+
+    @Test
+    fun `isDirectlyReadable accepts existing readable file`() {
+        assertTrue(ArchiveFileResolver.isDirectlyReadable(plainZip))
+    }
+
+    @Test
+    fun `isDirectlyReadable rejects missing file`() {
+        assertFalse(ArchiveFileResolver.isDirectlyReadable(File(tempFolder.root, "missing.zip")))
+    }
+
+    @Test
+    fun `isDirectlyReadable rejects null file`() {
+        assertFalse(ArchiveFileResolver.isDirectlyReadable(null))
+    }
+
+    // ---- isCopySizeValid：provider 落盘副本体积校验（截断副本仍能通过魔数校验，必须按声明体积严格比对） ----
+
+    @Test
+    fun `isCopySizeValid accepts copy matching declared provider size`() {
+        assertTrue(ArchiveFileResolver.isCopySizeValid(copiedSize = 1024L, expectedSize = 1024L))
+    }
+
+    @Test
+    fun `isCopySizeValid rejects truncated copy when provider declared a size`() {
+        assertFalse(ArchiveFileResolver.isCopySizeValid(copiedSize = 999L, expectedSize = 1024L))
+    }
+
+    @Test
+    fun `isCopySizeValid rejects empty copy even without declared size`() {
+        assertFalse(ArchiveFileResolver.isCopySizeValid(copiedSize = 0L, expectedSize = null))
+    }
+
+    @Test
+    fun `isCopySizeValid accepts any positive copy when provider did not declare a size`() {
+        assertTrue(ArchiveFileResolver.isCopySizeValid(copiedSize = 1024L, expectedSize = null))
+    }
 }

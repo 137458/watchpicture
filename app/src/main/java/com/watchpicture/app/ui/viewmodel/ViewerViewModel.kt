@@ -114,10 +114,9 @@ class ViewerViewModel(application: Application = WatchPictureApp.instance) : And
         // Fallback for SAF URI strings
         val uri = Uri.parse(packId)
         val directFile = safManager.resolveDirectFile(uri)
-        // 只有真正可读的裸路径才能直接解析：目录权限受限（如 0770）时 stat 可见但不可读，
-        // zip4j 会抛「no read access for the input zip file」并以空条目收场，
-        // 这里必须放行到下面的 provider 落盘通路（ArchiveFileResolver）。
-        if (directFile != null && directFile.exists() && directFile.canRead()) {
+        // 只有真正可读的裸路径才能直接解析；权限受限（如目录 0770）时必须放行到
+        // 下面的 provider 落盘通路（ArchiveFileResolver），否则 zip4j 以空条目收场。
+        if (directFile != null && com.watchpicture.app.archive.ArchiveFileResolver.isDirectlyReadable(directFile)) {
             passwordStore.get(packId)?.let { pwd ->
                 passwordStore.set(packId, pwd, aliases = listOf(directFile.absolutePath))
             }

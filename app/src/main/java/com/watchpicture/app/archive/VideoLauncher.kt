@@ -47,13 +47,6 @@ object VideoLauncher {
 
     data class Playable(val uri: Uri, val mimeType: String)
 
-    /**
-     * 应用内播放页所需的来源标识：优先裸文件路径（文件夹图包条目 / 压缩包），
-     * 其次为原始 content Uri（SAF 单文件条目）。
-     */
-    fun playSourceOf(item: PackImage): String =
-        item.directFilePath ?: item.fileUri ?: item.packId
-
     suspend fun resolvePlayable(context: Context, item: PackImage): Playable? =
         withContext(Dispatchers.IO) {
             val mimeType = mimeTypeOf(item.displayName)

@@ -50,9 +50,9 @@ import kotlinx.coroutines.launch
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.archive.ZipArchiveManager
-import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.isVideo
+import com.watchpicture.app.model.videoSourceOf
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.ui.component.BlurredBar
@@ -347,7 +347,7 @@ fun ThumbnailGridScreen(
                                                 packId = item.packId,
                                                 entryPath = item.entryPath,
                                                 displayName = item.displayName,
-                                                source = VideoLauncher.playSourceOf(item)
+                                                source = item.videoSourceOf()
                                             )
                                         )
                                     } else {

@@ -2,6 +2,7 @@ package com.watchpicture.app.model
 
 import com.watchpicture.app.coil.ZipImageSource
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -116,5 +117,43 @@ class PackImageModelTest {
         assertEquals("huge_photo.jpg", source.entryName)
         assertTrue(source.isThumbnail)
         assertEquals(360, source.targetSizePx)
+    }
+
+    @Test
+    fun `videoSourceOf prefers directFilePath then fileUri then packId`() {
+        val fileBased = PackImage("p", "dir/a.mp4", "a.mp4", directFilePath = "/sdcard/pack")
+        assertEquals("/sdcard/pack", fileBased.videoSourceOf())
+
+        val safBased = PackImage("p", "a.mp4", "a.mp4", fileUri = "content://doc/a")
+        assertEquals("content://doc/a", safBased.videoSourceOf())
+
+        val bare = PackImage("pack-only", "a.mp4", "a.mp4")
+        assertEquals("pack-only", bare.videoSourceOf())
+    }
+
+    @Test
+    fun `videoSourceOf round-trips through packImageFromVideoSource`() {
+        val fileBased = PackImage("p", "dir/a.mp4", "a.mp4", directFilePath = "/sdcard/pack")
+        assertEquals(
+            fileBased,
+            packImageFromVideoSource("p", "dir/a.mp4", "a.mp4", fileBased.videoSourceOf())
+        )
+
+        val safBased = PackImage("p", "a.mp4", "a.mp4", fileUri = "content://doc/a")
+        assertEquals(
+            safBased,
+            packImageFromVideoSource("p", "a.mp4", "a.mp4", safBased.videoSourceOf())
+        )
+    }
+
+    @Test
+    fun `packImageFromVideoSource routes content scheme to fileUri only`() {
+        val fromContent = packImageFromVideoSource("p", "a.mp4", "a.mp4", "content://doc/a")
+        assertNull(fromContent.directFilePath)
+        assertEquals("content://doc/a", fromContent.fileUri)
+
+        val fromPath = packImageFromVideoSource("p", "a.mp4", "a.mp4", "/sdcard/pack")
+        assertEquals("/sdcard/pack", fromPath.directFilePath)
+        assertNull(fromPath.fileUri)
     }
 }

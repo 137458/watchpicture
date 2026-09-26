@@ -604,7 +604,9 @@ class ArchiveExtractionCoordinator(
 
         val is7z = ZipArchiveManager.isSevenZFile(file)
         for (name in uncached) {
-            if (awaitInteractiveIdle()) return@withContext
+            if (awaitPrefetchIdle(interactiveRequestCount, PREFETCH_YIELD_POLL_MS, PREFETCH_YIELD_TIMEOUT_MS)) {
+                return@withContext
+            }
             if (archiveDiskCache.get(file, name, password) != null) continue
 
             val mutex = getLockFor(file)
@@ -625,19 +627,24 @@ class ArchiveExtractionCoordinator(
             }
         }
     }
+}
 
-    /**
-     * 预取让路：等待前台交互落盘请求清空后再继续。返回 true 表示应放弃本次剩余预取
-     * （协程已取消或等待超时），交由下一次翻页触发的预取重试。
-     */
-    private suspend fun awaitInteractiveIdle(): Boolean {
-        var waitedMs = 0L
-        while (interactiveRequestCount.get() > 0) {
-            if (!currentCoroutineContext().isActive) return true
-            if (waitedMs >= PREFETCH_YIELD_TIMEOUT_MS) return true
-            kotlinx.coroutines.delay(PREFETCH_YIELD_POLL_MS)
-            waitedMs += PREFETCH_YIELD_POLL_MS
-        }
-        return !currentCoroutineContext().isActive
+/**
+ * 预取让路：前台交互落盘请求在途时按 [pollMs] 轮询等待，清空后放行。
+ * 返回 true 表示应放弃本次剩余预取（协程已取消或等待超过 [timeoutMs]），
+ * 交由下一次翻页触发的预取重试。
+ */
+internal suspend fun awaitPrefetchIdle(
+    interactiveRequestCount: java.util.concurrent.atomic.AtomicInteger,
+    pollMs: Long,
+    timeoutMs: Long
+): Boolean {
+    var waitedMs = 0L
+    while (interactiveRequestCount.get() > 0) {
+        if (!currentCoroutineContext().isActive) return true
+        if (waitedMs >= timeoutMs) return true
+        kotlinx.coroutines.delay(pollMs)
+        waitedMs += pollMs
     }
+    return !currentCoroutineContext().isActive
 }

@@ -134,7 +134,7 @@ class ThumbnailDiskCache(
         }
 
         // Elastic fallback: check other available sizes for this entry (e.g. 720 requested, return 360)
-        val candidateSizes = listOf(360, 720, 540, 1080, 1440, 240, 180)
+        val candidateSizes = listOf(360, 720, 540, 1080, 240, 180)
             .filter { it != targetSizePx }
             .sortedBy { kotlin.math.abs(it - targetSizePx) }
         for (candidate in candidateSizes) {

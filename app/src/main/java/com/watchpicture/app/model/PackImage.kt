@@ -21,10 +21,36 @@ data class PackImage(
 
 /**
  * 该条目是否为视频。视频同样计入图包条目，但无法按图片解码渲染，
- * 缩略图走视频帧解码、播放交给系统播放器。
+ * 缩略图走视频帧解码，播放经 [com.watchpicture.app.archive.VideoLauncher]
+ * 解析来源后由应用内播放页处理。
  */
 val PackImage.isVideo: Boolean
     get() = ZipArchiveManager.isVideoFile(displayName)
+
+/** content Uri 前缀，用于区分 SAF 单文件条目与裸文件路径。 */
+private const val CONTENT_URI_SCHEME = "content://"
+
+/**
+ * 视频条目在导航路由中传输的来源标识：优先裸文件路径（文件夹图包条目 / 压缩包），
+ * 其次为原始 content Uri（SAF 单文件条目）。与 [packImageFromVideoSource] 互为逆变换。
+ */
+fun PackImage.videoSourceOf(): String = directFilePath ?: fileUri ?: packId
+
+/**
+ * [videoSourceOf] 的逆变换：由路由参数还原视频条目，供应用内播放页重建 [PackImage]。
+ */
+fun packImageFromVideoSource(
+    packId: String,
+    entryPath: String,
+    displayName: String,
+    source: String
+): PackImage = PackImage(
+    packId = packId,
+    entryPath = entryPath,
+    displayName = displayName,
+    directFilePath = source.takeIf { !it.startsWith(CONTENT_URI_SCHEME) },
+    fileUri = source.takeIf { it.startsWith(CONTENT_URI_SCHEME) }
+)
 
 /**
  * Resolves the appropriate Coil image model (File, ZipImageSource, or Uri)

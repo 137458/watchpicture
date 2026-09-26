@@ -15,8 +15,11 @@
     <string name="open_archive">打开压缩包</string>
     <string name="open_archive_summary">直接选取并浏览单个 ZIP/CBZ 图集</string>
     <string name="invalid_archive_error">无法打开该压缩包：格式不受支持或文件已损坏</string>
-    <string name="video_no_player">未找到可用的视频播放器</string>
     <string name="video_tap_to_play">点击播放视频</string>
+    <string name="video_play">播放</string>
+    <string name="video_pause">暂停</string>
+    <string name="video_open_with_player">用其它播放器打开</string>
+    <string name="viewer_hd_loading">高清加载中</string>
     <string name="video_play_failed">视频播放失败，可能是本机不支持该编码格式</string>
 
     <!-- Bottom Bar Tabs -->

@@ -41,6 +41,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -57,7 +58,7 @@ import androidx.media3.common.VideoSize
 import androidx.media3.exoplayer.ExoPlayer
 import com.watchpicture.app.R
 import com.watchpicture.app.archive.VideoLauncher
-import com.watchpicture.app.model.PackImage
+import com.watchpicture.app.model.packImageFromVideoSource
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import top.yukonga.miuix.kmp.basic.Button
@@ -88,13 +89,7 @@ fun VideoPlayerScreen(
     val coroutineScope = rememberCoroutineScope()
 
     val item = remember(packId, entryPath, displayName, source) {
-        PackImage(
-            packId = packId,
-            entryPath = entryPath,
-            displayName = displayName,
-            directFilePath = source.takeIf { !it.startsWith("content://") },
-            fileUri = source.takeIf { it.startsWith("content://") }
-        )
+        packImageFromVideoSource(packId, entryPath, displayName, source)
     }
 
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -304,7 +299,7 @@ private fun VideoPlayerControls(
             IconButton(onClick = onBack) {
                 Icon(
                     imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                    contentDescription = "返回",
+                    contentDescription = stringResource(R.string.nav_back),
                     tint = Color.White
                 )
             }
@@ -327,7 +322,7 @@ private fun VideoPlayerControls(
         ) {
             Icon(
                 imageVector = if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                contentDescription = if (isPlaying) "暂停" else "播放",
+                contentDescription = if (isPlaying) stringResource(R.string.video_pause) else stringResource(R.string.video_play),
                 tint = Color.White,
                 modifier = Modifier.size(56.dp)
             )
@@ -391,13 +386,13 @@ private fun PlaybackFailurePanel(
                     onClick = onBack,
                     colors = ButtonDefaults.buttonColors()
                 ) {
-                    Text("返回")
+                    Text(stringResource(R.string.nav_back))
                 }
                 Button(
                     onClick = onOpenExternally,
                     colors = ButtonDefaults.buttonColorsPrimary()
                 ) {
-                    Text("用其它播放器打开")
+                    Text(stringResource(R.string.video_open_with_player))
                 }
             }
         }

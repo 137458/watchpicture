@@ -78,14 +78,12 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
@@ -101,10 +99,10 @@ import coil3.size.Precision
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.archive.CacheFileLeases
-import com.watchpicture.app.archive.VideoLauncher
 import com.watchpicture.app.coil.ZipImageSource
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.isVideo
+import com.watchpicture.app.model.videoSourceOf
 import com.watchpicture.app.model.toImageModel
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.storage.ReadingMode
@@ -136,18 +134,6 @@ import top.yukonga.miuix.kmp.window.WindowDialog
 import java.io.File
 import java.util.Locale
 import kotlin.math.roundToInt
-
-/**
- * 全屏查看器占位预览的目标长边像素。
- *
- * 占位预览由缩略图管线解码产出，与归档解压共用同一次读取，因此这里把目标尺寸提到屏幕级别：
- * 解压落盘期间显示的不再是 360px 糊图，而是接近屏幕清晰度的画面。
- */
-internal fun viewerPreviewTargetPx(screenLongEdgePx: Int): Int = when {
-    screenLongEdgePx > 1080 -> 1440
-    screenLongEdgePx > 720 -> 1080
-    else -> 720
-}
 
 /**
  * Screen orientation lock state for the reader session.
@@ -227,19 +213,6 @@ fun GalleryViewerScreen(
     val context = LocalContext.current
     val hapticFeedback = LocalHapticFeedback.current
     val configuration = LocalConfiguration.current
-    val density = LocalDensity.current
-
-    // 占位预览按屏幕物理长边分档，只在当前活动页生效；邻页仍用 360px，避免预组合时争抢解压资源
-    val previewTargetSizePx = remember(
-        configuration.screenWidthDp,
-        configuration.screenHeightDp,
-        density.density
-    ) {
-        val longEdgePx = (
-            maxOf(configuration.screenWidthDp, configuration.screenHeightDp) * density.density
-            ).roundToInt()
-        viewerPreviewTargetPx(longEdgePx)
-    }
 
     var isImmersive by remember { mutableStateOf(false) }
     var isCurrentPageZoomed by remember { mutableStateOf(false) }
@@ -417,7 +390,7 @@ fun GalleryViewerScreen(
                                     packId = image.packId,
                                     entryPath = image.entryPath,
                                     displayName = image.displayName,
-                                    source = VideoLauncher.playSourceOf(image)
+                                    source = image.videoSourceOf()
                                 )
                             )
                         }
@@ -427,7 +400,6 @@ fun GalleryViewerScreen(
                         image = image,
                         sessionPassword = sessionPassword,
                         isActivePage = isActivePage,
-                        previewTargetSizePx = previewTargetSizePx,
                         onSingleTap = { isImmersive = !isImmersive },
                         onZoomChanged = { isZoomed ->
                             if (pageIndex == pagerState.currentPage) {
@@ -1210,7 +1182,6 @@ private fun ZoomableImage(
     image: PackImage,
     sessionPassword: String?,
     isActivePage: Boolean,
-    previewTargetSizePx: Int,
     onSingleTap: () -> Unit,
     onZoomChanged: (Boolean) -> Unit
 ) {
@@ -1383,7 +1354,7 @@ private fun ZoomableImage(
                             color = Color.White
                         )
                         Text(
-                            text = "高清加载中",
+                            text = stringResource(R.string.viewer_hd_loading),
                             fontSize = 11.sp,
                             color = Color.White.copy(alpha = 0.85f),
                             fontWeight = FontWeight.Medium

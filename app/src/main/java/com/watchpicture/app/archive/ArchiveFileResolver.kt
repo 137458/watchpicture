@@ -50,6 +50,22 @@ class ArchiveFileResolver(
             val ext = fileName.substringAfterLast('.', "").lowercase()
             return ext in FORBIDDEN_EXTENSIONS
         }
+
+        /**
+         * 裸路径是否真正可读。目录权限受限（如 0770）时 stat 可见但 canRead() 为 false，
+         * zip4j 拿到这种 File 会抛「no read access for the input zip file」并以空条目收场，
+         * 调用方必须放行到 provider 落盘通路而不是在此丢弃。
+         */
+        internal fun isDirectlyReadable(file: File?): Boolean =
+            file != null && file.exists() && file.canRead()
+
+        /**
+         * 落盘副本体积校验：空副本无效；provider 声明了大小时必须严格比对——归档的表头魔数
+         * 在文件开头，被截断的副本仍能通过 isValidArchive，落盘后才会在解析中央目录时失败，
+         * 症状是「图包内未发现有效图片」。
+         */
+        internal fun isCopySizeValid(copiedSize: Long, expectedSize: Long?): Boolean =
+            copiedSize > 0L && (expectedSize == null || expectedSize == copiedSize)
     }
 
     /**
@@ -226,7 +242,7 @@ class ArchiveFileResolver(
     suspend fun resolve(context: Context, uri: Uri): ZipPack? = withContext(Dispatchers.IO) {
         // Step 1: Zero-copy direct resolution
         val directFile = safManager.resolveDirectFile(uri)
-        if (directFile != null && directFile.exists() && directFile.canRead()) {
+        if (directFile != null && isDirectlyReadable(directFile)) {
             val pack = createZipPackFromFile(directFile, uri.toString())
             if (pack != null) return@withContext pack
         }
@@ -255,10 +271,8 @@ class ArchiveFileResolver(
         val targetFile = File(cacheDir, "${uriHash}_$safeName")
 
         val expectedSize = queryFileSize(context, uri)
-        if (targetFile.exists() && targetFile.length() > 0 && isValidArchive(targetFile)) {
-            if (expectedSize == null || expectedSize == targetFile.length()) {
-                return targetFile // Cache hit, skip redundant I/O
-            }
+        if (targetFile.exists() && isValidArchive(targetFile) && isCopySizeValid(targetFile.length(), expectedSize)) {
+            return targetFile // Cache hit, skip redundant I/O
         }
 
         val tempFile = File(cacheDir, "${targetFile.name}.tmp")
@@ -276,10 +290,7 @@ class ArchiveFileResolver(
             }
 
             val copiedSize = if (tempFile.exists()) tempFile.length() else 0L
-            // provider 声明了大小时必须严格比对：归档的表头魔数在文件开头，被截断的副本仍能通过
-            // isValidArchive，落盘后才会在解析中央目录时失败，症状是「图包内未发现有效图片」。
-            val sizeMatches = expectedSize == null || expectedSize == copiedSize
-            if (copiedSize > 0L && sizeMatches && isValidArchive(tempFile)) {
+            if (isCopySizeValid(copiedSize, expectedSize) && isValidArchive(tempFile)) {
                 if (targetFile.exists()) targetFile.delete()
                 tempFile.renameTo(targetFile)
                 targetFile

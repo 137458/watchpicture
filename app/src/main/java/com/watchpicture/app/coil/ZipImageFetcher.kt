@@ -100,15 +100,7 @@ class ZipImageFetcher(
                     if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
                         java.io.FileInputStream(cachedFull)
                     } else if (data.zipFile.isDirectory) {
-                        val cleanName = data.entryName.trimStart('/', '\\')
-                        val directEntry = File(data.zipFile, cleanName)
-                        val resolved = if (directEntry.exists() && directEntry.isFile) {
-                            directEntry
-                        } else {
-                            val alt = File(data.zipFile, cleanName.replace('\\', '/'))
-                            if (alt.exists() && alt.isFile) alt else directEntry
-                        }
-                        java.io.FileInputStream(resolved)
+                        java.io.FileInputStream(resolveDirectoryEntry(data.zipFile, data.entryName))
                     } else if (data.zipFile.isFile && ZipArchiveManager.isImageFile(data.zipFile.name)) {
                         java.io.FileInputStream(data.zipFile)
                     } else {
@@ -157,14 +149,7 @@ class ZipImageFetcher(
 
         // Branch 2: Full-res viewing and Telephoto tile subsampling pipeline
         if (data.zipFile.isDirectory) {
-            val cleanName = data.entryName.trimStart('/', '\\')
-            val directEntry = File(data.zipFile, cleanName)
-            val resolved = if (directEntry.exists() && directEntry.isFile) {
-                directEntry
-            } else {
-                val alt = File(data.zipFile, cleanName.replace('\\', '/'))
-                if (alt.exists() && alt.isFile) alt else directEntry
-            }
+            val resolved = resolveDirectoryEntry(data.zipFile, data.entryName)
             return@withContext SourceFetchResult(
                 source = ImageSource(
                     file = resolved.toOkioPath(),
@@ -235,6 +220,18 @@ class ZipImageFetcher(
             mimeType = mimeType,
             dataSource = DataSource.MEMORY
         )
+    }
+
+    /**
+     * 文件夹图包条目路径解析：条目名兼容反斜杠分隔（沿用压缩包内路径命名），
+     * 优先按原样命中，未命中再尝试归一化为正斜杠分隔。
+     */
+    private fun resolveDirectoryEntry(directory: File, entryName: String): File {
+        val cleanName = entryName.trimStart('/', '\\')
+        val directEntry = File(directory, cleanName)
+        if (directEntry.exists() && directEntry.isFile) return directEntry
+        val alt = File(directory, cleanName.replace('\\', '/'))
+        return if (alt.exists() && alt.isFile) alt else directEntry
     }
 
     /**
