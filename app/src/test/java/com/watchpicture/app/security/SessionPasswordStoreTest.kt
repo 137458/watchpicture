@@ -95,4 +95,16 @@ class SessionPasswordStoreTest {
         assertNull(store.get(uriKey))
         assertNull(store.get(directPathKey))
     }
+
+    @Test
+    fun `re-setting with new aliases drops stale alias mappings`() {
+        store.set("pack", "pw1", aliases = listOf("/old/path.zip"))
+        assertEquals("pw1", store.get("/old/path.zip"))
+
+        // 同包换了一组别名:旧别名不得继续供出过期密码副本
+        store.set("pack", "pw2", aliases = listOf("/new/path.zip"))
+        assertNull("stale alias must not serve an outdated password", store.get("/old/path.zip"))
+        assertEquals("pw2", store.get("/new/path.zip"))
+        assertEquals("pw2", store.get("pack"))
+    }
 }

@@ -69,13 +69,25 @@ class SessionPasswordStore {
         cache[packId] = password
         lastUsedPassword = password
 
-        val aliasSet = keyAliases.computeIfAbsent(packId) { ConcurrentHashMap.newKeySet() }
-        for (alias in aliases) {
-            if (alias.isNotBlank() && alias != packId) {
-                aliasSet.add(alias)
-                aliasMap[alias] = packId
-                cache[alias] = password
+        // 清除不再属于本包的旧别名:否则路径别名集合变化后,陈旧别名会持续
+        // 供出过期密码副本
+        val freshAliases = aliases.filter { it.isNotBlank() && it != packId }.toSet()
+        keyAliases[packId]?.let { previous ->
+            for (old in previous.toList()) {
+                if (old !in freshAliases) {
+                    previous.remove(old)
+                    aliasMap.remove(old)
+                    cache.remove(old)
+                }
             }
+            if (previous.isEmpty()) keyAliases.remove(packId)
+        }
+
+        val aliasSet = keyAliases.computeIfAbsent(packId) { ConcurrentHashMap.newKeySet() }
+        for (alias in freshAliases) {
+            aliasSet.add(alias)
+            aliasMap[alias] = packId
+            cache[alias] = password
         }
     }
 
