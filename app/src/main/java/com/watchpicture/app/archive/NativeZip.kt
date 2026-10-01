@@ -89,6 +89,9 @@ class NativeZipSession private constructor(
     val entries: List<NativeZipEntry>
 ) : Closeable {
     private val closed = AtomicBoolean(false)
+
+    /** 串行化提取与 close:消除 check-then-act 的句柄释放竞窗。 */
+    private val lifecycleLock = Any()
     private val entryMap: Map<String, NativeZipEntry>
     private val fileNameMap: Map<String, NativeZipEntry>
 
@@ -131,9 +134,13 @@ class NativeZipSession private constructor(
      * Returns false on any failure (encrypted / unsupported method / corrupt payload / I/O error).
      */
     fun extractToFile(fileIndex: Int, destination: File): Boolean {
-        if (closed.get()) return false
-        destination.parentFile?.mkdirs()
-        return NativeZip.nativeExtractToFile(handle, fileIndex, destination.absolutePath)
+        // 与 close 共享生命周期锁:check-then-act 若无锁,并发 close 可把已释放
+        // 的 native 句柄传入 JNI(use-after-free)
+        synchronized(lifecycleLock) {
+            if (closed.get()) return false
+            destination.parentFile?.mkdirs()
+            return NativeZip.nativeExtractToFile(handle, fileIndex, destination.absolutePath)
+        }
     }
 
     /**
@@ -144,13 +151,17 @@ class NativeZipSession private constructor(
      * mapping memory) and is invalid after [close].
      */
     fun extractToDirectBuffer(fileIndex: Int): java.nio.ByteBuffer? {
-        if (closed.get()) return null
-        return NativeZip.nativeExtractToDirectBuffer(handle, fileIndex)
+        synchronized(lifecycleLock) {
+            if (closed.get()) return null
+            return NativeZip.nativeExtractToDirectBuffer(handle, fileIndex)
+        }
     }
 
     override fun close() {
-        if (closed.compareAndSet(false, true)) {
-            NativeZip.nativeClose(handle)
+        synchronized(lifecycleLock) {
+            if (closed.compareAndSet(false, true)) {
+                NativeZip.nativeClose(handle)
+            }
         }
     }
 
