@@ -121,6 +121,7 @@ import top.yukonga.miuix.kmp.basic.IconButton
 import top.yukonga.miuix.kmp.basic.InfiniteProgressIndicator
 import top.yukonga.miuix.kmp.basic.Slider
 import top.yukonga.miuix.kmp.basic.Text
+import top.yukonga.miuix.kmp.basic.TextButton
 import top.yukonga.miuix.kmp.blur.Backdrop
 import top.yukonga.miuix.kmp.blur.blur
 import top.yukonga.miuix.kmp.blur.drawBackdrop
@@ -280,7 +281,30 @@ fun GalleryViewerScreen(
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        if ((uiState.isLoading && images.isEmpty()) || images.isEmpty()) {
+        val loadError = uiState.errorMessage
+        if (!uiState.isLoading && images.isEmpty() && loadError != null) {
+            // 加载失败:明确呈现错误与重试入口,而非无限转圈
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.Center
+            ) {
+                Text(
+                    text = loadError,
+                    color = Color.White,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+                TextButton(
+                    text = stringResource(R.string.retry),
+                    onClick = { viewModel.loadImages(packId) },
+                    colors = ButtonDefaults.textButtonColorsPrimary(),
+                )
+            }
+        } else if ((uiState.isLoading && images.isEmpty()) || images.isEmpty()) {
             Box(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
