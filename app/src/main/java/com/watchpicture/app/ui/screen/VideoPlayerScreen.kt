@@ -154,6 +154,12 @@ fun VideoPlayerScreen(
         onDispose { player.release() }
     }
 
+    // 退后台时 Activity ON_STOP 后系统不再渲染 SurfaceView,但音频轨道会继续出声;
+    // 在 ON_STOP 暂停,进度停在暂停点,返回后由用户手动续播
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+        if (player.isPlaying) player.pause()
+    }
+
     LaunchedEffect(item) {
         val playable = VideoLauncher.resolvePlayable(context, item)
         if (playable == null) {
