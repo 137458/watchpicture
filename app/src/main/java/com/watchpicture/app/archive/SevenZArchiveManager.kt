@@ -24,8 +24,11 @@ class SevenZArchiveManager(
 
         // Header 加密包登记：解锁前（无密码）无法枚举条目是 7z 规范行为，登记后
         // 无密码调用直接快速失败，避免每次列表刷新重复 native 失败 + Commons 尝试。
-        private val headerEncryptedPaths: MutableSet<String> =
-            java.util.Collections.newSetFromMap(java.util.concurrent.ConcurrentHashMap())
+        // 登记值携带 mtime/size 版本戳：同路径被替换的归档不得沿用旧登记被永久误标。
+        private class HeaderStamp(val lastModified: Long, val length: Long)
+
+        private val headerEncryptedPaths: MutableMap<String, HeaderStamp> =
+            java.util.concurrent.ConcurrentHashMap()
 
         private fun headerKey(file: File): String =
             try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
@@ -44,12 +47,14 @@ class SevenZArchiveManager(
 
         @JvmStatic
         internal fun rememberHeaderEncrypted(file: File) {
-            headerEncryptedPaths.add(headerKey(file))
+            headerEncryptedPaths[headerKey(file)] = HeaderStamp(file.lastModified(), file.length())
         }
 
         @JvmStatic
-        internal fun isHeaderEncryptedRemembered(file: File): Boolean =
-            headerEncryptedPaths.contains(headerKey(file))
+        internal fun isHeaderEncryptedRemembered(file: File): Boolean {
+            val stamp = headerEncryptedPaths[headerKey(file)] ?: return false
+            return stamp.lastModified == file.lastModified() && stamp.length == file.length()
+        }
 
         @JvmStatic
         internal fun forgetHeaderEncryptedForTest(file: File) {

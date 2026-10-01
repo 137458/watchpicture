@@ -4,6 +4,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import java.io.File
 
@@ -15,6 +16,9 @@ import java.io.File
 class HeaderEncryptedRegistryTest {
 
     private val manager = SevenZArchiveManager()
+
+    @get:Rule
+    val tempFolder = org.junit.rules.TemporaryFolder()
 
     private val fakeHeaderEncrypted = File("/nonexistent/header_encrypted.7z")
     private val fakePlain = File("/nonexistent/plain.7z")
@@ -59,5 +63,24 @@ class HeaderEncryptedRegistryTest {
         SevenZArchiveManager.rememberHeaderEncrypted(fakeHeaderEncrypted)
         assertFalse(SevenZArchiveManager.isHeaderEncryptedRemembered(fakePlain))
         assertFalse(manager.isEncrypted(fakePlain))
+    }
+
+    @Test
+    fun `同路径替换归档后登记必须失效`() {
+        val realFile = tempFolder.newFile("header_encrypted_real.7z").apply { writeBytes(ByteArray(8)) }
+        try {
+            SevenZArchiveManager.rememberHeaderEncrypted(realFile)
+            assertTrue(SevenZArchiveManager.isHeaderEncryptedRemembered(realFile))
+
+            // 同路径被替换(mtime/size 变化):旧登记不得再把新文件误判为加密
+            realFile.writeBytes(ByteArray(32))
+            realFile.setLastModified(realFile.lastModified() + 60_000L)
+            assertFalse(
+                "replaced archive at same path must not stay flagged header-encrypted",
+                SevenZArchiveManager.isHeaderEncryptedRemembered(realFile)
+            )
+        } finally {
+            SevenZArchiveManager.forgetHeaderEncryptedForTest(realFile)
+        }
     }
 }
