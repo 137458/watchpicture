@@ -33,22 +33,30 @@ class UpdateManager(private val context: Context) {
 
         /**
          * 多段语义化版本号比较：v1 > v2 返回 1，v1 < v2 返回 -1，相等返回 0。
+         * '-'/'_' 视为 semver 预发布边界：同数字预发布低于正式版
+         * （如 1.2.3-beta < 1.2.3），而非整段丢弃后误判相等。
          */
         fun compareVersions(v1: String, v2: String): Int {
-            val clean1 = v1.trim().removePrefix("v").removePrefix("V")
-            val clean2 = v2.trim().removePrefix("v").removePrefix("V")
-            val parts1 = clean1.split(".", "-", "_").mapNotNull { it.toIntOrNull() }
-            val parts2 = clean2.split(".", "-", "_").mapNotNull { it.toIntOrNull() }
-            val maxLen = maxOf(parts1.size, parts2.size)
+            fun parse(raw: String): Pair<List<Int>, Boolean> {
+                val clean = raw.trim().removePrefix("v").removePrefix("V")
+                val boundary = clean.indexOfFirst { it == '-' || it == '_' }
+                val core = if (boundary >= 0) clean.substring(0, boundary) else clean
+                // 非数字核心段按 0 参与比较,不再整段丢弃
+                val parts = core.split(".").map { it.toIntOrNull() ?: 0 }
+                return parts to (boundary >= 0)
+            }
 
-            for (i in 0 until maxLen) {
+            val (parts1, isPre1) = parse(v1)
+            val (parts2, isPre2) = parse(v2)
+            for (i in 0 until maxOf(parts1.size, parts2.size)) {
                 val num1 = parts1.getOrElse(i) { 0 }
                 val num2 = parts2.getOrElse(i) { 0 }
                 if (num1 != num2) {
                     return num1.compareTo(num2)
                 }
             }
-            return 0
+            // 数字段全等时:正式版(false) > 预发布(true)
+            return isPre1.compareTo(isPre2)
         }
     }
 
