@@ -412,7 +412,9 @@ fun UpdateScreen(
                                             TextButton(
                                                 text = stringResource(R.string.update_btn_install_now),
                                                 onClick = {
-                                                    updateManager.installApk(context, downloadedFile!!)
+                                                    // Composition-time null check can be stale on click;
+                                                    // re-check at invocation instead of force-unwrapping.
+                                                    downloadedFile?.let { updateManager.installApk(context, it) }
                                                 },
                                                 colors = ButtonDefaults.textButtonColorsPrimary(),
                                                 modifier = Modifier.fillMaxWidth(),
