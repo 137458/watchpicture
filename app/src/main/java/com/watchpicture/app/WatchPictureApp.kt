@@ -73,15 +73,15 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
             android.util.Log.e("WatchPictureCrash", "Uncaught exception in thread ${t.name}:\n$stackTrace")
 
             try {
-                val logDir = android.os.Environment.getExternalStoragePublicDirectory(android.os.Environment.DIRECTORY_DOWNLOADS)
-                val logFile = java.io.File(logDir, "watchpicture_crash.log")
-                logFile.writeText("Time: ${java.util.Date()}\nThread: ${t.name}\nException:\n$stackTrace\n")
-            } catch (_: Throwable) {
-                try {
-                    val fallbackFile = java.io.File(getExternalFilesDir(null), "watchpicture_crash.log")
-                    fallbackFile.writeText("Time: ${java.util.Date()}\nThread: ${t.name}\nException:\n$stackTrace\n")
-                } catch (_: Throwable) {}
-            }
+                // App-scoped external dir needs no permission under scoped storage (the public
+                // Downloads root would always be denied at targetSdk 35). Append so earlier
+                // crashes survive; recycle the file once it grows past 512KB.
+                val logFile = java.io.File(getExternalFilesDir(null), "watchpicture_crash.log")
+                if (logFile.length() > 512 * 1024) {
+                    logFile.delete()
+                }
+                logFile.appendText("Time: ${java.util.Date()}\nThread: ${t.name}\nException:\n$stackTrace\n\n")
+            } catch (_: Throwable) {}
 
             defaultHandler?.uncaughtException(t, e)
         }
