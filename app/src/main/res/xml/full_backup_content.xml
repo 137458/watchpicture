@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API <31 自动备份规则:密码本 DataStore 含凭据密文,一律不备份。 -->
+<full-backup-content>
+    <exclude
+        domain="file"
+        path="datastore/watchpicture_password_book.preferences.pb" />
+</full-backup-content>

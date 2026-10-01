@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- API 31+ 云备份与设备迁移规则:密码本 DataStore 含凭据密文,一律不备份。
+     Keystore 密钥本不迁移,备份密文亦不可解,排除属纵深防御。 -->
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude
+            domain="file"
+            path="datastore/watchpicture_password_book.preferences.pb" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude
+            domain="file"
+            path="datastore/watchpicture_password_book.preferences.pb" />
+    </device-transfer>
+</data-extraction-rules>
