@@ -160,4 +160,29 @@ class SevenZArchiveManagerTest {
             freshManager.sessionManager.activeSessionCount
         )
     }
+
+    @Test
+    fun `超阈值大条目不走整段堆内解压`() {
+        // 典型场景：数百 MB 视频条目整段 extractToBytes 驻留 JVM 堆必 OOM（H01）
+        assertFalse(
+            "超过堆内解压上限的条目必须改走流式回退",
+            SevenZArchiveManager.shouldExtractToHeap(SevenZArchiveManager.MAX_HEAP_EXTRACT_BYTES + 1)
+        )
+    }
+
+    @Test
+    fun `未知大小条目不走整段堆内解压`() {
+        // size 未知（-1）时无法证实体积有界，必须保守走流式回退
+        assertFalse(
+            "未知大小条目必须保守走流式回退",
+            SevenZArchiveManager.shouldExtractToHeap(-1L)
+        )
+    }
+
+    @Test
+    fun `常规图片条目保持堆内解压路径`() {
+        assertTrue(SevenZArchiveManager.shouldExtractToHeap(0L))
+        assertTrue(SevenZArchiveManager.shouldExtractToHeap(10L * 1024 * 1024))
+        assertTrue(SevenZArchiveManager.shouldExtractToHeap(SevenZArchiveManager.MAX_HEAP_EXTRACT_BYTES))
+    }
 }

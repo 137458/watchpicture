@@ -30,6 +30,18 @@ class SevenZArchiveManager(
         private fun headerKey(file: File): String =
             try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
 
+        /** 原生路径整条目字节驻留 JVM 堆的解压上限（H01）。 */
+        const val MAX_HEAP_EXTRACT_BYTES: Long = 32L * 1024 * 1024
+
+        /**
+         * 原生路径整条目堆内解压裁决（H01）：解压后大小不超上限才允许整段驻留堆。
+         * 大条目（典型：长视频）整段 extractToBytes 必随体积线性吃 JVM 堆，
+         * 改走 Commons Compress 流式回退；size 未知（负值）时保守走流式。
+         */
+        @JvmStatic
+        internal fun shouldExtractToHeap(uncompressedSize: Long): Boolean =
+            uncompressedSize in 0..MAX_HEAP_EXTRACT_BYTES
+
         @JvmStatic
         internal fun rememberHeaderEncrypted(file: File) {
             headerEncryptedPaths.add(headerKey(file))
@@ -184,13 +196,15 @@ class SevenZArchiveManager(
             val session = Native7zArchiveSession.open(file.absolutePath, password)
             if (session != null) {
                 val entry = session.findEntry(entryName)
-                if (entry != null) {
+                if (entry != null && shouldExtractToHeap(entry.size)) {
                     val bytes = session.extractToBytes(entry.index)
                     session.close()
                     if (bytes != null) {
                         return java.io.ByteArrayInputStream(bytes)
                     }
                 } else {
+                    // 大条目不整段驻留堆（H01）或条目未找到：关闭原生会话，
+                    // 统一走下方 Commons Compress 流式回退，解压字节随读随弃
                     session.close()
                 }
             }
