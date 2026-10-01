@@ -2,6 +2,7 @@ package com.watchpicture.app.archive
 
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -58,6 +59,26 @@ class SevenZKeyCacheTest {
         }
         assertTrue("Keys for different passwords must differ", diff12)
         assertTrue("Keys for different salts must differ", diff13)
+    }
+
+    @Test
+    fun `colliding password int hashes must not share a cache entry`() {
+        // Arrays.hashCode({0,32}) == Arrays.hashCode({1,1}) == 993: a real collision pair
+        val pwdA = byteArrayOf(0, 32)
+        val pwdB = byteArrayOf(1, 1)
+        assertEquals(java.util.Arrays.hashCode(pwdA).toLong(), java.util.Arrays.hashCode(pwdB).toLong())
+
+        val salt = byteArrayOf(0, 1, 2, 3, 4, 5, 6, 7)
+        val keyA = SevenZKeyCache.getOrDerive(pwdA, salt, 63)
+        val keyB = SevenZKeyCache.getOrDerive(pwdB, salt, 63)
+
+        assertFalse(
+            "Passwords with colliding int hashes must derive distinct keys",
+            keyA.contentEquals(keyB)
+        )
+        // The first password's entry must remain intact after the colliding lookup
+        val keyA2 = SevenZKeyCache.getOrDerive(pwdA, salt, 63)
+        assertArrayEquals(keyA, keyA2)
     }
 
     @Test

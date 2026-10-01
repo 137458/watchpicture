@@ -37,17 +37,33 @@ object SevenZKeyCache {
     val stats: Stats
         get() = Stats(hits.get(), misses.get())
 
-    private data class CacheKey(
-        val pwdHash: Int,
-        val saltHash: Long,
+    // Full password and salt bytes form the key: int/long hashes collide for different
+    // inputs, which would silently return a derived key computed from the wrong password.
+    private class CacheKey(
+        val passwordBytes: ByteArray,
+        val salt: ByteArray,
         val numCyclesPower: Int
-    )
+    ) {
+        override fun equals(other: Any?): Boolean =
+            other is CacheKey &&
+                numCyclesPower == other.numCyclesPower &&
+                passwordBytes.contentEquals(other.passwordBytes) &&
+                salt.contentEquals(other.salt)
+
+        override fun hashCode(): Int {
+            var result = passwordBytes.contentHashCode()
+            result = 31 * result + salt.contentHashCode()
+            result = 31 * result + numCyclesPower
+            return result
+        }
+    }
 
     private val lruMap = object : LinkedHashMap<CacheKey, ByteArray>(MAX_CACHE_SIZE, 0.75f, true) {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<CacheKey, ByteArray>?): Boolean {
             if (size > MAX_CACHE_SIZE && eldest != null) {
-                // Zeroize evicted key bytes for memory safety
+                // Zeroize evicted derived key and key password bytes for memory safety
                 Arrays.fill(eldest.value, 0.toByte())
+                Arrays.fill(eldest.key.passwordBytes, 0.toByte())
                 return true
             }
             return false
@@ -75,9 +91,7 @@ object SevenZKeyCache {
             numCyclesPower.coerceAtMost(MAX_CYCLES_POWER)
         }
 
-        val pwdHash = Arrays.hashCode(passwordBytes)
-        val saltHash = computeSaltHash(salt)
-        val key = CacheKey(pwdHash, saltHash, cyclesPower)
+        val key = CacheKey(passwordBytes.copyOf(), salt.copyOf(), cyclesPower)
 
         lock.withLock {
             val existing = lruMap[key]
@@ -142,18 +156,12 @@ object SevenZKeyCache {
      */
     fun clear() {
         lock.withLock {
-            for (keyBytes in lruMap.values) {
-                Arrays.fill(keyBytes, 0.toByte())
+            for (entry in lruMap.entries) {
+                Arrays.fill(entry.value, 0.toByte())
+                Arrays.fill(entry.key.passwordBytes, 0.toByte())
             }
             lruMap.clear()
         }
     }
 
-    private fun computeSaltHash(salt: ByteArray): Long {
-        var h = 1125899906842597L // FNV offset basis
-        for (b in salt) {
-            h = (h xor (b.toLong() and 0xFFL)) * 1099511628211L
-        }
-        return h
-    }
 }
