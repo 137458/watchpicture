@@ -109,6 +109,9 @@ fun VideoPlayerScreen(
         }
     }
 
+    // 组合期解析文案,播放器回调直接复用(LocalContext 资源读取对配置变更不感知)
+    val playFailedText = stringResource(R.string.video_play_failed)
+
     DisposableEffect(player, item) {
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(playbackState: Int) {
@@ -139,7 +142,7 @@ fun VideoPlayerScreen(
                 isLoading = false
                 isPlaying = false
                 com.watchpicture.app.util.AppLog.e("VideoPlay", "ExoPlayer 播放失败: ${item.displayName}", error)
-                errorMessage = error.localizedMessage ?: context.getString(R.string.video_play_failed)
+                errorMessage = error.localizedMessage ?: playFailedText
             }
         }
         player.addListener(listener)
@@ -164,7 +167,7 @@ fun VideoPlayerScreen(
         val playable = VideoLauncher.resolvePlayable(context, item)
         if (playable == null) {
             isLoading = false
-            errorMessage = context.getString(R.string.video_play_failed)
+            errorMessage = playFailedText
             return@LaunchedEffect
         }
         player.setMediaItem(MediaItem.fromUri(playable.uri))

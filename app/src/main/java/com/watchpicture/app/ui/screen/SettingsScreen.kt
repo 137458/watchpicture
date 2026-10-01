@@ -238,12 +238,17 @@ fun SettingsScreen(
                             }
                         )
 
+                        val clearPasswordsDoneText = stringResource(R.string.settings_clear_passwords_done)
                         ArrowPreference(
                             title = stringResource(R.string.settings_clear_passwords_title),
                             summary = stringResource(R.string.settings_clear_passwords_summary),
                             onClick = {
                                 passwordStore.clear()
-                                Toast.makeText(context, context.getString(R.string.settings_clear_passwords_done), Toast.LENGTH_SHORT).show()
+                                Toast.makeText(
+                                    context,
+                                    clearPasswordsDoneText,
+                                    Toast.LENGTH_SHORT
+                                ).show()
                             },
                         )
                     }
@@ -259,6 +264,9 @@ fun SettingsScreen(
                             summary = formatFileSize(cacheSizeBytes),
                         )
 
+                        // 不带参数的 stringResource 返回原始模板(占位符保留),回调期再 format
+                        val cacheClearedTemplate = stringResource(R.string.settings_cache_cleared)
+                        val cacheEmptyText = stringResource(R.string.settings_cache_empty)
                         ArrowPreference(
                             title = stringResource(R.string.settings_cache_clear_title),
                             summary = stringResource(R.string.settings_cache_clear_summary),
@@ -270,9 +278,9 @@ fun SettingsScreen(
                                         cacheSizeBytes = WatchPictureApp.instance.cacheMaintenance.totalSizeBytes()
                                         isClearingCache = false
                                         val message = if (freed > 0L) {
-                                            context.getString(R.string.settings_cache_cleared, formatFileSize(freed))
+                                            cacheClearedTemplate.format(formatFileSize(freed))
                                         } else {
-                                            context.getString(R.string.settings_cache_empty)
+                                            cacheEmptyText
                                         }
                                         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
                                     }

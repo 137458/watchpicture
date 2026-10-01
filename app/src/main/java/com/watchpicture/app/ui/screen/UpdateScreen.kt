@@ -112,6 +112,9 @@ fun UpdateScreen(
 
     val hasNew = releaseInfo?.hasUpdate == true
 
+    // 组合期解析文案,后台回调直接复用(LocalContext 资源读取对配置变更不感知)
+    val latestHeaderToast = stringResource(R.string.update_latest_header, BuildConfig.VERSION_NAME)
+
     fun doCheck(userInitiated: Boolean = false) {
         if (isChecking) return
         isChecking = true
@@ -127,7 +130,7 @@ fun UpdateScreen(
                 } else if (userInitiated) {
                     Toast.makeText(
                         context,
-                        context.getString(R.string.update_latest_header, BuildConfig.VERSION_NAME),
+                        latestHeaderToast,
                         Toast.LENGTH_SHORT
                     ).show()
                 }

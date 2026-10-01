@@ -104,6 +104,9 @@ object MemFdPipeline {
     }
 
     private fun createEntry(cacheKey: String, producer: (OutputStream) -> Unit): Entry? {
+        // memfd_create 需 API 30;守卫内联在本函数使 lint 可静态证明(调用方
+        // 经 isAvailable 判断,但跨函数不可见)
+        if (Build.VERSION.SDK_INT < 30) return null
         return try {
             val memfd = Os.memfd_create("watchpic", 0)
             try {
