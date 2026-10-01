@@ -66,11 +66,15 @@
 - 修复了设置页"添加新密码"输入框未做明文掩码、密码本明文 chip 常驻展示的屏幕偷窥风险，与密码弹窗掩码策略对齐。
 - 修复了 `PackViewModel.openSingleArchive/onPackClicked` 自动解锁路径缺少异常兜底、SAF 权限失效抛出 SecurityException 导致未捕获协程异常崩溃的问题。
 - 修复了搜索/排序在 Compose 重组时于主线程同步过滤+排序造成输入的顿的问题，下沉为协程管线 StateFlow（120ms 防抖 + Default 调度）。
+- 修复了崩溃日志写入公共 Downloads 根目录的问题（targetSdk 35 下该路径必被拒绝且每次覆盖旧日志）：改写应用私有外部目录 `getExternalFilesDir`，追加写入并按 512KB 轮替，无需存储权限。
+- 修复了通过系统「打开方式」进入图包后返回列表会再次收到 replay 的旧打开事件、被重复导航回同一图包的问题：外部打开事件改带自增序号（`ExternalArchiveEvent.seq`）由消费端一次性消费，replay 缓存仅保留冷启动兜底语义。
+- 修复了 provider 未声明体积时被截断的 SAF 归档副本仅凭表头魔数即可通过校验、被晋升为正式缓存后永久存活的问题（该图包此后每次打开都解析失败）：落盘晋升与缓存命中改走 `isValidArchiveCopy` 尾部健全性校验（ZIP 在末尾 22+64KB 窗口内必须存在 EOCD 签名、7z StartHeader 声明的 NextHeader 区间必须落在文件长度内），截断副本判失败并删除重拷。
 
 ### 安全
 - 密码本明文落盘改为 AndroidKeyStore 派生 AES-GCM 对称密钥加密后持久化，兼容旧明文自动迁移，杜绝 root/备份窃取密码。
 - 修复了 `SafManager` 直接路径解析未校验 `..` 路径穿越、可越权读取授权目录之外文件的问题，增加路径归一化与卷名白名单校验。
 - `UpdateManager.downloadApk` 增加下载字节数与预期尺寸的比对校验，降低 DNS/传输层被劫持时静默安装恶意包的暴露面。
+- 修复了 `allowBackup=true` 且未配置任何备份排除规则导致密码本 DataStore（含历史密码密文与旧版明文残留）随云备份与设备迁移导出的问题：新增 `dataExtractionRules`（API 31+）与 `fullBackupContent`（API 31 以下）按真实落盘文件名 `datastore/watchpicture_password_book.preferences_pb` 排除密码本；曾因误写 `.preferences.pb` 点分路径导致排除规则静默失效，已由守护测试钉住「规则路径必须匹配真实文件名」契约。
 
 ### 优化
 - 升级 Miuix 组件库（`miuix-ui`、`miuix-preference`、`miuix-squircle`、`miuix-blur`、`miuix-nav`）由 `0.9.4-rc01` 至 `0.9.4` 正式版。
