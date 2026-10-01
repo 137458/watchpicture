@@ -102,6 +102,72 @@ class ArchiveFileResolver(
     fun isValidArchive(file: File): Boolean = isValidZipArchive(file) || isValidSevenZArchive(file)
 
     /**
+     * Provider 落盘副本的加强校验（H06）：在 [isValidArchive] 表头魔数之上追加尾部健全性
+     * 检查——ZIP 必须存在 EOCD（位于文件末尾 64KB 注释区窗口内），7z 的 StartHeader
+     * 声明的 NextHeader 区间必须落在文件长度内。表头在文件开头，被截断的副本照样通过
+     * 魔数检查；若无此检查，截断副本会被晋升为正式缓存并在缓存命中路径永久存活，
+     * 该图包每次打开都解析失败。
+     */
+    fun isValidArchiveCopy(file: File): Boolean = isValidArchive(file) && when {
+        isValidZipArchive(file) -> hasZipEndOfCentralDirectory(file)
+        else -> hasSevenZValidStartHeader(file)
+    }
+
+    /**
+     * ZIP 尾部健全性：EOCD 签名（PK\x05\x06）必须存在于文件末尾
+     * min(长度, 22 + 64KB 注释上限) 窗口内。空归档（PK\x05\x06 开头）同样满足。
+     */
+    internal fun hasZipEndOfCentralDirectory(file: File): Boolean {
+        if (!file.exists() || file.length() < 22L) return false
+        return try {
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                val scanBytes = minOf(file.length(), 22L + 65_535L).toInt()
+                raf.seek(file.length() - scanBytes)
+                val buf = ByteArray(scanBytes)
+                raf.readFully(buf)
+                for (i in buf.size - 4 downTo 0) {
+                    if (buf[i] == 0x50.toByte() && buf[i + 1] == 0x4B.toByte() &&
+                        buf[i + 2] == 0x05.toByte() && buf[i + 3] == 0x06.toByte()
+                    ) {
+                        return true
+                    }
+                }
+                false
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * 7z 尾部健全性：偏移 12 起的 StartHeader 声明 NextHeaderOffset/NextHeaderSize，
+     * 两者界定的区间必须完整落在文件长度内（NextHeader 位于文件尾部）。
+     */
+    internal fun hasSevenZValidStartHeader(file: File): Boolean {
+        if (!file.exists() || file.length() < 32L) return false
+        return try {
+            java.io.RandomAccessFile(file, "r").use { raf ->
+                raf.seek(12L)
+                val header = ByteArray(16)
+                raf.readFully(header)
+                fun u64Le(buf: ByteArray, off: Int): Long {
+                    var v = 0L
+                    for (k in 7 downTo 0) v = (v shl 8) or (buf[off + k].toLong() and 0xFF)
+                    return v
+                }
+                val nextHeaderOffset = u64Le(header, 0)
+                val nextHeaderSize = u64Le(header, 8)
+                // 溢出/负值防御：逐项与文件长度比对，任何越界即判损坏
+                nextHeaderOffset >= 0L && nextHeaderSize >= 0L &&
+                        nextHeaderOffset <= file.length() && nextHeaderSize <= file.length() &&
+                        nextHeaderOffset + nextHeaderSize <= file.length() - 32L
+            }
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
      * Detects whether a ZIP file is an Android application package (.apk)
      * or software library containing compiled code or manifests.
      */
@@ -271,7 +337,7 @@ class ArchiveFileResolver(
         val targetFile = File(cacheDir, "${uriHash}_$safeName")
 
         val expectedSize = queryFileSize(context, uri)
-        if (targetFile.exists() && isValidArchive(targetFile) && isCopySizeValid(targetFile.length(), expectedSize)) {
+        if (targetFile.exists() && isValidArchiveCopy(targetFile) && isCopySizeValid(targetFile.length(), expectedSize)) {
             return targetFile // Cache hit, skip redundant I/O
         }
 
@@ -311,7 +377,7 @@ class ArchiveFileResolver(
             }
 
             val copiedSize = if (tempFile.exists()) tempFile.length() else 0L
-            if (isCopySizeValid(copiedSize, expectedSize) && isValidArchive(tempFile)) {
+            if (isCopySizeValid(copiedSize, expectedSize) && isValidArchiveCopy(tempFile)) {
                 if (targetFile.exists()) targetFile.delete()
                 tempFile.renameTo(targetFile)
                 targetFile

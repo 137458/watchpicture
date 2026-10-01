@@ -265,4 +265,65 @@ class ArchiveFileResolverTest {
     fun `isCopySizeValid accepts any positive copy when provider did not declare a size`() {
         assertTrue(ArchiveFileResolver.isCopySizeValid(copiedSize = 1024L, expectedSize = null))
     }
+
+    // ---- isValidArchiveCopy：落盘副本尾部健全性（截断副本过魔数检查后被永久缓存投毒，H06） ----
+
+    @Test
+    fun `截断 ZIP 副本不得通过加强校验`() {
+        // 表头魔数在文件开头,截断照样通过 isValidArchive;尾部 EOCD 已随截断丢失,
+        // isValidArchiveCopy 必须识别,否则截断副本被晋升为正式缓存且永久存活
+        val fullBytes = plainZip.readBytes()
+        val truncated = tempFolder.newFile("truncated_copy.zip")
+        truncated.writeBytes(fullBytes.copyOfRange(0, fullBytes.size * 3 / 5))
+        assertTrue("前置:截断副本仍有 ZIP 魔数,旧校验能通过", resolver.isValidArchive(truncated))
+        assertFalse(
+            "截断 ZIP 副本必须被 isValidArchiveCopy 拒绝",
+            resolver.isValidArchiveCopy(truncated)
+        )
+    }
+
+    @Test
+    fun `完整 ZIP 与 CBZ 副本通过加强校验`() {
+        assertTrue(resolver.isValidArchiveCopy(plainZip))
+        assertTrue(resolver.isValidArchiveCopy(cbzFile))
+    }
+
+    @Test
+    fun `截断 7z 副本不得通过加强校验`() {
+        val sevenZ = tempFolder.newFile("sample_trunc.7z")
+        org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(sevenZ).use { out ->
+            val entry = out.createArchiveEntry(textFile, "001.jpg")
+            entry.size = testImageBytes.size.toLong()
+            out.putArchiveEntry(entry)
+            out.write(testImageBytes)
+            out.closeArchiveEntry()
+        }
+        val fullBytes = sevenZ.readBytes()
+        val truncated = tempFolder.newFile("truncated_copy.7z")
+        truncated.writeBytes(fullBytes.copyOfRange(0, fullBytes.size * 3 / 5))
+        assertTrue("前置:截断副本仍有 7z 魔数,旧校验能通过", resolver.isValidArchive(truncated))
+        assertFalse(
+            "截断 7z 副本必须被 isValidArchiveCopy 拒绝",
+            resolver.isValidArchiveCopy(truncated)
+        )
+    }
+
+    @Test
+    fun `完整 7z 副本通过加强校验`() {
+        val sevenZ = tempFolder.newFile("sample_valid.7z")
+        org.apache.commons.compress.archivers.sevenz.SevenZOutputFile(sevenZ).use { out ->
+            val entry = out.createArchiveEntry(textFile, "001.jpg")
+            entry.size = testImageBytes.size.toLong()
+            out.putArchiveEntry(entry)
+            out.write(testImageBytes)
+            out.closeArchiveEntry()
+        }
+        assertTrue(resolver.isValidArchiveCopy(sevenZ))
+    }
+
+    @Test
+    fun `非归档文件加强校验不通过`() {
+        assertFalse(resolver.isValidArchiveCopy(textFile))
+        assertFalse(resolver.isValidArchiveCopy(emptyFile))
+    }
 }
