@@ -1,10 +1,16 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 仅暴露实际经 FileProvider 共享的目录,不开放公共存储根:
-     - cache-path        视频条目落盘副本 cacheDir/playback(VideoLauncher)
+<!-- FileProvider 共享根配置:
+     - cache-path          视频条目落盘副本 cacheDir/playback(VideoLauncher)
      - external-cache-path 更新安装包 externalCacheDir(UpdateManager)
-     - files-path        应用私有 filesDir -->
+     - files-path          应用私有 filesDir
+     - external-path       文件夹图包的磁盘直连媒体(VideoLauncher directEntryFile):
+                           直连路径来自用户任意目录(直接路径极速扫描),无法静态枚举,
+                           缺失时 getUriForFile 对这类文件直接抛
+                           "Failed to find configured root",外部播放入口整体失效。
+                           FileProvider URI 按意图逐个授权,暴露根不等于可任意遍历。 -->
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="cache_files" path="." />
     <external-cache-path name="external_cache" path="." />
     <files-path name="internal_files" path="." />
+    <external-path name="external_files" path="." />
 </paths>
