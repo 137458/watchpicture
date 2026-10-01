@@ -92,6 +92,20 @@ class ZipArchiveManagerTest {
     }
 
     @Test
+    fun `refuses password verification for archive without file entries`() {
+        val manager = ZipArchiveManager()
+        // Valid central directory but zero file entries: nothing to decrypt-test against,
+        // so no password can be verified — must not report success for an arbitrary one.
+        val emptyZip = tempFolder.newFile("empty.zip")
+        ZipFile(emptyZip).use { }
+
+        assertFalse(
+            "Any password must not verify against an entry-less archive",
+            manager.verifyPassword(emptyZip, correctPassword)
+        )
+    }
+
+    @Test
     fun `validates password for encrypted archive with directory entry correctly`() {
         val manager = ZipArchiveManager()
         val dirEncryptedZip = tempFolder.newFile("dir_encrypted.zip")

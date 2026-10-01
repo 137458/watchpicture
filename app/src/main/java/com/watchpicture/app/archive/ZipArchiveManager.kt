@@ -191,7 +191,7 @@ class ZipArchiveManager(
                         .firstOrNull { it.isEncrypted }
                         ?: z.fileHeaders.firstOrNull { !it.isDirectory && it.isEncrypted }
                         ?: z.fileHeaders.firstOrNull { !it.isDirectory }
-                        ?: return true // No file entries to verify
+                        ?: return false // No file entries: no password can be verified, don't accept an arbitrary one
 
                     val buffer = ByteArray(64)
                     z.getInputStream(testHeader).use { stream ->
