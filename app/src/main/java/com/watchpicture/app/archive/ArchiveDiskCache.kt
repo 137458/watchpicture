@@ -161,9 +161,13 @@ class ArchiveDiskCache(
 
                 val addedSize = targetFile.length()
                 getOrInitSize()
-                val updatedSize = currentSizeBytes.addAndGet(addedSize)
-                if (updatedSize > maxSizeBytes) {
-                    trimToSize()
+                // 记账与裁剪触发须在全局锁内:trimToSize 在全局锁内 set(磁盘全量和),
+                // addAndGet 若在锁外并发落地,刚重命名的文件会被双计→过量驱逐新 LRU
+                globalLock.withLock {
+                    val updatedSize = currentSizeBytes.addAndGet(addedSize)
+                    if (updatedSize > maxSizeBytes) {
+                        trimToSize()
+                    }
                 }
             } catch (e: Throwable) {
                 if (tempFile.exists()) {
@@ -234,9 +238,13 @@ class ArchiveDiskCache(
 
                 val addedSize = targetFile.length()
                 getOrInitSize()
-                val updatedSize = currentSizeBytes.addAndGet(addedSize)
-                if (updatedSize > maxSizeBytes) {
-                    trimToSize()
+                // 记账与裁剪触发须在全局锁内:trimToSize 在全局锁内 set(磁盘全量和),
+                // addAndGet 若在锁外并发落地,刚重命名的文件会被双计→过量驱逐新 LRU
+                globalLock.withLock {
+                    val updatedSize = currentSizeBytes.addAndGet(addedSize)
+                    if (updatedSize > maxSizeBytes) {
+                        trimToSize()
+                    }
                 }
                 return targetFile
             }
