@@ -55,8 +55,8 @@ class UpdateManager(private val context: Context) {
                     return num1.compareTo(num2)
                 }
             }
-            // 数字段全等时:正式版(false) > 预发布(true)
-            return isPre1.compareTo(isPre2)
+            // 数字段全等时:正式版 > 预发布(false<true,故逆序比较)
+            return isPre2.compareTo(isPre1)
         }
     }
 
