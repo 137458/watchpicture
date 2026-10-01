@@ -343,7 +343,7 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                         }
                         // 采用重新解析得到的名称（原始显示名），避免沿用落盘副本的内部命名
                         val merged = restored.copy(id = pack.id, uriString = pack.uriString)
-                        com.watchpicture.app.util.AppLog.e(
+                        com.watchpicture.app.util.AppLog.i(
                             "PackClick",
                             "按需落盘完成: ${merged.name} 条目=${merged.itemCount} 加密=${merged.isEncrypted} " +
                                 "封面=${merged.coverImage != null} 体积=${merged.fileSize}"
@@ -557,7 +557,7 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
                     zipArchiveManager.getMediaEntries(targetFile, password)
                 }
                 com.watchpicture.app.util.AppLog.i("Unlock", "entries=${entries.size} in ${System.currentTimeMillis() - t1}ms (total ${System.currentTimeMillis() - t0}ms)")
-                com.watchpicture.app.util.AppLog.e(
+                com.watchpicture.app.util.AppLog.i(
                     "Unlock",
                     "解锁校验完成: isValid=$isValid 条目=${entries.size} " +
                         "file=${targetFile.name.take(48)}"
