@@ -101,7 +101,12 @@ fun UpdateDialog(
     }
 
     fun startDownload() {
-        val downloadUrl = releaseInfo.downloadUrl ?: releaseInfo.releaseUrl
+        val downloadUrl = releaseInfo.downloadUrl
+        if (downloadUrl == null) {
+            // 无 APK 资产时严禁把 release 网页当 APK 下载安装,回退浏览器
+            updateManager.openInBrowser(context, releaseInfo.releaseUrl)
+            return
+        }
 
         isDownloading = true
         downloadError = null

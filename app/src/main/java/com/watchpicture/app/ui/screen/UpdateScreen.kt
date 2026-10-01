@@ -423,13 +423,13 @@ fun UpdateScreen(
                                             TextButton(
                                                 text = stringResource(R.string.update_btn_download_now),
                                                 onClick = {
-                                                    val url = releaseInfo?.downloadUrl ?: releaseInfo?.releaseUrl
-                                                    if (url != null) {
+                                                    val info = releaseInfo
+                                                    if (info?.downloadUrl != null) {
                                                         isDownloading = true
                                                         downloadProgress = 0f
                                                         coroutineScope.launch {
                                                             val result = updateManager.downloadApk(
-                                                                downloadUrl = url,
+                                                                downloadUrl = info.downloadUrl,
                                                                 onProgress = { progress, downloaded, total ->
                                                                     downloadProgress = progress
                                                                     downloadedBytes = downloaded
@@ -449,7 +449,8 @@ fun UpdateScreen(
                                                             }
                                                         }
                                                     } else {
-                                                        releaseInfo?.releaseUrl?.let { updateManager.openInBrowser(context, it) }
+                                                        // 无 APK 资产时严禁把 release 网页当 APK 下载安装,回退浏览器
+                                                        info?.releaseUrl?.let { updateManager.openInBrowser(context, it) }
                                                     }
                                                 },
                                                 colors = ButtonDefaults.textButtonColorsPrimary(),
