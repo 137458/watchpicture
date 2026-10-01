@@ -53,14 +53,31 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
         )
     }
 
-    val externalArchiveFlow = kotlinx.coroutines.flow.MutableSharedFlow<android.net.Uri>(
+    /**
+     * 外部关联打开事件。replay=1 是为冷启动兜底:onCreate 里 handleIntent 先于任何
+     * 订阅者派发,必须靠 replay 送达到延迟出现的收集器。seq 供消费端做一次性消费
+     * 判定,避免 MainScreen 重新进入组合时把 replay 的旧事件再次当新意图处理。
+     */
+    data class ExternalArchiveEvent(val uri: android.net.Uri, val seq: Long)
+
+    private val externalArchiveSeq = java.util.concurrent.atomic.AtomicLong(0)
+
+    @Volatile
+    var consumedExternalArchiveSeq: Long = 0L
+        private set
+
+    val externalArchiveFlow = kotlinx.coroutines.flow.MutableSharedFlow<ExternalArchiveEvent>(
         replay = 1,
         extraBufferCapacity = 1,
         onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST
     )
 
     fun dispatchExternalArchive(uri: android.net.Uri) {
-        externalArchiveFlow.tryEmit(uri)
+        externalArchiveFlow.tryEmit(ExternalArchiveEvent(uri, externalArchiveSeq.incrementAndGet()))
+    }
+
+    fun consumeExternalArchive(event: ExternalArchiveEvent) {
+        if (event.seq > consumedExternalArchiveSeq) consumedExternalArchiveSeq = event.seq
     }
 
     override fun onCreate() {

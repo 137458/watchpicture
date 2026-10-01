@@ -90,8 +90,13 @@ fun MainScreen(
 
     // 监听外部关联打开图集压缩包事件 (冷启动与热启动)
     LaunchedEffect(Unit) {
-        WatchPictureApp.instance.externalArchiveFlow.collect { uri ->
-            packViewModel.openSingleArchive(uri, onNavigate)
+        WatchPictureApp.instance.externalArchiveFlow.collect { event ->
+            // replay 的旧事件在重新进入组合时会被再次收到,按 seq 一次性消费,
+            // 防止从图集返回后重复导航进同一个包
+            if (event.seq > WatchPictureApp.instance.consumedExternalArchiveSeq) {
+                WatchPictureApp.instance.consumeExternalArchive(event)
+                packViewModel.openSingleArchive(event.uri, onNavigate)
+            }
         }
     }
 
