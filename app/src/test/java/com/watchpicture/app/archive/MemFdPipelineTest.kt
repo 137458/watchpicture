@@ -67,4 +67,45 @@ class MemFdPipelineTest {
         assertEquals(3, MemFdPipeline.MAX_ENTRIES)
         assertTrue(MemFdPipeline.MAX_TOTAL_BYTES > 0)
     }
+
+    @Test
+    fun `单条目超出字节预算仍保留自身`() {
+        // 超预算条目若在插入瞬间被淘汰，句柄即失效，当前页读取必然失败——保留自身是唯一正确选择
+        assertFalse(
+            MemFdPipeline.shouldEvictEldest(
+                sizeAfterInsert = 1,
+                totalBytesAfterInsert = MemFdPipeline.MAX_TOTAL_BYTES + 1
+            )
+        )
+    }
+
+    @Test
+    fun `多条目超出条目数上限淘汰最旧`() {
+        assertTrue(
+            MemFdPipeline.shouldEvictEldest(
+                sizeAfterInsert = MemFdPipeline.MAX_ENTRIES + 1,
+                totalBytesAfterInsert = 0L
+            )
+        )
+    }
+
+    @Test
+    fun `多条目超出字节预算淘汰最旧`() {
+        assertTrue(
+            MemFdPipeline.shouldEvictEldest(
+                sizeAfterInsert = 2,
+                totalBytesAfterInsert = MemFdPipeline.MAX_TOTAL_BYTES + 1
+            )
+        )
+    }
+
+    @Test
+    fun `配额内不淘汰`() {
+        assertFalse(
+            MemFdPipeline.shouldEvictEldest(
+                sizeAfterInsert = MemFdPipeline.MAX_ENTRIES,
+                totalBytesAfterInsert = MemFdPipeline.MAX_TOTAL_BYTES
+            )
+        )
+    }
 }

@@ -66,10 +66,19 @@ object MemFdPipeline {
         override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Entry>?): Boolean {
             if (eldest == null) return false
             val totalBytes = values.sumOf { it.sizeBytes }
-            if (size <= MAX_ENTRIES && totalBytes <= MAX_TOTAL_BYTES) return false
-            eldest.value.close()
-            return true
+            val evict = shouldEvictEldest(size, totalBytes)
+            if (evict) eldest.value.close()
+            return evict
         }
+    }
+
+    /**
+     * LRU 淘汰裁决（插入新条目后调用）：条目数或字节预算超限即淘汰最旧条目。
+     * 仅剩单条目时永不淘汰——超预算条目淘汰即失效，当前页读取必然失败，保留自身是唯一正确选择。
+     */
+    internal fun shouldEvictEldest(sizeAfterInsert: Int, totalBytesAfterInsert: Long): Boolean {
+        if (sizeAfterInsert <= 1) return false
+        return sizeAfterInsert > MAX_ENTRIES || totalBytesAfterInsert > MAX_TOTAL_BYTES
     }
 
     /**
