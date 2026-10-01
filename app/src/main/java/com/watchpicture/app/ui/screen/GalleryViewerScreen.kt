@@ -109,9 +109,11 @@ import com.watchpicture.app.storage.ReadingMode
 import com.watchpicture.app.ui.component.VideoEntryPlaceholder
 import com.watchpicture.app.ui.component.bottombar.vibrancy
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import me.saket.telephoto.zoomable.coil3.ZoomableAsyncImage
 import me.saket.telephoto.zoomable.rememberZoomableImageState
 import top.yukonga.miuix.kmp.basic.Button
@@ -1033,6 +1035,23 @@ private fun PageQuickViewBottomSheet(
     }
 }
 
+/** 详情弹窗的异步探测结果:resolution 为 null 表示 bounds 解码未就绪或失败。 */
+private data class ImageDetailsPayload(
+    val resolution: String?,
+    val bytes: Long
+)
+
+/** 文件大小人类可读格式化(详情弹窗);0/负数返回 null,由调用方走"流式归档条目"兜底。 */
+internal fun formatImageFileSize(bytes: Long): String? {
+    if (bytes <= 0L) return null
+    val kb = bytes / 1024.0
+    return if (kb >= 1024.0) {
+        String.format(Locale.US, "%.2f MB", kb / 1024.0)
+    } else {
+        String.format(Locale.US, "%.1f KB", kb)
+    }
+}
+
 /**
  * Dialog displaying detailed metadata of the currently viewed image (`WindowDialog`).
  */
@@ -1049,45 +1068,36 @@ private fun ImageDetailsDialog(
     val app = context.applicationContext as? WatchPictureApp
     val diskCache = app?.archiveDiskCache
 
-    val resolvedFile = remember(show, image, sessionPassword) {
-        if (!show) return@remember null
-        val model = image.toImageModel(sessionPassword)
-        when (model) {
-            is File -> model.takeIf { it.exists() && it.isFile }
-            is ZipImageSource -> diskCache?.get(model.zipFile, model.entryName, model.password)
-            else -> null
-        }
-    }
-
-    val resolutionText = remember(resolvedFile) {
-        if (resolvedFile != null && resolvedFile.exists()) {
-            runCatching {
-                val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                BitmapFactory.decodeFile(resolvedFile.absolutePath, opts)
-                if (opts.outWidth > 0 && opts.outHeight > 0) {
-                    "${opts.outWidth} × ${opts.outHeight} px"
-                } else {
-                    "按需流式解码中"
-                }
-            }.getOrDefault("按需流式解码中")
-        } else {
-            "按需流式解码中"
-        }
-    }
-
-    val fileSizeText = remember(resolvedFile) {
-        val bytes = resolvedFile?.length() ?: 0L
-        if (bytes > 0L) {
-            val kb = bytes / 1024.0
-            if (kb >= 1024.0) {
-                String.format(Locale.US, "%.2f MB", kb / 1024.0)
-            } else {
-                String.format(Locale.US, "%.1f KB", kb)
+    var details by remember(show) { mutableStateOf<ImageDetailsPayload?>(null) }
+    LaunchedEffect(show, image, sessionPassword) {
+        if (!show) return@LaunchedEffect
+        // 磁盘探测与 bounds 解码走 IO 线程,组合期保持无阻塞;就绪前显示流式占位
+        details = withContext(Dispatchers.IO) {
+            val model = image.toImageModel(sessionPassword)
+            val file = when (model) {
+                is File -> model.takeIf { it.exists() && it.isFile }
+                is ZipImageSource -> diskCache?.get(model.zipFile, model.entryName, model.password)
+                else -> null
             }
-        } else {
-            "流式归档条目"
+            if (file == null || !file.exists()) {
+                ImageDetailsPayload(resolution = null, bytes = 0L)
+            } else {
+                val resolution = runCatching {
+                    val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    BitmapFactory.decodeFile(file.absolutePath, opts)
+                    if (opts.outWidth > 0 && opts.outHeight > 0) {
+                        "${opts.outWidth} × ${opts.outHeight} px"
+                    } else {
+                        null
+                    }
+                }.getOrNull()
+                ImageDetailsPayload(resolution = resolution, bytes = file.length())
+            }
         }
     }
+
+    val resolutionText = details?.resolution ?: "按需流式解码中"
+    val fileSizeText = formatImageFileSize(details?.bytes ?: 0L) ?: "流式归档条目"
 
     val formatText = remember(image.displayName) {
         image.displayName.substringAfterLast('.', "IMAGE").uppercase(Locale.US)
