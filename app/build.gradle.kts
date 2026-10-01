@@ -1,7 +1,7 @@
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.plugin.compose")
-    id("org.jetbrains.kotlin.plugin.serialization")
+    alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
+    alias(libs.plugins.kotlin.serialization)
 }
 
 android {
@@ -95,62 +95,59 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.15.0")
-    implementation("androidx.appcompat:appcompat:1.7.0")
-    implementation("androidx.documentfile:documentfile:1.0.1")
-    implementation("androidx.activity:activity-compose:1.9.3")
-    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
-    implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.7")
+    implementation(libs.androidx.core.ktx)
+    implementation(libs.androidx.appcompat)
+    implementation(libs.androidx.documentfile)
+    implementation(libs.androidx.activity.compose)
+    implementation(libs.androidx.lifecycle.viewmodel.compose)
+    implementation(libs.androidx.lifecycle.runtime.compose)
 
     // Navigation event dispatcher owner required by Miuix WindowDialog
-    implementation("androidx.navigationevent:navigationevent-compose:1.1.2")
+    implementation(libs.androidx.navigationevent.compose)
 
     // Jetpack Compose
-    val composeBom = platform("androidx.compose:compose-bom:2024.12.01")
-    implementation(composeBom)
-    implementation("androidx.compose.ui:ui")
-    implementation("androidx.compose.ui:ui-graphics")
-    implementation("androidx.compose.ui:ui-util")
-    implementation("androidx.compose.foundation:foundation")
-    implementation("androidx.compose.material:material-icons-extended")
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.compose.ui)
+    implementation(libs.androidx.compose.ui.graphics)
+    implementation(libs.androidx.compose.ui.util)
+    implementation(libs.androidx.compose.foundation)
+    implementation(libs.androidx.compose.material.icons.extended)
 
     // Miuix (HyperOS Compose UI Library, Nav & Blur Engine)
-    val miuixVersion = "0.9.4"
-    implementation("top.yukonga.miuix.kmp:miuix-ui-android:$miuixVersion")
-    implementation("top.yukonga.miuix.kmp:miuix-preference-android:$miuixVersion")
-    implementation("top.yukonga.miuix.kmp:miuix-icons-android:0.9.4")
-    implementation("top.yukonga.miuix.kmp:miuix-squircle-android:$miuixVersion")
-    implementation("top.yukonga.miuix.kmp:miuix-blur-android:$miuixVersion")
-    implementation("top.yukonga.miuix.kmp:miuix-nav-android:$miuixVersion")
+    implementation(libs.miuix.ui)
+    implementation(libs.miuix.preference)
+    implementation(libs.miuix.icons)
+    implementation(libs.miuix.squircle)
+    implementation(libs.miuix.blur)
+    implementation(libs.miuix.nav)
 
     // Image loading: Coil 3 & Telephoto (Subsampling & Zoomable Image)
-    implementation("io.coil-kt.coil3:coil-compose:3.0.4")
-    implementation("io.coil-kt.coil3:coil-network-okhttp:3.0.4")
-    implementation("io.coil-kt.coil3:coil-svg:3.0.4")
-    implementation("io.coil-kt.coil3:coil-gif:3.0.4")
-    implementation("me.saket.telephoto:zoomable-image-coil3:0.19.0")
-    implementation("com.squareup.okio:okio:3.9.1")
+    implementation(libs.coil.compose)
+    implementation(libs.coil.network.okhttp)
+    implementation(libs.coil.svg)
+    implementation(libs.coil.gif)
+    implementation(libs.telephoto.zoomable)
+    implementation(libs.okio)
 
     // Archive Engine: Zip4j, Apache Commons Compress (7z) & LibArchive Native JNI
-    implementation("net.lingala.zip4j:zip4j:2.11.5")
-    implementation("me.zhanghai.android.libarchive:library:1.1.6")
-    implementation("org.apache.commons:commons-compress:1.27.1")
-    implementation("org.tukaani:xz:1.10")
+    implementation(libs.zip4j)
+    implementation(libs.libarchive)
+    implementation(libs.commons.compress)
+    implementation(libs.xz)
 
     // Media3 / ExoPlayer: in-app video playback for pack entries
-    val media3Version = "1.5.1"
-    implementation("androidx.media3:media3-exoplayer:$media3Version")
-    implementation("androidx.media3:media3-common:$media3Version")
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.common)
 
     // Coroutines & Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.9.0")
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
+    implementation(libs.kotlinx.coroutines.android)
+    implementation(libs.kotlinx.coroutines.core)
+    implementation(libs.kotlinx.serialization.json)
 
     // Storage: DataStore
-    implementation("androidx.datastore:datastore-preferences:1.1.1")
+    implementation(libs.androidx.datastore.preferences)
 
     // Testing
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    testImplementation(libs.junit)
+    testImplementation(libs.kotlinx.coroutines.test)
 }
