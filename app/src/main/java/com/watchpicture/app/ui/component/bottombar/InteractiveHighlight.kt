@@ -49,6 +49,14 @@ class InteractiveHighlight(
         } else null
     }
 
+    /** ShaderBrush 包装缓存:着色器实例稳定,每帧 drawRect 新建包装是纯分配浪费。 */
+    private val spotBrush: ShaderBrush? =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            spotShader?.let { ShaderBrush(it) }
+        } else {
+            null
+        }
+
     val modifier: Modifier = Modifier.drawWithContent {
         val progress = pressProgressAnimation.value
         if (progress > 0f && size.width > 0f && size.height > 0f) {
@@ -74,7 +82,7 @@ class InteractiveHighlight(
                         setFloatUniform("position", center.x, center.y)
                     }
                     drawRect(
-                        brush = ShaderBrush(spotShader),
+                        brush = spotBrush!!,
                         blendMode = BlendMode.Plus,
                     )
                     shaderRendered = true

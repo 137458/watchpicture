@@ -560,7 +560,9 @@ private fun ColorPickerDialog(
 ) {
     var selectedColor by remember(initialColor) { mutableStateOf(initialColor) }
     var hexText by remember(initialColor) {
-        val hex = String.format("%06X", 0xFFFFFF and initialColor.toArgb())
+        // Locale.US:默认 locale 的 %X 在阿拉伯/波斯等 locale 输出本地化数字,
+        // toLongOrNull(16) 解析失败使自定义色输入失效
+        val hex = String.format(java.util.Locale.US, "%06X", 0xFFFFFF and initialColor.toArgb())
         mutableStateOf("#$hex")
     }
 
@@ -578,7 +580,7 @@ private fun ColorPickerDialog(
                 color = selectedColor,
                 onColorChanged = { newColor ->
                     selectedColor = newColor
-                    val hex = String.format("%06X", 0xFFFFFF and newColor.toArgb())
+                    val hex = String.format(java.util.Locale.US, "%06X", 0xFFFFFF and newColor.toArgb())
                     hexText = "#$hex"
                 },
                 showPreview = true,

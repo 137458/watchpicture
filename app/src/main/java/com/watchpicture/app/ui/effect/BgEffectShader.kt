@@ -41,13 +41,14 @@ class RuntimeShaderCompat(
         }
     }
 
-    val brush: Brush
-        get() =
-            if (shader != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                ShaderBrush(shader)
-            } else {
-                SolidColor(Color.Transparent)
-            }
+    // ShaderBrush 包装缓存:着色器实例构造后稳定,每帧 get() 新建包装是纯分配浪费
+    val brush: Brush by lazy {
+        if (shader != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            ShaderBrush(shader)
+        } else {
+            SolidColor(Color.Transparent)
+        }
+    }
 }
 
 const val OS2_BG_FRAG = """

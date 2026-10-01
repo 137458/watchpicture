@@ -33,6 +33,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -255,7 +256,10 @@ fun FloatingBottomBar(
         }
     }
 
-    var currentIndex by remember(selectedIndex) { mutableIntStateOf(selectedIndex()) }
+    // 不以 selectedIndex 作 remember key:MainScreen 每次重组传新 lambda,
+    // keyed remember 会重置 currentIndex 并重启收集器(纯 churn)
+    var currentIndex by remember { mutableIntStateOf(selectedIndex()) }
+    val latestSelectedIndex by rememberUpdatedState(selectedIndex)
 
     val holder = remember { DampedDragAnimationHolder() }
 
@@ -304,8 +308,8 @@ fun FloatingBottomBar(
         ).also { holder.instance = it }
     }
 
-    LaunchedEffect(selectedIndex) {
-        snapshotFlow { selectedIndex() }.collectLatest { currentIndex = it }
+    LaunchedEffect(Unit) {
+        snapshotFlow { latestSelectedIndex() }.collectLatest { currentIndex = it }
     }
     LaunchedEffect(dampedDragAnimation) {
         snapshotFlow { currentIndex }.drop(1).collectLatest { index ->
