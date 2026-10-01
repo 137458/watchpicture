@@ -602,15 +602,26 @@ class ThumbnailDiskCache(
         }
     }
 
+    // Embed only a one-way SHA-256 digest of the password, never the plaintext, so the key
+    // material in a heap dump does not leak the credential (same policy as ArchiveDiskCache).
+    private fun passwordToken(password: String?): String =
+        if (password.isNullOrEmpty()) {
+            "none"
+        } else {
+            MessageDigest.getInstance("SHA-256")
+                .digest(password.toByteArray(Charsets.UTF_8))
+                .joinToString("") { "%02x".format(it) }
+        }
+
     private fun computeEntryKey(zipFile: File, entryName: String, password: String?): String {
-        val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#${password ?: "none"}"
+        val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#${passwordToken(password)}"
         val md = MessageDigest.getInstance("MD5")
         val bytes = md.digest(raw.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }
     }
 
     private fun computeKey(zipFile: File, entryName: String, targetSize: Int, password: String?): String {
-        val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#sz=$targetSize#${password ?: "none"}"
+        val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#sz=$targetSize#${passwordToken(password)}"
         val md = MessageDigest.getInstance("MD5")
         val bytes = md.digest(raw.toByteArray(Charsets.UTF_8))
         return bytes.joinToString("") { "%02x".format(it) }

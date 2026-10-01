@@ -17,6 +17,39 @@ class ThumbnailDiskCacheTest {
     val tempFolder = TemporaryFolder()
 
     @Test
+    fun `passwords must isolate cache entries and never leak into stored file names`() {
+        val cacheDir = tempFolder.newFolder("thumb_cache_pwd")
+        val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
+        val dummyZip = tempFolder.newFile("pwd_dummy.zip")
+        val entryName = "page_001.jpg"
+        val dataA = byteArrayOf(1, 1, 1)
+        val dataB = byteArrayOf(2, 2, 2)
+
+        val fileA = cache.getOrPut(dummyZip, entryName, 360, password = "PwdAlpha") {
+            dataA.inputStream()
+        }
+        val fileB = cache.getOrPut(dummyZip, entryName, 360, password = "PwdBeta") {
+            dataB.inputStream()
+        }
+        assertTrue("different passwords must map to different cache files", fileA != fileB)
+
+        val hitA = cache.get(dummyZip, entryName, 360, password = "PwdAlpha")
+        val hitB = cache.get(dummyZip, entryName, 360, password = "PwdBeta")
+        val missC = cache.get(dummyZip, entryName, 360, password = "PwdGamma")
+        assertArrayEquals(dataA, hitA!!.readBytes())
+        assertArrayEquals(dataB, hitB!!.readBytes())
+        assertEquals("third password must not read another password's entry", null, missC)
+
+        // Plaintext credentials must not be recoverable from any stored file name
+        for (file in cacheDir.listFiles()!!) {
+            assertTrue(
+                "cache file name leaks password: ${file.name}",
+                !file.name.contains("PwdAlpha") && !file.name.contains("PwdBeta")
+            )
+        }
+    }
+
+    @Test
     fun `stores and retrieves downsampled thumbnail without raw dump`() {
         val cacheDir = tempFolder.newFolder("thumb_cache")
         val cache = ThumbnailDiskCache(cacheDir, maxSizeBytes = 10 * 1024 * 1024)
