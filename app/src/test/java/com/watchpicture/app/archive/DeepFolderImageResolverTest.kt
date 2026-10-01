@@ -2,15 +2,23 @@ package com.watchpicture.app.archive
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
+import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import java.io.File
+import java.nio.file.Files
 
 class DeepFolderImageResolverTest {
 
     @get:Rule
     val tempFolder = TemporaryFolder()
+
+    private fun nestedDir(root: File, depth: Int): File {
+        var dir = root
+        repeat(depth) { dir = File(dir, "a").apply { mkdirs() } }
+        return dir
+    }
 
     @Test
     fun `collects images recursively from nested subdirectories in natural order`() {
@@ -40,5 +48,51 @@ class DeepFolderImageResolverTest {
 
         val images = DeepFolderImageResolver.collectMedia(emptyDir)
         assertTrue(images.isEmpty())
+    }
+
+    @Test
+    fun `normal deep nesting within cap still collects media`() {
+        val root = tempFolder.newFolder("deep_ok")
+        val deep = nestedDir(root, 30)
+        File(deep, "page_001.jpg").writeBytes(ByteArray(4))
+
+        val collected = DeepFolderImageResolver.collectMedia(root)
+        assertEquals(1, collected.size)
+    }
+
+    @Test
+    fun `traversal depth is capped against pathological trees`() {
+        val root = tempFolder.newFolder("deep_cap")
+        val beyond = nestedDir(root, 55)
+        File(beyond, "beyond.jpg").writeBytes(ByteArray(4))
+        // 正常范围内的兄弟子树必须仍然收集
+        val normal = File(root, "normal").apply { mkdirs() }
+        File(normal, "ok.jpg").writeBytes(ByteArray(4))
+
+        val collected = DeepFolderImageResolver.collectMedia(root)
+        assertEquals(
+            "beyond-cap depth must be pruned, normal subtrees still collected",
+            listOf("ok.jpg"),
+            collected.map { it.name }
+        )
+    }
+
+    @Test
+    fun `directory symlink cycle terminates`() {
+        val root = tempFolder.newFolder("cycle_root")
+        val inner = File(root, "inner").apply { mkdirs() }
+        File(inner, "pic.jpg").writeBytes(ByteArray(4))
+        val link = File(root, "link")
+        val created = try {
+            Files.createSymbolicLink(link.toPath(), root.toPath())
+            true
+        } catch (_: Exception) {
+            false
+        }
+        assumeTrue("host cannot create symlinks; cycle test skipped", created)
+
+        val collected = DeepFolderImageResolver.collectMedia(root)
+        assertEquals(1, collected.size)
+        assertTrue(collected.single().name == "pic.jpg")
     }
 }
