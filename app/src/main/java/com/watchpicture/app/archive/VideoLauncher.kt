@@ -87,12 +87,13 @@ object VideoLauncher {
         val archive = item.directFilePath?.let { File(it) } ?: return null
         if (!archive.isFile) return null
 
-        val target = File(playbackDir(context), playbackFileName(item))
+        val target = File(playbackDir(context), playbackCacheName(item.packId, item.entryPath, archive.lastModified(), item.displayName))
         if (target.exists() && target.length() > 0L) return target
 
         val passwordStore = WatchPictureApp.instance.sessionPasswordStore
         val password = passwordStore.get(item.packId) ?: passwordStore.get(archive.absolutePath)
-        val temp = File(target.absolutePath + ".tmp")
+        // 唯一临时名:固定 .tmp 会让同一包同一页的两个并发解析互踩写入
+        val temp = File(target.absolutePath + ".tmp-" + java.util.UUID.randomUUID())
         return try {
             WatchPictureApp.instance.zipArchiveManager
                 .getEntryInputStream(archive, item.entryPath, password)
@@ -120,9 +121,18 @@ object VideoLauncher {
     internal fun playbackDir(context: Context): File =
         File(context.cacheDir, PLAYBACK_DIR).apply { mkdirs() }
 
-    private fun playbackFileName(item: PackImage): String {
-        val token = Integer.toHexString("${item.packId}#${item.entryPath}".hashCode())
-        val safeName = item.displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
+    /**
+     * 播放副本缓存名。键必须包含归档 lastModified:归档被同名替换后若沿用旧键,
+     * 会永远播放陈旧副本直至缓存被容量裁剪碰掉。
+     */
+    internal fun playbackCacheName(
+        packId: String,
+        entryPath: String,
+        archiveLastModified: Long,
+        displayName: String
+    ): String {
+        val token = Integer.toHexString("$packId#$entryPath#$archiveLastModified".hashCode())
+        val safeName = displayName.replace(Regex("[\\\\/:*?\"<>|]"), "_")
         return "${token}_$safeName"
     }
 
