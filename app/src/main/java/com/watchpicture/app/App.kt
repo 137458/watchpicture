@@ -119,7 +119,8 @@ fun App() {
             }
 
             entry<AppRoute.VideoPlayer>(
-                contentKey = { route -> "video#${route.packId}#${route.entryPath}" }
+                // NUL 连接保证双射:'#' 是路径合法字符,裸拼可令不同视频碰撞共享状态
+                contentKey = { route -> "video#${route.packId}\u0000${route.entryPath}" }
             ) { route ->
                 VideoPlayerScreen(
                     packId = route.packId,

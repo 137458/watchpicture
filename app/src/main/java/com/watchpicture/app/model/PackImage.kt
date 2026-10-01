@@ -31,10 +31,19 @@ val PackImage.isVideo: Boolean
 private const val CONTENT_URI_SCHEME = "content://"
 
 /**
- * 视频条目在导航路由中传输的来源标识：优先裸文件路径（文件夹图包条目 / 压缩包），
- * 其次为原始 content Uri（SAF 单文件条目）。与 [packImageFromVideoSource] 互为逆变换。
+ * 双空条目（既无 directFilePath 也无 fileUri）回退 packId 时的哨兵前缀：
+ * 裸 packId 会令逆变换把包路径伪造为 directFilePath（不可逆）。
  */
-fun PackImage.videoSourceOf(): String = directFilePath ?: fileUri ?: packId
+private const val PACK_SOURCE_PREFIX = "pack://"
+
+/**
+ * 视频条目在导航路由中传输的来源标识：优先裸文件路径（文件夹图包条目 / 压缩包），
+ * 其次为原始 content Uri（SAF 单文件条目），双空时以 [PACK_SOURCE_PREFIX] 哨兵
+ * 携带 packId。与 [packImageFromVideoSource] 互为逆变换。
+ */
+fun PackImage.videoSourceOf(): String = directFilePath
+    ?: fileUri
+    ?: (PACK_SOURCE_PREFIX + packId)
 
 /**
  * [videoSourceOf] 的逆变换：由路由参数还原视频条目，供应用内播放页重建 [PackImage]。
@@ -44,13 +53,21 @@ fun packImageFromVideoSource(
     entryPath: String,
     displayName: String,
     source: String
-): PackImage = PackImage(
-    packId = packId,
-    entryPath = entryPath,
-    displayName = displayName,
-    directFilePath = source.takeIf { !it.startsWith(CONTENT_URI_SCHEME) },
-    fileUri = source.takeIf { it.startsWith(CONTENT_URI_SCHEME) }
-)
+): PackImage = if (source.startsWith(PACK_SOURCE_PREFIX)) {
+    PackImage(
+        packId = source.removePrefix(PACK_SOURCE_PREFIX),
+        entryPath = entryPath,
+        displayName = displayName
+    )
+} else {
+    PackImage(
+        packId = packId,
+        entryPath = entryPath,
+        displayName = displayName,
+        directFilePath = source.takeIf { !it.startsWith(CONTENT_URI_SCHEME) },
+        fileUri = source.takeIf { it.startsWith(CONTENT_URI_SCHEME) }
+    )
+}
 
 /**
  * Resolves the appropriate Coil image model (File, ZipImageSource, or Uri)

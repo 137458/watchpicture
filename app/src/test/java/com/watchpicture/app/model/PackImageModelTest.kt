@@ -128,7 +128,7 @@ class PackImageModelTest {
         assertEquals("content://doc/a", safBased.videoSourceOf())
 
         val bare = PackImage("pack-only", "a.mp4", "a.mp4")
-        assertEquals("pack-only", bare.videoSourceOf())
+        assertEquals("pack://pack-only", bare.videoSourceOf())
     }
 
     @Test
@@ -144,6 +144,19 @@ class PackImageModelTest {
             safBased,
             packImageFromVideoSource("p", "a.mp4", "a.mp4", safBased.videoSourceOf())
         )
+    }
+
+    @Test
+    fun `bare pack video source round-trips without fabricating directFilePath`() {
+        // 双空条目回退 packId 不可逆:逆变换会把 packId 伪造为 directFilePath,
+        // toImageModel 随后探测不存在的 File(packId)
+        val bare = PackImage("pack-only", "a.mp4", "a.mp4")
+        val restored = packImageFromVideoSource(
+            bare.packId, bare.entryPath, bare.displayName, bare.videoSourceOf()
+        )
+        assertNull("pack fallback must not fabricate a direct file path", restored.directFilePath)
+        assertNull(restored.fileUri)
+        assertEquals("pack-only", restored.packId)
     }
 
     @Test
