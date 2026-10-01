@@ -33,3 +33,10 @@
 -keep,allowobfuscation,allowshrinking class * {
     @kotlinx.serialization.Serializable class *;
 }
+
+# Vendored 7z 缓存解码器经反射注入 Commons Coders.CODER_MAP(字段名硬编码反射),
+# R8 重命名会使 install() 静默失败,release 退回每次全量 PBKDF2(0.5-1.5s)
+-keepclassmembers class org.apache.commons.compress.archivers.sevenz.Coders {
+    static *** CODER_MAP;
+}
+-keep class org.apache.commons.compress.archivers.sevenz.CachedAES256SHA256Decoder { *; }
