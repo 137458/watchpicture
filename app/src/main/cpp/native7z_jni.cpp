@@ -301,6 +301,9 @@ Java_com_watchpicture_app_archive_Native7z_nativeGetEntries(
         // len includes terminating null character
         jsize strLen = (len > 0) ? static_cast<jsize>(len - 1) : 0;
         jstring pathStr = env->NewString(reinterpret_cast<const jchar *>(tempNameBuf.data()), strLen);
+        if (!pathStr || env->ExceptionCheck()) {
+            return nullptr; // pending OutOfMemoryError
+        }
 
         UInt64 fileSize = SzArEx_GetFileSize(&archive->db, i);
         BoolInt isDir = SzArEx_IsDir(&archive->db, i);
@@ -315,6 +318,10 @@ Java_com_watchpicture_app_archive_Native7z_nativeGetEntries(
             static_cast<jboolean>(isDir != 0),
             crc
         );
+        if (!entryObj || env->ExceptionCheck()) {
+            env->DeleteLocalRef(pathStr);
+            return nullptr; // pending OutOfMemoryError
+        }
 
         env->SetObjectArrayElement(array, static_cast<jsize>(i), entryObj);
 
@@ -649,6 +656,12 @@ Java_com_watchpicture_app_archive_Native7z_nativeDeriveKey(
 
     jbyte *pwdPtr = env->GetByteArrayElements(passwordBytes, nullptr);
     jbyte *saltPtr = env->GetByteArrayElements(saltBytes, nullptr);
+    // OOM 时 GetByteArrayElements 返回 nullptr,直接解引用即 SIGSEGV
+    if (!pwdPtr || !saltPtr) {
+        if (pwdPtr) env->ReleaseByteArrayElements(passwordBytes, pwdPtr, JNI_ABORT);
+        if (saltPtr) env->ReleaseByteArrayElements(saltBytes, saltPtr, JNI_ABORT);
+        return nullptr;
+    }
 
     uint8_t outKey[32];
     sha256_7z_derive_key(
