@@ -22,8 +22,11 @@
 - 修复加密压缩包密码校验对「无文件条目」的包直接放行任意密码的问题：零文件条目无可解密验证对象，现返回校验失败，不再让错误凭据进入会话与密码本。
 - 修复 7z 会话关闭、缓存清理、预取预热等后台维护协程使用裸 `CoroutineScope` 的问题：子协程异常会经默认未捕获处理器直接杀死进程；统一接入带 `SupervisorJob` 与异常兜底记录的应用级维护作用域，缩略图异步落盘作用域补齐异常处理器。
 - 修复应用崩溃日志尝试写入公共 Downloads 根目录（targetSdk 35 scoped storage 下必被拒绝且静默吞掉）并覆盖历史日志的问题；改为应用私有外部目录追加写入并按 512KB 轮替。
-- 修复备份导出包含密码本 DataStore 的问题：新增 `dataExtractionRules`（API 31+）与 `fullBackupContent`（API <31）备份规则，密码本密文一律不随云备份/设备迁移导出。
-- 修复 FileProvider 暴露公共外部存储根的问题：实际共享方仅视频落盘副本（`cacheDir/playback`）与更新安装包（`externalCacheDir`），移除 `external-path` 根并补 `external-cache-path`。
+- 修复备份导出包含密码本 DataStore（历史密码密文与旧版明文残留）的问题：新增 `dataExtractionRules`（API 31+）与 `fullBackupContent`（API <31）按真实落盘文件名 `datastore/watchpicture_password_book.preferences_pb` 排除密码本；曾因误写 `.preferences.pb` 点分路径导致排除规则静默失效，已由守护测试钉住「规则路径必须匹配真实文件名」契约。
+- 修复 FileProvider 共享根配置问题：补 `external-cache-path` 覆盖更新安装包（`externalCacheDir`）；其间移除 `external-path` 根的收窄尝试会使文件夹图包视频的磁盘直连媒体（位于用户任意存储目录、无法静态枚举）共享时直接抛 `Failed to find configured root`，「用其它播放器打开」整体失效，已恢复该根并加守护测试。
+- 修复 provider 未声明体积时被截断的 SAF 归档副本仅凭表头魔数即可通过校验、被晋升为正式缓存后永久存活的问题（该图包此后每次打开都解析失败）：落盘晋升与缓存命中改走 `isValidArchiveCopy` 尾部健全性校验（ZIP 在末尾 22+64KB 窗口内必须存在 EOCD 签名、7z StartHeader 声明的 NextHeader 区间必须落在文件长度内），截断副本判失败并删除重拷。
+- 修复 7z 原生提取路径对超大条目（典型：数百 MB 视频）整段 `extractToBytes` 驻留 JVM 堆随体积线性增长直至 OOM 的问题：新增 32MB 堆内解压守卫（条目大小未知时保守流式），超限条目关闭原生会话后走 Commons Compress 流式回退，解压字节随读随弃；常规图片条目路径不变。
+- 修复 memfd 大图冷路径中单条目超出 160MB 字节预算即在插入瞬间被 LRU 淘汰并关闭 fd、与「单条目超出预算仍保留自身」设计相悖导致该页必然读取失败的问题；淘汰裁决抽为纯函数并补宿主单测，多条目超限的既有淘汰语义不变。
 - 修复软件更新「立即安装」按钮跨帧强解包 `downloadedFile!!` 的 NPE 风险，以及图片详情弹窗同帧强解包外的点击回调空安全隐患。
 - 修复成功路径诊断（按需落盘完成/解锁校验完成）误用 ERROR 级日志、在 release 构建污染错误排查日志的问题，降为 INFO。
 - 修复 native ZIP 引擎 `nativeGetEntries` 构造条目对象后未检查挂起异常的问题：OOM 时 `SetObjectArrayElement` 会二次触发 NPE 且循环继续，现检查后立即透传异常返回。
@@ -92,15 +95,11 @@
 - 修复了设置页"添加新密码"输入框未做明文掩码、密码本明文 chip 常驻展示的屏幕偷窥风险，与密码弹窗掩码策略对齐。
 - 修复了 `PackViewModel.openSingleArchive/onPackClicked` 自动解锁路径缺少异常兜底、SAF 权限失效抛出 SecurityException 导致未捕获协程异常崩溃的问题。
 - 修复了搜索/排序在 Compose 重组时于主线程同步过滤+排序造成输入的顿的问题，下沉为协程管线 StateFlow（120ms 防抖 + Default 调度）。
-- 修复了崩溃日志写入公共 Downloads 根目录的问题（targetSdk 35 下该路径必被拒绝且每次覆盖旧日志）：改写应用私有外部目录 `getExternalFilesDir`，追加写入并按 512KB 轮替，无需存储权限。
-- 修复了通过系统「打开方式」进入图包后返回列表会再次收到 replay 的旧打开事件、被重复导航回同一图包的问题：外部打开事件改带自增序号（`ExternalArchiveEvent.seq`）由消费端一次性消费，replay 缓存仅保留冷启动兜底语义。
-- 修复了 provider 未声明体积时被截断的 SAF 归档副本仅凭表头魔数即可通过校验、被晋升为正式缓存后永久存活的问题（该图包此后每次打开都解析失败）：落盘晋升与缓存命中改走 `isValidArchiveCopy` 尾部健全性校验（ZIP 在末尾 22+64KB 窗口内必须存在 EOCD 签名、7z StartHeader 声明的 NextHeader 区间必须落在文件长度内），截断副本判失败并删除重拷。
 
 ### 安全
 - 密码本明文落盘改为 AndroidKeyStore 派生 AES-GCM 对称密钥加密后持久化，兼容旧明文自动迁移，杜绝 root/备份窃取密码。
 - 修复了 `SafManager` 直接路径解析未校验 `..` 路径穿越、可越权读取授权目录之外文件的问题，增加路径归一化与卷名白名单校验。
 - `UpdateManager.downloadApk` 增加下载字节数与预期尺寸的比对校验，降低 DNS/传输层被劫持时静默安装恶意包的暴露面。
-- 修复了 `allowBackup=true` 且未配置任何备份排除规则导致密码本 DataStore（含历史密码密文与旧版明文残留）随云备份与设备迁移导出的问题：新增 `dataExtractionRules`（API 31+）与 `fullBackupContent`（API 31 以下）按真实落盘文件名 `datastore/watchpicture_password_book.preferences_pb` 排除密码本；曾因误写 `.preferences.pb` 点分路径导致排除规则静默失效，已由守护测试钉住「规则路径必须匹配真实文件名」契约。
 
 ### 优化
 - 升级 Miuix 组件库（`miuix-ui`、`miuix-preference`、`miuix-squircle`、`miuix-blur`、`miuix-nav`）由 `0.9.4-rc01` 至 `0.9.4` 正式版。
