@@ -543,6 +543,16 @@ bool isExtractable(const NativeZipArchive *a, jint index, const ZipEntry *&entry
              index, entry->isDirectory ? 1 : 0, entry->encrypted ? 1 : 0, entry->method);
         return false;
     }
+    // STORED 是 1:1 拷贝:声明 uncompressedSize > compressedSize 的条目是构造的
+    // 畸形包。映射验界只覆盖 compressedSize,按 uncompressedSize 写出/切片会
+    // 越过 mmap 末端触发 SIGBUS。
+    if (entry->method == kMethodStored && entry->uncompressedSize > entry->compressedSize) {
+        LOGE("isExtractable: entry %d malformed STORED (uncomp=%llu comp=%llu)",
+             index,
+             (unsigned long long)entry->uncompressedSize,
+             (unsigned long long)entry->compressedSize);
+        return false;
+    }
     return true;
 }
 
