@@ -387,7 +387,7 @@ class SafManager(
 internal suspend fun <T, R : Any> Iterable<T>.mapIsolated(
     tag: String,
     describe: (T) -> String,
-    process: (T) -> R?
+    process: suspend (T) -> R?
 ): List<R> = coroutineScope {
     map { item ->
         async(Dispatchers.IO) {

@@ -14,6 +14,7 @@ import com.watchpicture.app.model.SortOption
 import com.watchpicture.app.model.ZipPack
 import com.watchpicture.app.navigation.AppRoute
 import com.watchpicture.app.storage.SafManager
+import com.watchpicture.app.storage.mapIsolated
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -184,13 +185,14 @@ class PackViewModel(application: Application = WatchPictureApp.instance) : Andro
             // Restore standalone archives on startup
             val savedStandalone = preferencesRepository.standaloneArchivesFlow.first()
             if (savedStandalone.isNotEmpty()) {
-                val restoredPacks = savedStandalone.mapNotNull { uriStr ->
-                    try {
-                        val uri = Uri.parse(uriStr)
-                        archiveFileResolver.resolve(app, uri)
-                    } catch (_: Exception) {
-                        null
-                    }
+                // Parallel restore (mapIsolated preserves input order): content:// archives require a full
+                // provider stream copy, serial would linearly stack cold-start latency
+                val restoredPacks = savedStandalone.mapIsolated(
+                    tag = "PackRestore",
+                    // Deliberately do not print the full path, hash used for identification only
+                    describe = { Integer.toHexString(it.hashCode()) }
+                ) { uriStr ->
+                    archiveFileResolver.resolve(app, Uri.parse(uriStr))
                 }
                 if (restoredPacks.isNotEmpty()) {
                     _uiState.update { state ->
