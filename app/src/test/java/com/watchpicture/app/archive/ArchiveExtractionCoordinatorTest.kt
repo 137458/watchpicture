@@ -207,19 +207,21 @@ class ArchiveExtractionCoordinatorTest {
         val thumbCache = ThumbnailDiskCache(thumbDir)
         val coordinator = ArchiveExtractionCoordinator(zipManager, archiveDiskCache)
 
-        var progressCalls = 0
+        // 目录分支按核数并行提取,onProgress 由多个 worker 线程回调,
+        // 普通 var 自增会丢失更新(实测 7→6 偶发),必须用原子计数
+        val progressCalls = java.util.concurrent.atomic.AtomicInteger(0)
         coordinator.startBatchThumbnailSweep(
             file = dir,
             entryNames = entryNames,
             targetSizePx = 100,
             password = null,
             thumbnailDiskCache = thumbCache
-        ) { completed, total ->
-            progressCalls++
+        ) { _, total ->
+            progressCalls.incrementAndGet()
             assertEquals(7, total)
         }
 
-        assertEquals(7, progressCalls)
+        assertEquals(7, progressCalls.get())
         for (name in entryNames) {
             val thumb = thumbCache.get(dir, name, 100, password = null)
             assertNotNull("Thumbnail for $name in directory must exist", thumb)
