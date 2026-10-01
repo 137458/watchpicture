@@ -110,8 +110,13 @@ class ThumbnailDiskCache(
         return stripeLocks[index]
     }
 
+    // CoroutineExceptionHandler 兜底:flush 失败只记录,不走默认未捕获处理器杀进程
     private val asyncFlushScope = CoroutineScope(
-        ArchiveDispatchers.backgroundSweepDispatcher + SupervisorJob()
+        ArchiveDispatchers.backgroundSweepDispatcher +
+            SupervisorJob() +
+            kotlinx.coroutines.CoroutineExceptionHandler { _, throwable ->
+                com.watchpicture.app.util.AppLog.e("ThumbFlush", "async flush failed: ${throwable.message}", throwable)
+            }
     )
     private val inFlightFlushes = ConcurrentHashMap.newKeySet<String>()
 

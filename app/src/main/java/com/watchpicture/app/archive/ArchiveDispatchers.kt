@@ -1,7 +1,11 @@
 package com.watchpicture.app.archive
 
 import android.os.Process
+import com.watchpicture.app.util.AppLog
 import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import java.util.concurrent.Executors
 import java.util.concurrent.ThreadFactory
@@ -72,4 +76,15 @@ object ArchiveDispatchers {
     val parallelSweepDispatcher: CoroutineDispatcher = Executors
         .newFixedThreadPool(parallelSweepConcurrency, backgroundThreadFactory)
         .asCoroutineDispatcher()
+
+    /**
+     * Fire-and-forget 后台维护作用域（会话关闭、缓存清理、预取预热等）：SupervisorJob
+     * 隔离失败子协程，CoroutineExceptionHandler 兜底记录，避免异常走默认未捕获处理器
+     * 直接杀死进程。使用时通过 launch(dispatcher) 选择具体执行线程。
+     */
+    val maintenanceScope: CoroutineScope = CoroutineScope(
+        SupervisorJob() + CoroutineExceptionHandler { _, throwable ->
+            AppLog.e("ArchiveMaint", "maintenance task failed: ${throwable.message}", throwable)
+        }
+    )
 }

@@ -101,7 +101,7 @@ class ArchiveExtractionCoordinator(
     fun scheduleCachePurge(file: File, delayMs: Long = DEFAULT_PURGE_DELAY_MS) {
         val path = try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
         purgeJobs[path]?.cancel()
-        purgeJobs[path] = kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
+        purgeJobs[path] = ArchiveDispatchers.maintenanceScope.launch(ArchiveDispatchers.decompressDispatcher) {
             kotlinx.coroutines.delay(delayMs)
             // Re-check cancellation after delay: a cancel() racing with delay resumption must not
             // proceed to purge (and tear down native cache) while a fresh extraction may be running.
@@ -252,7 +252,7 @@ class ArchiveExtractionCoordinator(
                     if (nextEntries.isNotEmpty()) {
                         // Background lookahead on the low-priority dispatcher; cancelled via
                         // activeSweepJob / purgeJobs management on session close.
-                        kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.backgroundSweepDispatcher).launch {
+                        ArchiveDispatchers.maintenanceScope.launch(ArchiveDispatchers.backgroundSweepDispatcher) {
                             for (nextEntry in nextEntries) {
                                 if (archiveDiskCache.get(file, nextEntry, password) == null) {
                                     runCatching {

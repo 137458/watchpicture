@@ -859,7 +859,7 @@ open class SevenZSessionManager(
             session.lock.withLock { session.close() }
         }
         if (isMainThread) {
-            kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
+            ArchiveDispatchers.maintenanceScope.launch(ArchiveDispatchers.decompressDispatcher) {
                 closeUnderLock()
             }
         } else {
@@ -902,7 +902,7 @@ open class SevenZSessionManager(
             false
         }
         if (isMainThread) {
-            kotlinx.coroutines.CoroutineScope(ArchiveDispatchers.decompressDispatcher).launch {
+            ArchiveDispatchers.maintenanceScope.launch(ArchiveDispatchers.decompressDispatcher) {
                 purgeCacheUnderLock(key)
             }
         } else {
