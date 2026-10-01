@@ -28,6 +28,18 @@ class CacheMaintenance(
     companion object {
         /** 视频播放临时副本的容量预算。 */
         const val PLAYBACK_MAX_BYTES = 256L * 1024 * 1024
+
+        /** 播放副本落地后的保护窗:窗内不参与自动裁剪,避免删掉正在播放/刚物化的副本。 */
+        private const val PLAYBACK_FRESH_MS = 5L * 60 * 1000
+
+        /**
+         * 自动裁剪保护判定:在途写入(.tmp- 唯一名)与保护窗内落地的新副本
+         * 不得成为 LRU 淘汰对象。显式「立即清理」不走此判定(原语义即全清)。
+         */
+        internal fun isProtectedFromPlaybackTrim(name: String, lastModified: Long, nowMs: Long): Boolean {
+            if (name.contains(".tmp-")) return true
+            return lastModified > nowMs - PLAYBACK_FRESH_MS
+        }
     }
 
     /** 统计全部磁盘缓存占用。 */
@@ -75,7 +87,10 @@ class CacheMaintenance(
     }
 
     private fun trimPlaybackCache(): Long {
-        val files = VideoLauncher.playbackDir(context).listFiles()?.filter { it.isFile } ?: return 0L
+        val now = System.currentTimeMillis()
+        val files = VideoLauncher.playbackDir(context).listFiles()
+            ?.filter { it.isFile && !isProtectedFromPlaybackTrim(it.name, it.lastModified(), now) }
+            ?: return 0L
         val entries = files.map { LruCacheEntry(it.absolutePath, it.length(), it.lastModified()) }
         var freed = 0L
         for (path in planLruTrim(entries, PLAYBACK_MAX_BYTES)) {
