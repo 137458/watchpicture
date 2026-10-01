@@ -780,6 +780,12 @@ Java_com_watchpicture_app_archive_NativeZip_nativeGetEntries(
             static_cast<jlong>(entry.compressedSize),
             static_cast<jboolean>(entry.isDirectory ? JNI_TRUE : JNI_FALSE)
         );
+        // OOM 时 NewObject 返回 null 并挂起异常;不检查会使 SetObjectArrayElement
+        // 二次触发 NPE 且循环继续
+        if (env->ExceptionCheck() || !entryObj) {
+            env->DeleteLocalRef(pathStr);
+            return nullptr; // pending OutOfMemoryError
+        }
         env->SetObjectArrayElement(array, i, entryObj);
         env->DeleteLocalRef(entryObj);
         env->DeleteLocalRef(pathStr);
