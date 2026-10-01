@@ -16,6 +16,16 @@ class NaturalOrderComparatorTest {
     }
 
     @Test
+    fun `full-width digits are normalized and ordered by value`() {
+        // 全角数字在 CJK 图包常见;isDigit() 认 Nd 全角但旧 trimStart 只剥 ASCII 0,
+        // "０3"(值 3)按 2 字符长度比较会错排在 "２" 之后
+        val input = listOf("１０.jpg", "9.jpg", "０3.jpg", "２.jpg")
+        val sorted = input.sortedWith(comparator)
+        val expected = listOf("２.jpg", "０3.jpg", "9.jpg", "１０.jpg")
+        assertEquals(expected, sorted)
+    }
+
+    @Test
     fun `handles leading zeros and prefix correctly`() {
         val input = listOf("page_100.png", "page_01.png", "page_02.png", "page_10.png")
         val sorted = input.sortedWith(comparator)

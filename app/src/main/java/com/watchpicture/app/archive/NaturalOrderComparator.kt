@@ -13,28 +13,33 @@ class NaturalOrderComparator : Comparator<String> {
         if (s1 == null) return -1
         if (s2 == null) return 1
 
+        // 全角数字(０-９,U+FF10-FF19)在 CJK 图包文件名常见。isDigit() 认其为数字,
+        // 但后续 trimStart('0')/char 比较均按 ASCII 语义,导致值比较错乱;先归一化。
+        val a1 = normalizeFullWidthDigits(s1)
+        val a2 = normalizeFullWidthDigits(s2)
+
         var i1 = 0
         var i2 = 0
-        val len1 = s1.length
-        val len2 = s2.length
+        val len1 = a1.length
+        val len2 = a2.length
 
         while (i1 < len1 && i2 < len2) {
-            val c1 = s1[i1]
-            val c2 = s2[i2]
+            val c1 = a1[i1]
+            val c2 = a2[i2]
 
             if (c1.isDigit() && c2.isDigit()) {
                 // Parse full numeric chunk for both
                 val start1 = i1
-                while (i1 < len1 && s1[i1].isDigit()) {
+                while (i1 < len1 && a1[i1].isDigit()) {
                     i1++
                 }
-                val numStr1 = s1.substring(start1, i1)
+                val numStr1 = a1.substring(start1, i1)
 
                 val start2 = i2
-                while (i2 < len2 && s2[i2].isDigit()) {
+                while (i2 < len2 && a2[i2].isDigit()) {
                     i2++
                 }
-                val numStr2 = s2.substring(start2, i2)
+                val numStr2 = a2.substring(start2, i2)
 
                 // Strip leading zeros for value comparison
                 val trimmed1 = numStr1.trimStart('0')
@@ -65,5 +70,22 @@ class NaturalOrderComparator : Comparator<String> {
         }
 
         return len1 - len2
+    }
+
+    private fun normalizeFullWidthDigits(s: String): String {
+        // 快路径:绝大多数文件名不含全角数字,避免每次比较都产生新串
+        var has = false
+        for (c in s) {
+            if (c in '０'..'９') {
+                has = true
+                break
+            }
+        }
+        if (!has) return s
+        return buildString(s.length) {
+            for (c in s) {
+                append(if (c in '０'..'９') '0' + (c - '０') else c)
+            }
+        }
     }
 }
