@@ -5,11 +5,11 @@
     <cloud-backup>
         <exclude
             domain="file"
-            path="datastore/watchpicture_password_book.preferences.pb" />
+            path="datastore/watchpicture_password_book.preferences_pb" />
     </cloud-backup>
     <device-transfer>
         <exclude
             domain="file"
-            path="datastore/watchpicture_password_book.preferences.pb" />
+            path="datastore/watchpicture_password_book.preferences_pb" />
     </device-transfer>
 </data-extraction-rules>

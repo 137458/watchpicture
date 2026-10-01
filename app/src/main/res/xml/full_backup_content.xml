@@ -3,5 +3,5 @@
 <full-backup-content>
     <exclude
         domain="file"
-        path="datastore/watchpicture_password_book.preferences.pb" />
+        path="datastore/watchpicture_password_book.preferences_pb" />
 </full-backup-content>
