@@ -3,6 +3,9 @@
 ## [未发布]
 
 ### 优化
+- 归档提取协调器的后台提取包裹统一改用 `runCatchingUnlessCancelled`：业务失败语义不变，唯取消异常放行，已取消的扫描不再继续走全档回退白烧 CPU/热预算。
+- 修复 R8 混淆导致 vendored 7z 缓存解码器在 release 构建失效的隐性性能回归：`install()` 以硬编码字段名反射注入 Commons `Coders.CODER_MAP`，重命名后反射静默失败使每次打开 7z AES 流白付 0.5~1.5s PBKDF2；补 keep 规则并以 release dex 字符串实证。
+- 底栏 Tab 选中收集器消除重组重启（`rememberUpdatedState` + `LaunchedEffect(Unit)` 替代以 lambda 身份作 remember key）、AGSL 高光与极光背景的 `ShaderBrush` 包装缓存化消除每帧分配、缩略图自定义种子色 HEX 格式化固定 `Locale.US`。
 - 冷启动独立归档恢复并行化：启动时恢复独立压缩包此前串行逐个 resolve（`content://` 归档含全量 provider 流拷贝），线性叠加冷启动延迟；复用 `mapIsolated` 并行恢复（保序、逐项失败隔离），并把该助手的过程参数升级为 suspend 以支持挂起解析。
 - 图片详情弹窗（`ImageDetailsDialog`）的磁盘探测与尺寸 bounds 解码迁出组合期主线程（`LaunchedEffect` + `Dispatchers.IO`），弹窗打开不再卡顿；文件大小格式化提取为纯函数并以单测锁定行为。
 - 依赖与插件版本统一迁移至 Gradle Version Catalog（`gradle/libs.versions.toml`）：约 35 个内联依赖字符串收敛为单一来源，消除 Miuix 图标组件绕过版本变量硬编码的漂移隐患；依赖坐标与版本完全不变。
@@ -30,6 +33,16 @@
 - 修复软件更新「立即安装」按钮跨帧强解包 `downloadedFile!!` 的 NPE 风险，以及图片详情弹窗同帧强解包外的点击回调空安全隐患。
 - 修复成功路径诊断（按需落盘完成/解锁校验完成）误用 ERROR 级日志、在 release 构建污染错误排查日志的问题，降为 INFO。
 - 修复 native ZIP 引擎 `nativeGetEntries` 构造条目对象后未检查挂起异常的问题：OOM 时 `SetObjectArrayElement` 会二次触发 NPE 且循环继续，现检查后立即透传异常返回。
+- 修复 7z 原生 `nativeGetEntries` 同款异常检查缺失，及 `nativeDeriveKey` 未判空 `GetByteArrayElements`（OOM 时 SIGSEGV）的问题。
+- 修复 STORED 条目 `uncompressedSize > compressedSize` 的构造包按声明大小写出/切片会越过 mmap 末端触发 SIGBUS 的问题：`isExtractable` 单点拒绝畸形条目。
+- 修复 `NativeZip` 提取与 `close` 的 check-then-act 竞窗：并发关闭可把已释放句柄传入 JNI（use-after-free），现以生命周期锁串行化。
+- 修复头部加密 7z 登记仅按路径永久驻留的问题：登记值携带 mtime/size 版本戳，同路径替换的归档不再被永久误标加密。
+- 修复归档缓存记账竞态：`putDirect`/`putDirectSuspend` 的字节计数与裁剪触发移入全局锁，消除重命名与全量统计交错导致的新文件双计与过量 LRU 驱逐。
+- 修复深目录遍历无递归上限与符号链接环守卫缺失导致的 StackOverflow 风险；新增 50 层深度上限与规范路径 visited 剪枝。
+- 修复会话密码存储 `set` 不清理旧别名的问题：别名集合变化后陈旧别名不再持续供出过期密码副本。
+- 修复播放副本自动裁剪可删掉在途写入（`.tmp-` 唯一名）与刚落地副本的问题：自动裁剪跳过在途与 5 分钟保护窗内文件，显式「立即清理」保持全清语义。
+- 修复应用内视频播放页 contentKey 以 `#` 裸拼组件导致的跨视频状态共享，及 `videoSourceOf` 双空回退裸 packId 不可逆伪造 `directFilePath` 的问题：前者改 NUL 连接保证双射，后者改 `pack://` 哨兵前缀。
+- 修复 Android Lint 全部 7 处错误：memfd `NewApi` 守卫内联至 `createEntry` 使其可静态证明；6 处组合期 `context.getString` 改 `stringResource` 预解析，配置变更不再读到陈旧文案。
 
 ### 新增
 - 升级多维主题与色彩引擎（`WatchPictureTheme` / `buildMiuixThemeController`）：解耦深浅外观模式（跟随系统、浅色、深色）与色彩来源（壁纸莫奈动态色彩、Miuix 默认色板、10 款精选预置种子色与 Miuix `ColorPicker` + HEX 自定义种子色），新增 9 种调色板生成风格（`ThemePaletteStyle`：TonalSpot、Neutral、Vibrant、Expressive、Rainbow、FruitSalad、Monochrome、Fidelity、Content）与 Material 3 2025 扩展色彩规范（`ThemeColorSpec.Spec2025`）开关，并在设置页提供实时主题预览卡片（`ThemePreviewCard`）；优化浅色画布与纯白卡片分层对比度（`#F6F7F9` 画布 + `#FFFFFF` 容器）及 AMOLED 纯黑灰阶层次。
