@@ -2,6 +2,32 @@
 
 ## [未发布]
 
+### 优化
+- 冷启动独立归档恢复并行化：启动时恢复独立压缩包此前串行逐个 resolve（`content://` 归档含全量 provider 流拷贝），线性叠加冷启动延迟；复用 `mapIsolated` 并行恢复（保序、逐项失败隔离），并把该助手的过程参数升级为 suspend 以支持挂起解析。
+- 图片详情弹窗（`ImageDetailsDialog`）的磁盘探测与尺寸 bounds 解码迁出组合期主线程（`LaunchedEffect` + `Dispatchers.IO`），弹窗打开不再卡顿；文件大小格式化提取为纯函数并以单测锁定行为。
+- 依赖与插件版本统一迁移至 Gradle Version Catalog（`gradle/libs.versions.toml`）：约 35 个内联依赖字符串收敛为单一来源，消除 Miuix 图标组件绕过版本变量硬编码的漂移隐患；依赖坐标与版本完全不变。
+- Coil 内存缓存键与 `ZipImageFetcher` 密码口径统一：`ZipImageKeyer` 在数据未携带密码时同样回填会话密码，消除同一解密结果以「无密码键」与「实际密码键」占据两个内存缓存槽的浪费。
+
+### 修复
+- 修复 7z 派生密钥缓存（`SevenZKeyCache`）以 `int` 哈希做缓存键的问题：不同密码哈希碰撞时会静默复用错误密码派生的密钥导致解密损坏，改为全量字节键并在驱逐/清空时零化密码字节。
+- 修复缩略图磁盘缓存键（`ThumbnailDiskCache`）将明文密码直接拼入摘要输入串的问题，改与 `ArchiveDiskCache` 一致仅嵌入密码的单向 SHA-256 摘要，堆转储不再可还原凭据。
+- 修复文件夹图包内视频条目永远「视频播放失败」的核心缺陷：文件夹包每条媒体的 `directFilePath` 指向媒体文件本身而非目录，来源解析的目录分支全部落空后被归档分支误当压缩包打开；现在视频扩展名的实体文件直接共享，归档文件不受影响。
+- 修复软件更新在 release 无 APK 资产时把 GitHub release 网页当 APK 下载并交给安装器必然「解析失败」的问题：下载入口统一以 `downloadUrl` 判空守卫，空缺时回退浏览器打开 release 页。
+- 修复视频播放临时副本缓存键不含归档版本、同名替换归档后永远播放陈旧副本，以及固定共享 `.tmp` 临时名导致并发解析互踩写入的问题；缓存键纳入归档 `lastModified`，临时文件改唯一名。
+- 修复更新版本比较将非数字段整段丢弃导致 `1.2.3-beta` 与 `1.2.3` 判等、预发布更新永不提示的问题：按 semver 语义识别 `-`/`_` 预发布边界，同数字预发布低于正式版。
+- 修复自然排序对全角数字（０-９，CJK 图包常见）的数值序错乱：`isDigit()` 识别全角但前导零剥离与字符比较均按 ASCII 语义，「０3」会错排在「２」之后；比较前统一归一化全角数字。
+- 修复视频播放页退后台后音频继续出声的问题：Activity `ON_STOP` 后系统不再渲染 SurfaceView 但 ExoPlayer 音频轨道照常播放，现于 `ON_STOP` 暂停、进度停在暂停点。
+- 修复应用内浏览页加载失败时无限转圈、错误信息不显示且无重试入口的问题；现在明确呈现错误文案并提供重试按钮。
+- 修复外部「关联打开」事件在从图集返回后重复导航进入同一压缩包的问题：事件携带单调序号做一次性消费判定，同时保留冷启动 intent 派发早于订阅所需的 replay 送达。
+- 修复加密压缩包密码校验对「无文件条目」的包直接放行任意密码的问题：零文件条目无可解密验证对象，现返回校验失败，不再让错误凭据进入会话与密码本。
+- 修复 7z 会话关闭、缓存清理、预取预热等后台维护协程使用裸 `CoroutineScope` 的问题：子协程异常会经默认未捕获处理器直接杀死进程；统一接入带 `SupervisorJob` 与异常兜底记录的应用级维护作用域，缩略图异步落盘作用域补齐异常处理器。
+- 修复应用崩溃日志尝试写入公共 Downloads 根目录（targetSdk 35 scoped storage 下必被拒绝且静默吞掉）并覆盖历史日志的问题；改为应用私有外部目录追加写入并按 512KB 轮替。
+- 修复备份导出包含密码本 DataStore 的问题：新增 `dataExtractionRules`（API 31+）与 `fullBackupContent`（API <31）备份规则，密码本密文一律不随云备份/设备迁移导出。
+- 修复 FileProvider 暴露公共外部存储根的问题：实际共享方仅视频落盘副本（`cacheDir/playback`）与更新安装包（`externalCacheDir`），移除 `external-path` 根并补 `external-cache-path`。
+- 修复软件更新「立即安装」按钮跨帧强解包 `downloadedFile!!` 的 NPE 风险，以及图片详情弹窗同帧强解包外的点击回调空安全隐患。
+- 修复成功路径诊断（按需落盘完成/解锁校验完成）误用 ERROR 级日志、在 release 构建污染错误排查日志的问题，降为 INFO。
+- 修复 native ZIP 引擎 `nativeGetEntries` 构造条目对象后未检查挂起异常的问题：OOM 时 `SetObjectArrayElement` 会二次触发 NPE 且循环继续，现检查后立即透传异常返回。
+
 ### 新增
 - 升级多维主题与色彩引擎（`WatchPictureTheme` / `buildMiuixThemeController`）：解耦深浅外观模式（跟随系统、浅色、深色）与色彩来源（壁纸莫奈动态色彩、Miuix 默认色板、10 款精选预置种子色与 Miuix `ColorPicker` + HEX 自定义种子色），新增 9 种调色板生成风格（`ThemePaletteStyle`：TonalSpot、Neutral、Vibrant、Expressive、Rainbow、FruitSalad、Monochrome、Fidelity、Content）与 Material 3 2025 扩展色彩规范（`ThemeColorSpec.Spec2025`）开关，并在设置页提供实时主题预览卡片（`ThemePreviewCard`）；优化浅色画布与纯白卡片分层对比度（`#F6F7F9` 画布 + `#FFFFFF` 容器）及 AMOLED 纯黑灰阶层次。
 - 新增图包浏览列表与缩略图网格滚动位置记忆及阅读进度联动（`PackBrowseState`）：按图包独立记录缩略图网格 `(firstVisibleItemIndex, firstVisibleItemScrollOffset)` 与最后阅读页码 `lastViewedIndex`，支持缩略图角标高亮标记上次阅读图片、顶栏播放按钮续读上次页码，以及从大图阅读器跨页滑动返回时自动同步网格可视区域。
