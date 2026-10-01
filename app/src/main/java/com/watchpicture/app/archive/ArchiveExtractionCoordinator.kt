@@ -26,6 +26,23 @@ import java.util.concurrent.atomic.AtomicInteger
  *    image entries are opportunistically extracted and cached to disk, turning O(N^2)
  *    solid decompression into O(N) linear single-pass. Subsequent pages hit disk with 0ms latency.
  */
+/**
+ * 取消不是业务失败:[runCatching] 会吞掉 [kotlinx.coroutines.CancellationException],
+ * 令已取消的提取协程继续走 LibArchive→session→Commons 全档回退白烧 CPU/热预算。
+ * 语义与 runCatching 一致,唯取消异常先行放行。
+ */
+internal inline fun <T> runCatchingUnlessCancelled(block: () -> T): Result<T> =
+    try {
+        Result.success(block())
+    } catch (e: kotlinx.coroutines.CancellationException) {
+        throw e
+    } catch (t: Throwable) {
+        Result.failure(t)
+    }
+
+/**
+ * 提取协调器：前台高优先级提取与后台缩略图扫描/预取的唯一入口。
+ */
 class ArchiveExtractionCoordinator(
     private val zipArchiveManager: ZipArchiveManager,
     private val archiveDiskCache: ArchiveDiskCache,
@@ -199,7 +216,7 @@ class ArchiveExtractionCoordinator(
             if (session != null) {
                 val entry = session.findEntry(entryName)
                 if (entry != null && !entry.isDirectory) {
-                    val extracted = runCatching {
+                    val extracted = runCatchingUnlessCancelled {
                         archiveDiskCache.putDirect(file, entryName, password) { tempFile ->
                             if (!session.extractToFile(entry.index, tempFile)) {
                                 throw java.io.IOException("NativeZip extractToFile failed for $entryName")
@@ -231,7 +248,7 @@ class ArchiveExtractionCoordinator(
                 return cached
             }
 
-            val extractedFile = runCatching {
+            val extractedFile = runCatchingUnlessCancelled {
                 archiveDiskCache.putDirectSuspend(file, targetEntryName, password) { tempTargetFile ->
                     val success = sevenZSessionManager.extractToFile(
                         file = file,
@@ -255,7 +272,7 @@ class ArchiveExtractionCoordinator(
                         ArchiveDispatchers.maintenanceScope.launch(ArchiveDispatchers.backgroundSweepDispatcher) {
                             for (nextEntry in nextEntries) {
                                 if (archiveDiskCache.get(file, nextEntry, password) == null) {
-                                    runCatching {
+                                    runCatchingUnlessCancelled {
                                         archiveDiskCache.putDirectSuspend(file, nextEntry, password) { tempTargetFile ->
                                             sevenZSessionManager.extractToFile(file, nextEntry, password, tempTargetFile, 0)
                                         }
@@ -345,7 +362,7 @@ class ArchiveExtractionCoordinator(
                     val isAlreadyCached = archiveDiskCache.get(file, entryName, password) != null
                     if (!isAlreadyCached) {
                         if (!targetFound || lookaheadRemaining > 0) {
-                            runCatching {
+                            runCatchingUnlessCancelled {
                                 archiveDiskCache.getOrPut(file, entryName, password) {
                                     sevenZ.getInputStream(entry)
                                 }
@@ -525,7 +542,7 @@ class ArchiveExtractionCoordinator(
                             onProgress?.invoke(count, total)
                             continue
                         }
-                        runCatching {
+                        runCatchingUnlessCancelled {
                             sevenZSessionManager.extractThumbnail(
                                 file = file,
                                 targetEntryName = target,
@@ -580,7 +597,7 @@ class ArchiveExtractionCoordinator(
                 if (!kotlinx.coroutines.currentCoroutineContext().isActive) return@runParallelBatch
 
                 var completedThisItem = false
-                runCatching {
+                runCatchingUnlessCancelled {
                     // Z3 native direct-buffer 优先（未加密）：STORED 零拷贝 mmap 切片 /
                     // DEFLATE 解压进引擎缓冲，缩略图下采样直接消费 ByteBuffer。
                     // DEFLATE 缓冲由引擎持有至 session close，故用 per-entry 短命
@@ -664,7 +681,7 @@ class ArchiveExtractionCoordinator(
             val mutex = getLockFor(file)
             mutex.withLock {
                 if (archiveDiskCache.get(file, name, password) != null) return@withLock
-                runCatching {
+                runCatchingUnlessCancelled {
                     if (is7z) {
                         // Reuse active warm SevenZSessionManager to avoid repeating 524k-round PBKDF2 key derivations
                         sevenZSessionManager.extractSequential(file, name, password, lookahead = 0) { extractedName, stream ->
