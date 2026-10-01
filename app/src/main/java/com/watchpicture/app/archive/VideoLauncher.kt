@@ -69,11 +69,18 @@ object VideoLauncher {
             null
         }
 
-    private fun directEntryFile(item: PackImage): File? {
+    internal fun directEntryFile(item: PackImage): File? {
         val base = item.directFilePath?.let { File(it) } ?: return null
-        if (!base.isDirectory) return null
-        val candidate = File(base, item.entryPath)
-        return candidate.takeIf { it.exists() && it.isFile && it.length() > 0L }
+        if (base.isDirectory) {
+            val candidate = File(base, item.entryPath)
+            return candidate.takeIf { it.exists() && it.isFile && it.length() > 0L }
+        }
+        // 文件夹图包每条媒体各自持有 directFilePath=媒体文件本身(非目录)。
+        // 视频扩展名的实体文件直接共享;归档文件(压缩包场景)不是视频扩展名,
+        // 返回 null 落入归档分支,不会被误当视频。
+        return base.takeIf {
+            it.exists() && it.isFile && it.length() > 0L && ZipArchiveManager.isVideoFile(it.name)
+        }
     }
 
     private suspend fun materializeArchiveEntry(context: Context, item: PackImage): File? {
