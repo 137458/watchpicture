@@ -4,6 +4,7 @@ import android.app.Activity
 import android.content.pm.ActivityInfo
 import android.graphics.BitmapFactory
 import android.os.Build
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -44,6 +45,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.GridView
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Lock
@@ -88,6 +90,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -100,6 +104,8 @@ import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.archive.CacheFileLeases
 import com.watchpicture.app.coil.ZipImageSource
+import com.watchpicture.app.export.ExportOutcome
+import com.watchpicture.app.export.MediaExportManager
 import com.watchpicture.app.model.PackImage
 import com.watchpicture.app.model.isVideo
 import com.watchpicture.app.model.videoSourceOf
@@ -225,6 +231,23 @@ fun GalleryViewerScreen(
 
     var showPageSheet by remember { mutableStateOf(false) }
     var showImageInfoDialog by remember { mutableStateOf(false) }
+    var pendingExport by remember { mutableStateOf<PackImage?>(null) }
+
+    // 一键导出：系统「另存为」选择目标位置后，把当前查看的条目流式写出
+    val exportLauncher = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("*/*")) { target ->
+        val item = pendingExport
+        pendingExport = null
+        if (target != null && item != null) {
+            coroutineScope.launch {
+                when (val outcome = MediaExportManager.exportToUri(context, item, sessionPassword, target)) {
+                    is ExportOutcome.Success ->
+                        Toast.makeText(context, "已导出 ${item.displayName}", Toast.LENGTH_SHORT).show()
+                    is ExportOutcome.Failure ->
+                        Toast.makeText(context, "导出失败：${outcome.message}", Toast.LENGTH_LONG).show()
+                }
+            }
+        }
+    }
     var isAutoPlay by remember { mutableStateOf(false) }
     var orientationMode by remember { mutableStateOf(ReaderOrientationMode.SYSTEM) }
 
@@ -454,6 +477,12 @@ fun GalleryViewerScreen(
                     readingMode = readingMode,
                     hasSessionPassword = sessionPassword != null,
                     onBack = onBack,
+                    onExport = currentImage?.let { image ->
+                        {
+                            pendingExport = image
+                            exportLauncher.launch(MediaExportManager.suggestedFileName(image.entryPath))
+                        }
+                    },
                     onOpenPageSheet = { showPageSheet = true },
                     onOpenImageInfo = { showImageInfoDialog = true },
                     onLockPack = {
@@ -596,6 +625,7 @@ private fun ViewerTopBar(
     readingMode: ReadingMode,
     hasSessionPassword: Boolean,
     onBack: () -> Unit,
+    onExport: (() -> Unit)?,
     onOpenPageSheet: () -> Unit,
     onOpenImageInfo: () -> Unit,
     onLockPack: () -> Unit
@@ -649,6 +679,16 @@ private fun ViewerTopBar(
             }
 
             Spacer(modifier = Modifier.width(4.dp))
+
+            if (onExport != null) {
+                IconButton(onClick = onExport) {
+                    Icon(
+                        imageVector = Icons.Default.Download,
+                        contentDescription = "导出当前图片",
+                        tint = Color.White
+                    )
+                }
+            }
 
             IconButton(onClick = onOpenPageSheet) {
                 Icon(

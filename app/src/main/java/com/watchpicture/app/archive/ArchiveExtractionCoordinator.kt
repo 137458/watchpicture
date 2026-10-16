@@ -521,9 +521,10 @@ class ArchiveExtractionCoordinator(
                     physicalOrderMap[norm] ?: physicalOrderMap[target] ?: Int.MAX_VALUE
                 }
 
-                var count = 0
+                // 进度以「整包条目数」为分母：已缓存条目计入初始进度，避免扫描中途进度条倒缩
+                var count = entryNames.size - sortedUncached.size
                 var consecutiveGenerated = 0
-                val total = sortedUncached.size
+                val total = entryNames.size
                 try {
                     for (target in sortedUncached) {
                         if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
@@ -575,13 +576,12 @@ class ArchiveExtractionCoordinator(
             // AES/ZipCrypto 路径每流独享 RandomAccessFile），ThumbnailDiskCache 为条纹锁原子写，
             // 无需 7z 固实包的单线程顺序约束；也不整批持有归档互斥锁——整批持锁会让
             // 前台交互请求在扫描让路等待期间与之互锁。按核数并行提取（调研 P1 项）。
-            val targets = uncached.filter { name ->
-                thumbnailDiskCache.get(file, name, targetSizePx, password) == null
-            }
-            if (targets.isEmpty()) return@withContext
-
+            // 不做二次缓存过滤：同一协程内刚算出的 uncached 不会再变，重复 get() 只会白跑
+            // 一次弹性回落目录扫描——全量扫描下会被放大成 O(n²) 的 stat 开销。
+            val targets = uncached
             val completed = AtomicInteger(0)
-            val total = targets.size
+            val cachedBase = entryNames.size - targets.size
+            val total = entryNames.size
             runParallelBatch(
                 items = targets,
                 workerCount = ArchiveDispatchers.parallelSweepConcurrency,
@@ -604,7 +604,19 @@ class ArchiveExtractionCoordinator(
                     // session——池化会线性累积内存；open 成本（mmap+CD 解析）相对
                     // 解压+解码可忽略。
                     var nativeDone = false
-                    if (password.isNullOrEmpty() && !file.isDirectory) {
+                    if (file.isDirectory) {
+                        // 文件夹图包：条目就是磁盘上的真实文件，直接降采样，无需任何解压路径
+                        val entryFile = File(file, name.trimStart('/', '\\'))
+                        if (entryFile.isFile && entryFile.length() > 0L) {
+                            thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
+                                java.io.FileInputStream(entryFile)
+                            }
+                            val done = completed.incrementAndGet()
+                            onProgress?.invoke(cachedBase + done, total)
+                            nativeDone = true
+                        }
+                    }
+                    if (!nativeDone && password.isNullOrEmpty() && !file.isDirectory) {
                         NativeZipSession.open(file.absolutePath)?.use { session ->
                             val entry = session.findEntry(name)
                             val buffer = entry?.let { session.extractToDirectBuffer(it.index) }
@@ -617,7 +629,7 @@ class ArchiveExtractionCoordinator(
                                     buffer = buffer
                                 )
                                 val done = completed.incrementAndGet()
-                                onProgress?.invoke(done, total)
+                                onProgress?.invoke(cachedBase + done, total)
                                 nativeDone = true
                             }
                         }
@@ -627,7 +639,7 @@ class ArchiveExtractionCoordinator(
                             zipArchiveManager.getEntryInputStream(file, name, password)
                         }
                         val done = completed.incrementAndGet()
-                        onProgress?.invoke(done, total)
+                        onProgress?.invoke(cachedBase + done, total)
                     }
                     completedThisItem = true
                 }

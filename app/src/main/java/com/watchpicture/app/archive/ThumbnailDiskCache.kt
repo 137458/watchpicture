@@ -82,6 +82,12 @@ class ThumbnailDiskCache(
         // Bounds-only decoding only needs the image header prefix; this bounds the heap held
         // while resolving dimensions before a sampled (inSampleSize) streaming decode.
         private const val HEADER_SIZE_BYTES = 64 * 1024
+
+        // 目录清单缓存 TTL：弹性回落（复用其它尺寸缩略图）必须枚举整个缓存目录。
+        // 全量扫描时若每个未命中条目都枚举一次，会退化成 O(n²) 的 stat 风暴
+        // （n=3000 时约 900 万次 stat），因此清单按此 TTL 复用；精确尺寸命中
+        // 仍走 File.exists()，不受本缓存影响。
+        private const val LISTING_TTL_MS = 2_000L
     }
 
     private val stripeLocks = Array(STRIPE_COUNT) { ReentrantLock() }
@@ -120,6 +126,34 @@ class ThumbnailDiskCache(
     )
     private val inFlightFlushes = ConcurrentHashMap.newKeySet<String>()
 
+    private val listingLock = Any()
+
+    @Volatile
+    private var cachedListing: Set<String>? = null
+
+    @Volatile
+    private var cachedListingAt = 0L
+
+    /**
+     * 目录内文件名清单（按 [LISTING_TTL_MS] 复用）。仅用于弹性回落扫描；
+     * 调用方仍会用 exists()/length() 复核，因此清单过期不会返回已删除文件。
+     */
+    private fun listingOf(dir: File): Set<String> {
+        cachedListing?.let { cached ->
+            if (System.currentTimeMillis() - cachedListingAt < LISTING_TTL_MS) return cached
+        }
+        synchronized(listingLock) {
+            val cached = cachedListing
+            if (cached != null && System.currentTimeMillis() - cachedListingAt < LISTING_TTL_MS) {
+                return cached
+            }
+            val fresh = dir.list()?.toSet() ?: emptySet()
+            cachedListing = fresh
+            cachedListingAt = System.currentTimeMillis()
+            return fresh
+        }
+    }
+
     fun get(
         zipFile: File,
         entryName: String,
@@ -153,18 +187,23 @@ class ThumbnailDiskCache(
             }
         }
 
+        // 目录清单来自缓存，逐个候选仍复核 exists()/length()，因此已删除文件不会被返回。
         val prefix = "thumb_${entryKey}_"
-        val matchingFiles = directory.listFiles { file ->
-            file.isFile && file.name.startsWith(prefix) && !file.name.endsWith(".tmp") && file.length() > 0
+        var best: File? = null
+        var bestDistance = Int.MAX_VALUE
+        for (name in listingOf(directory)) {
+            if (!name.startsWith(prefix) || name.endsWith(".tmp")) continue
+            val candidate = File(directory, name)
+            if (!candidate.isFile || candidate.length() <= 0L) continue
+            val size = name.removePrefix(prefix).substringBefore('.').toIntOrNull() ?: Int.MAX_VALUE
+            val distance = kotlin.math.abs(size - targetSizePx)
+            if (distance < bestDistance) {
+                bestDistance = distance
+                best = candidate
+            }
         }
-        if (!matchingFiles.isNullOrEmpty()) {
-            val best = matchingFiles.minByOrNull { file ->
-                val size = file.name.removePrefix(prefix).substringBefore('.').toIntOrNull() ?: Int.MAX_VALUE
-                kotlin.math.abs(size - targetSizePx)
-            }
-            if (best != null && best.length() > 0) {
-                return best
-            }
+        if (best != null) {
+            return best
         }
 
         return null

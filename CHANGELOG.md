@@ -3,6 +3,10 @@
 ## [未发布]
 
 ### 优化
+- 缩略图改为默认全量预缓存：进入图包即把整包缩略图逐条写入磁盘缓存，不再只扫描可视窗口、不再因滚动暂停扫描，滚动与进入看图页全部变成磁盘命中（可见瓦片的前台取图请求会经 `pauseBackgroundSweep` 自动抢占后台扫描，无需让路）；新增 `ThumbnailSweepQueue` 串行队列保证同一时刻只有一个扫描在跑，运行期间的重复触发合并为一次续跑——此前重复触发会互相取消 `activeSweepJob` 导致扫描反复重启；文件夹图包此前完全不走批量扫描，现补齐目录直读降采样分支并在网格底部显示扫描进度。
+- 消除缩略图全量扫描中的 O(n²) 目录扫描：`ThumbnailDiskCache.get()` 的弹性回落（复用其它尺寸缩略图）此前对每个未命中条目都 `listFiles` 枚举整个缓存目录，n=3000 时约 900 万次 stat；现按 2s TTL 复用目录清单，并逐候选复核 `exists()`/`length()` 保证已删除文件不会被返回（精确尺寸命中仍走 `File.exists()`，不受清单影响）。同时删除批量扫描中紧跟 `uncached` 的重复缓存过滤（同一协程内结果不会变化，只是白跑一次回落扫描），并把进度分母改为整包条目数、已缓存条目计入初始进度。
+- 缩略图落盘编码策略抽为 `ThumbnailEncodeFormat` 并补单测：无 alpha 通道一律 JPEG（软编约 5~12ms，WEBP 软编 35~60ms），仅带 alpha 才回落 WEBP 保透明；质量参数 75 与历史行为一致，低版本系统回落旧版 `WEBP`。
+- 移除设置页「画廊翻页方向（LTR/RTL）」下拉项（用户反馈不实用）；看图页底栏的翻页方向即时切换与 `readingMode` 持久化保持不变。
 - 归档提取协调器的后台提取包裹统一改用 `runCatchingUnlessCancelled`：业务失败语义不变，唯取消异常放行，已取消的扫描不再继续走全档回退白烧 CPU/热预算。
 - 修复 R8 混淆导致 vendored 7z 缓存解码器在 release 构建失效的隐性性能回归：`install()` 以硬编码字段名反射注入 Commons `Coders.CODER_MAP`，重命名后反射静默失败使每次打开 7z AES 流白付 0.5~1.5s PBKDF2；补 keep 规则并以 release dex 字符串实证。
 - 底栏 Tab 选中收集器消除重组重启（`rememberUpdatedState` + `LaunchedEffect(Unit)` 替代以 lambda 身份作 remember key）、AGSL 高光与极光背景的 `ShaderBrush` 包装缓存化消除每帧分配、缩略图自定义种子色 HEX 格式化固定 `Locale.US`。
@@ -45,6 +49,7 @@
 - 修复 Android Lint 全部 7 处错误：memfd `NewApi` 守卫内联至 `createEntry` 使其可静态证明；6 处组合期 `context.getString` 改 `stringResource` 预解析，配置变更不再读到陈旧文案。
 
 ### 新增
+- 新增看图页「一键导出」：顶栏下载按钮把当前正在查看的图片/视频经系统「另存为」写到用户自选位置（`MediaExportManager` + `ExportOutcome`）。三条字节来源按快慢排序——文件夹图包直接复制真实文件（零解码）、压缩包条目经 `getEntryInputStream` 内存级流式读取（不整包落盘）、SAF 单文件 URI 直接转发；密码按会话密码 → 密码本（packId → 归档路径）解析；条目缺失或内容为空时返回失败并清理目标文件，不留 0 字节残件；建议文件名取路径末段、保留原始扩展名并清洗非法字符（连续非法字符合并为一个下划线）。
 - 升级多维主题与色彩引擎（`WatchPictureTheme` / `buildMiuixThemeController`）：解耦深浅外观模式（跟随系统、浅色、深色）与色彩来源（壁纸莫奈动态色彩、Miuix 默认色板、10 款精选预置种子色与 Miuix `ColorPicker` + HEX 自定义种子色），新增 9 种调色板生成风格（`ThemePaletteStyle`：TonalSpot、Neutral、Vibrant、Expressive、Rainbow、FruitSalad、Monochrome、Fidelity、Content）与 Material 3 2025 扩展色彩规范（`ThemeColorSpec.Spec2025`）开关，并在设置页提供实时主题预览卡片（`ThemePreviewCard`）；优化浅色画布与纯白卡片分层对比度（`#F6F7F9` 画布 + `#FFFFFF` 容器）及 AMOLED 纯黑灰阶层次。
 - 新增图包浏览列表与缩略图网格滚动位置记忆及阅读进度联动（`PackBrowseState`）：按图包独立记录缩略图网格 `(firstVisibleItemIndex, firstVisibleItemScrollOffset)` 与最后阅读页码 `lastViewedIndex`，支持缩略图角标高亮标记上次阅读图片、顶栏播放按钮续读上次页码，以及从大图阅读器跨页滑动返回时自动同步网格可视区域。
 - 重构大图查看器（`GalleryViewerScreen`）为 Miuix 液态毛玻璃双层悬浮胶囊架构：引入实时背景模糊采样（`viewerBackdrop` + `ViewerGlassSurface`）、上下滑入/滑出物理过渡动效、悬浮双行信息顶栏、支持日漫 RTL 自动镜像与触觉刻度反馈的进度胶囊（`ChapterNavigator`）以及拖拽实时页码预览气泡；底部多功能工具栏（`BottomReaderBar`）新增屏幕旋转锁定（跟随系统/竖屏/横屏）、定时自动翻页幻灯片、3 列网格缩略图速览跳页抽屉（`WindowBottomSheet`）与图片元数据详情弹窗。

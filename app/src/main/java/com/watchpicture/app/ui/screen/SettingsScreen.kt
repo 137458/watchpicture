@@ -29,7 +29,6 @@ import com.watchpicture.app.BuildConfig
 import com.watchpicture.app.R
 import com.watchpicture.app.WatchPictureApp
 import com.watchpicture.app.model.SortOption
-import com.watchpicture.app.storage.ReadingMode
 import com.watchpicture.app.ui.component.BlurredBar
 import com.watchpicture.app.ui.component.blurBackdropSource
 import com.watchpicture.app.ui.component.formatFileSize
@@ -91,7 +90,6 @@ fun SettingsScreen(
     val darkMode by prefsRepo.darkModeFlow.collectAsStateWithLifecycle(initialValue = 0)
     val colorMode by prefsRepo.colorModeFlow.collectAsStateWithLifecycle(initialValue = 1)
     val seedColor by prefsRepo.seedColorFlow.collectAsStateWithLifecycle(initialValue = 0xFF2196F3L)
-    val readingMode by prefsRepo.readingModeFlow.collectAsStateWithLifecycle(initialValue = ReadingMode.LTR)
     val sortOption by prefsRepo.sortOptionFlow.collectAsStateWithLifecycle(initialValue = SortOption.NAME_ASC)
     val savedPasswords by passwordBookRepo.passwordsFlow.collectAsStateWithLifecycle(initialValue = emptyList())
     val autoSavePassword by passwordBookRepo.autoSavePasswordFlow.collectAsStateWithLifecycle(initialValue = true)
@@ -108,15 +106,6 @@ fun SettingsScreen(
     }
 
     val themeSummary = "${themeAppearanceLabel(darkMode)} · ${themeColorSourceLabel(colorMode, seedColor)}"
-
-    val readingModes = remember { listOf(ReadingMode.LTR, ReadingMode.RTL) }
-    val readingModeOptions = listOf(
-        stringResource(R.string.settings_reading_mode_ltr),
-        stringResource(R.string.settings_reading_mode_rtl),
-    )
-    val currentReadingModeIndex = remember(readingMode, readingModes) {
-        readingModes.indexOf(readingMode).coerceAtLeast(0)
-    }
 
     val sortOptions = remember {
         listOf(
@@ -190,18 +179,6 @@ fun SettingsScreen(
                 item {
                     SmallTitle(text = stringResource(R.string.settings_section_general))
                     Card(modifier = Modifier.fillMaxWidth()) {
-                        WindowDropdownPreference(
-                            title = stringResource(R.string.settings_reading_mode_title),
-                            items = readingModeOptions,
-                            selectedIndex = currentReadingModeIndex,
-                            onSelectedIndexChange = { index ->
-                                val selected = readingModes.getOrElse(index) { ReadingMode.LTR }
-                                coroutineScope.launch {
-                                    prefsRepo.saveReadingMode(selected)
-                                }
-                            },
-                        )
-
                         WindowDropdownPreference(
                             title = stringResource(R.string.settings_default_sort_title),
                             items = sortOptionLabels,

@@ -26,8 +26,10 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -59,6 +61,7 @@ import com.watchpicture.app.ui.component.BlurredBar
 import com.watchpicture.app.ui.component.VideoEntryPlaceholder
 import com.watchpicture.app.ui.component.blurBackdropSource
 import com.watchpicture.app.ui.component.rememberBlurBackdrop
+import com.watchpicture.app.ui.viewmodel.ThumbnailSweepQueue
 import com.watchpicture.app.ui.viewmodel.ViewerViewModel
 import top.yukonga.miuix.kmp.basic.Icon
 import top.yukonga.miuix.kmp.basic.IconButton
@@ -138,8 +141,13 @@ fun ThumbnailGridScreen(
         }
     }
 
+    // 缩略图全量扫描队列：同一时刻只跑一个扫描，运行期间的重复触发合并为一次续跑。
+    val sweepQueue = remember(packId) { ThumbnailSweepQueue() }
+    var sweepProgress by remember(packId) { mutableStateOf<Pair<Int, Int>?>(null) }
+
     androidx.compose.runtime.DisposableEffect(packId) {
         onDispose {
+            sweepQueue.clear()
             val app = WatchPictureApp.instance
             app.archiveExtractionCoordinator.cancelBackgroundSweep()
             val file = File(packId)
@@ -149,57 +157,24 @@ fun ThumbnailGridScreen(
         }
     }
 
+    // 默认全量扫描：不因滚动暂停，把整包缩略图逐条写入磁盘缓存，滚动与进入看图页都变成磁盘命中。
+    // 可见瓦片的前台取图请求会经 pauseBackgroundSweep 自动抢占后台扫描，因此这里无需主动让路。
     LaunchedEffect(displayImages, packId, sessionPassword) {
         val file = File(packId)
-        if (file.exists() && file.isFile && ZipArchiveManager.isSevenZFile(file) && displayImages.isNotEmpty()) {
-            val app = WatchPictureApp.instance
-            var isScrollPaused = false
-            try {
-                snapshotFlow {
-                    lazyGridState.isScrollInProgress to lazyGridState.firstVisibleItemIndex
+        val entryNames = displayImages.map { it.entryPath }
+        if (entryNames.isEmpty() || !file.exists()) return@LaunchedEffect
+        val app = WatchPictureApp.instance
+        sweepQueue.trigger(packId) {
+            app.archiveExtractionCoordinator.startBatchThumbnailSweep(
+                file = file,
+                entryNames = entryNames,
+                targetSizePx = 360,
+                password = sessionPassword,
+                thumbnailDiskCache = app.thumbnailDiskCache,
+                onProgress = { completed, total ->
+                    sweepProgress = if (total > 0 && completed < total) completed to total else null
                 }
-                    .distinctUntilChanged()
-                    .collectLatest { (isScrolling, firstIndex) ->
-                        if (isScrolling) {
-                            if (!isScrollPaused) {
-                                isScrollPaused = true
-                                app.archiveExtractionCoordinator.pauseBackgroundSweep()
-                            }
-                        } else {
-                            if (isScrollPaused) {
-                                isScrollPaused = false
-                                app.archiveExtractionCoordinator.resumeBackgroundSweep()
-                            }
-                            // Delay background sweep by 600ms to allow visible viewport thumbnails to load without CPU contention
-                            kotlinx.coroutines.delay(600)
-
-                            val totalSize = displayImages.size
-                            if (totalSize > 0) {
-                                val lastIndex = lazyGridState.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: firstIndex
-                                // 预取窗口不对称：向后远大于向前。7z 固实包顺序解压下"往后多取"
-                                // 几乎免费（顺路解压），ZIP 条目独立、缩略图体积小，磁盘缓存预算充足。
-                                val start = (firstIndex - PREFETCH_BEHIND_ITEMS).coerceAtLeast(0)
-                                val end = (lastIndex + PREFETCH_AHEAD_ITEMS).coerceAtMost(totalSize - 1)
-                                if (start <= end) {
-                                    val sublist = displayImages.subList(start, end + 1)
-                                    val entryNames = sublist.map { it.entryPath }
-                                    app.archiveExtractionCoordinator.startBatchThumbnailSweep(
-                                        file = file,
-                                        entryNames = entryNames,
-                                        targetSizePx = 360,
-                                        password = sessionPassword,
-                                        thumbnailDiskCache = app.thumbnailDiskCache
-                                    )
-                                }
-                            }
-                        }
-                    }
-            } finally {
-                if (isScrollPaused) {
-                    isScrollPaused = false
-                    app.archiveExtractionCoordinator.resumeBackgroundSweep()
-                }
-            }
+            )
         }
     }
 
@@ -372,12 +347,28 @@ fun ThumbnailGridScreen(
                     }
                 }
             }
+
+            // 全量扫描进度：仅在扫描进行中显示，完成后自动隐藏
+            val progress = sweepProgress
+            if (progress != null) {
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.BottomCenter)
+                        .padding(bottom = 18.dp)
+                        .clip(SquircleShape(14.dp))
+                        .background(MiuixTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.92f))
+                        .padding(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = "缩略图缓存 ${progress.first} / ${progress.second}",
+                        fontSize = 11.sp,
+                        color = MiuixTheme.colorScheme.onSurfaceSecondary
+                    )
+                }
+            }
         }
     }
 }
-
-private const val PREFETCH_BEHIND_ITEMS = 30
-private const val PREFETCH_AHEAD_ITEMS = 150
 
 @Composable
 private fun ThumbnailItem(
