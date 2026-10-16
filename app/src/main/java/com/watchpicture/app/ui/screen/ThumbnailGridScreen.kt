@@ -326,6 +326,7 @@ fun ThumbnailGridScreen(
                                 isLastViewed = index == currentBrowseState.lastViewedIndex,
                                 onClick = {
                                     if (item.isVideo) {
+                                        leavingToViewer.set(true)
                                         onNavigate(
                                             AppRoute.VideoPlayer(
                                                 packId = item.packId,

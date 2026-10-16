@@ -557,6 +557,11 @@ class ArchiveExtractionCoordinator(
                         kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
                     }
                 }
+                // 收尾推满进度：缺失/失败条目不计 count，但分母以整包条目数为准，
+                // 不补齐会让进度芯片永远停在 N/M。全部计入时不补发，维持既有回调契约。
+                if (count < total && powerThermalManager?.isThrottled != true) {
+                    onProgress?.invoke(total, total)
+                }
                 return@withContext
             }
 
@@ -570,49 +575,96 @@ class ArchiveExtractionCoordinator(
             val completed = AtomicInteger(0)
             val cachedBase = entryNames.size - targets.size
             val total = entryNames.size
-            runParallelBatch(
-                items = targets,
-                workerCount = ArchiveDispatchers.parallelSweepConcurrency,
-                dispatcher = ArchiveDispatchers.parallelSweepDispatcher
-            ) { name ->
-                if (powerThermalManager?.isThrottled == true) return@runParallelBatch
 
-                // Cooperative yield while foreground requests (Coil thumbnails / viewer) are in
-                // flight, so interactive decryption gets the CPU instead of this background sweep.
-                while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
-                    kotlinx.coroutines.delay(80)
-                }
-                if (!kotlinx.coroutines.currentCoroutineContext().isActive) return@runParallelBatch
+            // STORED 条目零拷贝直通：整个批次共用一个扫描自持的 native 会话，nativeOpen 只发生
+            // 一次。不走 handlePool 池化会话——池化实例可能被 LRU 逐出 close，直通缓冲会
+            // use-after-free；引擎 KDoc 也规定 direct buffer 只允许短命会话。DEFLATE 不路由
+            // 直通（引擎把解压堆内存持有到 close，整包直通会无界增长），保持池化 java.util.zip
+            // 流；加密包不开会话（引擎不识别加密条目，条目流由加密句柄池处理）。
+            val nativeSession = if (!file.isDirectory && password.isNullOrEmpty()) {
+                NativeZipSession.open(file.absolutePath)
+            } else {
+                null
+            }
+            try {
+                runParallelBatch(
+                    items = targets,
+                    workerCount = ArchiveDispatchers.parallelSweepConcurrency,
+                    dispatcher = ArchiveDispatchers.parallelSweepDispatcher
+                ) { name ->
+                    if (powerThermalManager?.isThrottled == true) return@runParallelBatch
 
-                var completedThisItem = false
-                runCatchingUnlessCancelled {
-                    if (file.isDirectory) {
-                        // 文件夹图包：条目就是磁盘上的真实文件，直接降采样，无需任何解压路径
-                        val entryFile = File(file, name.trimStart('/', '\\'))
-                        if (entryFile.isFile && entryFile.length() > 0L) {
-                            thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
-                                java.io.FileInputStream(entryFile)
+                    // Cooperative yield while foreground requests (Coil thumbnails / viewer) are in
+                    // flight, so interactive decryption gets the CPU instead of this background sweep.
+                    while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
+                        kotlinx.coroutines.delay(80)
+                    }
+                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) return@runParallelBatch
+
+                    var completedThisItem = false
+                    runCatchingUnlessCancelled {
+                        if (file.isDirectory) {
+                            // 文件夹图包：条目就是磁盘上的真实文件，直接降采样，无需任何解压路径。
+                            // 缺失条目同样计入进度（与收尾推满一致：分母为整包条目数）。
+                            val entryFile = File(file, name.trimStart('/', '\\'))
+                            if (entryFile.isFile && entryFile.length() > 0L) {
+                                thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
+                                    java.io.FileInputStream(entryFile)
+                                }
+                            }
+                        } else {
+                            when (val route = ZipSweepEntryRouter.route(nativeSession, name)) {
+                                is ZipSweepRoute.NativeDirectBuffer -> {
+                                    val buffer = nativeSession?.extractToDirectBuffer(route.fileIndex)
+                                    if (buffer != null) {
+                                        // mmap 零拷贝直通：解码直接消费缓冲，租约不跨条目持有
+                                        thumbnailDiskCache
+                                            .getOrPutResultFromByteBuffer(
+                                                zipFile = file,
+                                                entryName = name,
+                                                targetSizePx = targetSizePx,
+                                                password = password,
+                                                buffer = buffer
+                                            )
+                                            .also { it.lease?.close() }
+                                    } else {
+                                        thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
+                                            zipArchiveManager.getEntryInputStream(file, name, password)
+                                        }
+                                    }
+                                }
+                                // 普通 ZIP（DEFLATE/加密/引擎不可用）：走池化 java.util.zip 句柄——
+                                // 中央目录只解析一次、条目名哈希查表，且条目流可安全并行。
+                                ZipSweepRoute.PooledStream -> thumbnailDiskCache.getOrPut(
+                                    file, name, targetSizePx, password
+                                ) {
+                                    zipArchiveManager.getEntryInputStream(file, name, password)
+                                }
                             }
                         }
-                    } else {
-                        // 普通 ZIP：走池化 java.util.zip 句柄——中央目录只解析一次、条目名哈希查表，
-                        // 且条目流可安全并行。此前每条目重开一个 native mmap 会话（nativeOpen 会重新
-                        // 解析整个中央目录并重建 N 个条目对象 + 两个 HashMap），数千条目时退化成
-                        // O(n²) 的解析与对象分配风暴，是扫描期 GC 抖动的主因。
-                        thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
-                            zipArchiveManager.getEntryInputStream(file, name, password)
-                        }
+                        val done = completed.incrementAndGet()
+                        onProgress?.invoke(cachedBase + done, total)
+                        completedThisItem = true
                     }
-                    val done = completed.incrementAndGet()
-                    onProgress?.invoke(cachedBase + done, total)
-                    completedThisItem = true
+                    kotlinx.coroutines.yield()
+                    // 全局热节流节奏：每完成 BATCH_COOLING_INTERVAL 个条目小憩一次，
+                    // 避免并行worker持续满载导致 SoC 热节流。
+                    if (completedThisItem && completed.get() % BATCH_COOLING_INTERVAL == 0) {
+                        kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
+                    }
                 }
-                kotlinx.coroutines.yield()
-                // 全局热节流节奏：每完成 BATCH_COOLING_INTERVAL 个条目小憩一次，
-                // 避免并行worker持续满载导致 SoC 热节流。
-                if (completedThisItem && completed.get() % BATCH_COOLING_INTERVAL == 0) {
-                    kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
+                // 缺失/失败条目不计 completed：扫描自然跑完（未取消、未热节流）却没到
+                // 分母时补推满进度，否则进度芯片永远停在 N/M。全部计入时不补发，
+                // 维持「每个计入条目恰好一次回调」的既有契约。
+                if (completed.get() < total &&
+                    kotlinx.coroutines.currentCoroutineContext().isActive &&
+                    powerThermalManager?.isThrottled != true
+                ) {
+                    onProgress?.invoke(total, total)
                 }
+            } finally {
+                // runParallelBatch 返回时全部 worker 已 join，直通缓冲均消费完毕，此刻关闭安全。
+                nativeSession?.close()
             }
         } finally {
             activeSweepJob.compareAndSet(currentJob, null)
