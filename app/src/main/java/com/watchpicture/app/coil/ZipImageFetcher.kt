@@ -94,28 +94,36 @@ class ZipImageFetcher(
                     keepBitmapInMemory = true
                 )
             } else {
-                val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
-                thumbCache.getOrPutResult(
-                    zipFile = data.zipFile,
-                    entryName = data.entryName,
-                    targetSizePx = data.targetSizePx,
-                    password = password,
-                    keepBitmapInMemory = true
-                ) {
-                    if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
-                        java.io.FileInputStream(cachedFull)
-                    } else if (data.zipFile.isDirectory) {
-                        java.io.FileInputStream(resolveDirectoryEntry(data.zipFile, data.entryName))
-                    } else if (data.zipFile.isFile && ZipArchiveManager.isImageFile(data.zipFile.name)) {
-                        java.io.FileInputStream(data.zipFile)
-                    } else {
-                        // Stream directly into downsampler, 0 full-res disk dump!
-                        zipArchiveManager.getEntryInputStream(
-                            file = data.zipFile,
-                            entryName = data.entryName,
-                            password = password
-                        )
+                // 非 7z（普通 ZIP / 文件夹图包）不走 coordinator，这里主动让路后台全量扫描：
+                // 此前只有 7z 缩略图会经 coordinator 的 pauseBackgroundSweep 抢占后台扫描，
+                // 普通 ZIP 的前台取图请求则一直与后台全量扫描并行争抢 CPU 与条带锁。
+                extractCoord?.pauseBackgroundSweep()
+                try {
+                    val cachedFull = diskCache?.get(data.zipFile, data.entryName, password)
+                    thumbCache.getOrPutResult(
+                        zipFile = data.zipFile,
+                        entryName = data.entryName,
+                        targetSizePx = data.targetSizePx,
+                        password = password,
+                        keepBitmapInMemory = true
+                    ) {
+                        if (cachedFull != null && cachedFull.exists() && cachedFull.length() > 0L) {
+                            java.io.FileInputStream(cachedFull)
+                        } else if (data.zipFile.isDirectory) {
+                            java.io.FileInputStream(resolveDirectoryEntry(data.zipFile, data.entryName))
+                        } else if (data.zipFile.isFile && ZipArchiveManager.isImageFile(data.zipFile.name)) {
+                            java.io.FileInputStream(data.zipFile)
+                        } else {
+                            // Stream directly into downsampler, 0 full-res disk dump!
+                            zipArchiveManager.getEntryInputStream(
+                                file = data.zipFile,
+                                entryName = data.entryName,
+                                password = password
+                            )
+                        }
                     }
+                } finally {
+                    extractCoord?.resumeBackgroundSweep()
                 }
             }
 

@@ -145,14 +145,20 @@ fun ThumbnailGridScreen(
     val sweepQueue = remember(packId) { ThumbnailSweepQueue() }
     var sweepProgress by remember(packId) { mutableStateOf<Pair<Int, Int>?>(null) }
 
+    // 网格销毁有两种去向：进入看图页 / 真正离开图包。进入看图页时 7z 固实块缓存必须保留，
+    // 回收会让首张原图从块头整块重解；只有真正离开图包才延后回收。
+    val leavingToViewer = remember(packId) { java.util.concurrent.atomic.AtomicBoolean(false) }
+
     androidx.compose.runtime.DisposableEffect(packId) {
         onDispose {
             sweepQueue.clear()
             val app = WatchPictureApp.instance
             app.archiveExtractionCoordinator.cancelBackgroundSweep()
-            val file = File(packId)
-            if (file.exists() && ZipArchiveManager.isSevenZFile(file)) {
-                app.archiveExtractionCoordinator.scheduleCachePurge(file)
+            if (!leavingToViewer.get()) {
+                val file = File(packId)
+                if (file.exists() && ZipArchiveManager.isSevenZFile(file)) {
+                    app.archiveExtractionCoordinator.scheduleCachePurge(file)
+                }
             }
         }
     }
@@ -221,6 +227,7 @@ fun ThumbnailGridScreen(
                                         lazyGridState.firstVisibleItemScrollOffset
                                     )
                                     ViewerViewModel.saveLastViewedIndex(packId, resumeIndex)
+                                    leavingToViewer.set(true)
                                     onNavigate(
                                         AppRoute.GalleryViewer(
                                             packId = packId,
@@ -334,6 +341,7 @@ fun ThumbnailGridScreen(
                                             lazyGridState.firstVisibleItemScrollOffset
                                         )
                                         ViewerViewModel.saveLastViewedIndex(packId, index)
+                                        leavingToViewer.set(true)
                                         onNavigate(
                                             AppRoute.GalleryViewer(
                                                 packId = packId,

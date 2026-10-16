@@ -160,15 +160,17 @@ class WatchPictureApp : Application(), SingletonImageLoader.Factory {
                     com.watchpicture.app.archive.ZipAesKeyCache.clear()
                     com.watchpicture.app.archive.MemFdPipeline.closeAll()
                 }
-                // 后台各档：UI_HIDDEN(20)/BACKGROUND(40)/MODERATE(60) —— 压缩 Coil 缓存并关闭空闲句柄/7z 缓冲
+                // 后台各档：UI_HIDDEN(20)/BACKGROUND(40)/MODERATE(60)。这些档位表示"界面不可见"
+                // 而非内存告急，故不再无差别 closeAll 会话：关闭会连带丢弃 7z 固实块缓存，
+                // 用户切出去再切回来时整块必须从头重新解码（大块要数秒）。这里只压缩内存缓存并
+                // 回收已空闲超时的会话；真正告急由 RUNNING_CRITICAL / COMPLETE 与 onLowMemory
+                // 兜底，长时间后台也会经后续 BACKGROUND/MODERATE 回调逐批 reapIdleSessions。
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_UI_HIDDEN -> {
-                    // UI moved to background: halve Coil memory cache and close idle handles/7z buffers to survive LMK
                     val memCache = imageLoader.memoryCache
                     if (memCache != null) {
                         memCache.trimToSize(memCache.maxSize / 2)
                     }
-                    zipArchiveManager.handlePool.closeAll()
-                    zipArchiveManager.sevenZManager.sessionManager.closeAll()
+                    zipArchiveManager.sevenZManager.sessionManager.reapIdleSessions()
                 }
                 // 前台临界：RUNNING_CRITICAL(15) —— 清空全部内存缓存、句柄、7z 会话并裁剪磁盘缓存
                 level >= android.content.ComponentCallbacks2.TRIM_MEMORY_RUNNING_CRITICAL -> {

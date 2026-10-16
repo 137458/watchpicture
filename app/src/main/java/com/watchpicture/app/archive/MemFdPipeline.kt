@@ -145,11 +145,11 @@ object MemFdPipeline {
         } else {
             MessageDigest.getInstance("SHA-256")
                 .digest(password.toByteArray(Charsets.UTF_8))
-                .joinToString("") { "%02x".format(it) }
+                .toLowerHex()
         }
         val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#$pwdToken"
         return MessageDigest.getInstance("MD5")
             .digest(raw.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
+            .toLowerHex()
     }
 }

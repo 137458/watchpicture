@@ -654,20 +654,20 @@ class ThumbnailDiskCache(
         } else {
             MessageDigest.getInstance("SHA-256")
                 .digest(password.toByteArray(Charsets.UTF_8))
-                .joinToString("") { "%02x".format(it) }
+                .toLowerHex()
         }
 
     private fun computeEntryKey(zipFile: File, entryName: String, password: String?): String {
         val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#${passwordToken(password)}"
         val md = MessageDigest.getInstance("MD5")
         val bytes = md.digest(raw.toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") { "%02x".format(it) }
+        return bytes.toLowerHex()
     }
 
     private fun computeKey(zipFile: File, entryName: String, targetSize: Int, password: String?): String {
         val raw = "${zipFile.absolutePath}#${zipFile.lastModified()}#$entryName#sz=$targetSize#${passwordToken(password)}"
         val md = MessageDigest.getInstance("MD5")
         val bytes = md.digest(raw.toByteArray(Charsets.UTF_8))
-        return bytes.joinToString("") { "%02x".format(it) }
+        return bytes.toLowerHex()
     }
 }

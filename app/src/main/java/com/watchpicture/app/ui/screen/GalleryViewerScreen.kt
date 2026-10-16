@@ -1009,15 +1009,24 @@ private fun PageQuickViewBottomSheet(
                 val isSelected = index == currentPage
                 val isVideoItem = item.isVideo
                 val thumbModel = remember(item, sessionPassword, isVideoItem) {
-                    if (isVideoItem) null else item.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 300)
+                    if (isVideoItem) null else item.toImageModel(sessionPassword, isThumbnail = true, targetSizePx = 360)
                 }
                 val thumbRequest = remember(thumbModel) {
                     if (thumbModel == null) {
                         null
                     } else {
+                        // 与九宫格统一 360px 并固定请求尺寸：命中同一份磁盘缩略图缓存与同一 Coil
+                        // 内存缓存键，避免此处另起 300px 规格导致两条缓存都落空后重新解压归档。
+                        val entryName = when (thumbModel) {
+                            is ZipImageSource -> thumbModel.entryName
+                            is java.io.File -> thumbModel.name
+                            else -> ""
+                        }.lowercase()
+                        val hasAlpha = entryName.endsWith(".png") || entryName.endsWith(".webp") || entryName.endsWith(".gif")
                         ImageRequest.Builder(context)
                             .data(thumbModel)
-                            .bitmapConfig(android.graphics.Bitmap.Config.RGB_565)
+                            .size(360, 360)
+                            .bitmapConfig(if (hasAlpha) android.graphics.Bitmap.Config.ARGB_8888 else android.graphics.Bitmap.Config.RGB_565)
                             .precision(Precision.INEXACT)
                             .build()
                     }

@@ -62,14 +62,12 @@ class ArchiveExtractionCoordinator(
         private const val PREFETCH_YIELD_POLL_MS = 60L
         private const val PREFETCH_YIELD_TIMEOUT_MS = 1_500L
 
-        // How long to keep the native 7z solid block cache alive after the last extraction.
-        // Sequential paging reuses the same solid block; purging too aggressively (e.g. 3s) forces
-        // a full re-decompression + AES decryption of the whole solid block on the next page turn,
-        // which is exactly the "decryption takes too long" symptom. 30s keeps normal paging fast;
-        // RAM pressure is handled by WatchPictureApp.onTrimMemory (closing sessions frees the buffer).
-        private const val DEFAULT_PURGE_DELAY_MS = 30_000L
-        // Under thermal/battery throttling, reclaim RAM sooner.
-        private const val THROTTLED_PURGE_DELAY_MS = 3_000L
+        // 固实块缓存的回收延迟，仅在「真正离开图包页面」时生效（见 ThumbnailGridScreen.onDispose）。
+        // 浏览过程中不再按空闲时长回收：固实块一旦释放，下一页就得从块头整块重解
+        // （SzArEx_ExtractIncremental 的 decodedSize 归零），此前每条目提取后排 30s 定时
+        // 会让「读一页停一会儿再翻页」必然付出整块重解代价。整块的释放改由离开页面 /
+        // 退后台 / 内存压力驱动，见 WatchPictureApp.onTrimMemory。
+        private const val EXIT_PURGE_DELAY_MS = 30_000L
     }
 
     private val archiveLocks = ConcurrentHashMap<String, Mutex>()
@@ -111,11 +109,12 @@ class ArchiveExtractionCoordinator(
     private val purgeJobs = ConcurrentHashMap<String, kotlinx.coroutines.Job>()
 
     /**
-     * Schedules a delayed purge of native solid block cache for [file] (default 30 seconds of inactivity).
-     * The buffer is only freed after a long idle, so rapid sequential paging hits the cached solid
-     * block instead of re-decompressing it. On low memory the session is closed outright (frees it).
+     * Schedules a delayed purge of the native solid block cache for [file].
+     *
+     * 只在「真正离开图包」时调用（网格销毁且不是进入看图页），保证浏览期间固实块常驻；
+     * 若用户很快重新进入图包并再次发起提取，[cancelCachePurge] 会撤销本次回收。
      */
-    fun scheduleCachePurge(file: File, delayMs: Long = DEFAULT_PURGE_DELAY_MS) {
+    fun scheduleCachePurge(file: File, delayMs: Long = EXIT_PURGE_DELAY_MS) {
         val path = try { file.canonicalPath } catch (_: Throwable) { file.absolutePath }
         purgeJobs[path]?.cancel()
         purgeJobs[path] = ArchiveDispatchers.maintenanceScope.launch(ArchiveDispatchers.decompressDispatcher) {
@@ -176,14 +175,8 @@ class ArchiveExtractionCoordinator(
                 extractZipEntry(file, entryName, password)
             }
             com.watchpicture.app.util.AppLog.i("Extract", "Extracted ${entryName} in ${System.currentTimeMillis() - t0}ms")
-            if (is7z) {
-                val purgeDelay = if (powerThermalManager?.isThrottled == true) {
-                    THROTTLED_PURGE_DELAY_MS
-                } else {
-                    DEFAULT_PURGE_DELAY_MS
-                }
-                scheduleCachePurge(file, purgeDelay)
-            }
+            // 提取后不再排定空闲回收：浏览期间固实块必须常驻，否则读一页停超过定时阈值后
+            // 翻页会从块头整块重解。回收统一由离开图包页面 / 退后台 / 内存压力触发。
             result
         }
     }
@@ -525,49 +518,44 @@ class ArchiveExtractionCoordinator(
                 var count = entryNames.size - sortedUncached.size
                 var consecutiveGenerated = 0
                 val total = entryNames.size
-                try {
-                    for (target in sortedUncached) {
-                        if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
-                        if (powerThermalManager?.isThrottled == true) break
+                // 扫描结束不排定回收：用户此刻仍在网格上，随后进入看图页会直接复用该固实块。
+                // 整块的释放由「离开图包页面 / 退后台 / 内存压力」驱动（见 onTrimMemory）。
+                for (target in sortedUncached) {
+                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
+                    if (powerThermalManager?.isThrottled == true) break
 
-                        // Cooperative yield while foreground requests are in flight
-                        while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
-                            kotlinx.coroutines.delay(80)
-                        }
-                        if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
-
-                        val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
-                        if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
-                            count++
-                            consecutiveGenerated = 0
-                            onProgress?.invoke(count, total)
-                            continue
-                        }
-                        runCatchingUnlessCancelled {
-                            sevenZSessionManager.extractThumbnail(
-                                file = file,
-                                targetEntryName = target,
-                                targetSizePx = targetSizePx,
-                                password = password,
-                                thumbnailDiskCache = thumbnailDiskCache,
-                                lookahead = 0,
-                                allowRewind = true
-                            )
-                        }
-                        count++
-                        consecutiveGenerated++
-                        onProgress?.invoke(count, total)
-                        kotlinx.coroutines.yield() // Yield so interactive UI requests get top priority!
-                        if (consecutiveGenerated >= BATCH_COOLING_INTERVAL) {
-                            consecutiveGenerated = 0
-                            kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
-                        }
+                    // Cooperative yield while foreground requests are in flight
+                    while (isSweepPaused && kotlinx.coroutines.currentCoroutineContext().isActive) {
+                        kotlinx.coroutines.delay(80)
                     }
-                } finally {
-                    // Don't purge immediately after the sweep: the user typically jumps straight into the
-                    // viewer, which reuses the same solid block. Delay the reclaim so the first full-res
-                    // page stays fast; it will be purged after idle or freed by onTrimMemory.
-                    scheduleCachePurge(file)
+                    if (!kotlinx.coroutines.currentCoroutineContext().isActive) break
+
+                    val alreadyCached = thumbnailDiskCache.get(file, target, targetSizePx, password)
+                    if (alreadyCached != null && alreadyCached.exists() && alreadyCached.length() > 0L) {
+                        count++
+                        consecutiveGenerated = 0
+                        onProgress?.invoke(count, total)
+                        continue
+                    }
+                    runCatchingUnlessCancelled {
+                        sevenZSessionManager.extractThumbnail(
+                            file = file,
+                            targetEntryName = target,
+                            targetSizePx = targetSizePx,
+                            password = password,
+                            thumbnailDiskCache = thumbnailDiskCache,
+                            lookahead = 0,
+                            allowRewind = true
+                        )
+                    }
+                    count++
+                    consecutiveGenerated++
+                    onProgress?.invoke(count, total)
+                    kotlinx.coroutines.yield() // Yield so interactive UI requests get top priority!
+                    if (consecutiveGenerated >= BATCH_COOLING_INTERVAL) {
+                        consecutiveGenerated = 0
+                        kotlinx.coroutines.delay(BATCH_COOLING_DELAY_MS)
+                    }
                 }
                 return@withContext
             }
@@ -598,12 +586,6 @@ class ArchiveExtractionCoordinator(
 
                 var completedThisItem = false
                 runCatchingUnlessCancelled {
-                    // Z3 native direct-buffer 优先（未加密）：STORED 零拷贝 mmap 切片 /
-                    // DEFLATE 解压进引擎缓冲，缩略图下采样直接消费 ByteBuffer。
-                    // DEFLATE 缓冲由引擎持有至 session close，故用 per-entry 短命
-                    // session——池化会线性累积内存；open 成本（mmap+CD 解析）相对
-                    // 解压+解码可忽略。
-                    var nativeDone = false
                     if (file.isDirectory) {
                         // 文件夹图包：条目就是磁盘上的真实文件，直接降采样，无需任何解压路径
                         val entryFile = File(file, name.trimStart('/', '\\'))
@@ -611,36 +593,18 @@ class ArchiveExtractionCoordinator(
                             thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
                                 java.io.FileInputStream(entryFile)
                             }
-                            val done = completed.incrementAndGet()
-                            onProgress?.invoke(cachedBase + done, total)
-                            nativeDone = true
                         }
-                    }
-                    if (!nativeDone && password.isNullOrEmpty() && !file.isDirectory) {
-                        NativeZipSession.open(file.absolutePath)?.use { session ->
-                            val entry = session.findEntry(name)
-                            val buffer = entry?.let { session.extractToDirectBuffer(it.index) }
-                            if (buffer != null) {
-                                thumbnailDiskCache.getOrPutResultFromByteBuffer(
-                                    zipFile = file,
-                                    entryName = name,
-                                    targetSizePx = targetSizePx,
-                                    password = password,
-                                    buffer = buffer
-                                )
-                                val done = completed.incrementAndGet()
-                                onProgress?.invoke(cachedBase + done, total)
-                                nativeDone = true
-                            }
-                        }
-                    }
-                    if (!nativeDone) {
+                    } else {
+                        // 普通 ZIP：走池化 java.util.zip 句柄——中央目录只解析一次、条目名哈希查表，
+                        // 且条目流可安全并行。此前每条目重开一个 native mmap 会话（nativeOpen 会重新
+                        // 解析整个中央目录并重建 N 个条目对象 + 两个 HashMap），数千条目时退化成
+                        // O(n²) 的解析与对象分配风暴，是扫描期 GC 抖动的主因。
                         thumbnailDiskCache.getOrPut(file, name, targetSizePx, password) {
                             zipArchiveManager.getEntryInputStream(file, name, password)
                         }
-                        val done = completed.incrementAndGet()
-                        onProgress?.invoke(cachedBase + done, total)
                     }
+                    val done = completed.incrementAndGet()
+                    onProgress?.invoke(cachedBase + done, total)
                     completedThisItem = true
                 }
                 kotlinx.coroutines.yield()
