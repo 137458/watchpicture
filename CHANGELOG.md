@@ -2,6 +2,17 @@
 
 ## [未发布]
 
+### 新增
+- 新增看图页「一键导出」：顶栏下载按钮把当前正在查看的图片/视频经系统「另存为」写到用户自选位置（`MediaExportManager` + `ExportOutcome`）。三条字节来源按快慢排序——文件夹图包直接复制真实文件（零解码）、压缩包条目经 `getEntryInputStream` 内存级流式读取（不整包落盘）、SAF 单文件 URI 直接转发；密码按会话密码 → 密码本（packId → 归档路径）解析；条目缺失或内容为空时返回失败并清理目标文件，不留 0 字节残件；建议文件名取路径末段、保留原始扩展名并清洗非法字符（连续非法字符合并为一个下划线）。
+- 升级多维主题与色彩引擎（`WatchPictureTheme` / `buildMiuixThemeController`）：解耦深浅外观模式（跟随系统、浅色、深色）与色彩来源（壁纸莫奈动态色彩、Miuix 默认色板、10 款精选预置种子色与 Miuix `ColorPicker` + HEX 自定义种子色），新增 9 种调色板生成风格（`ThemePaletteStyle`：TonalSpot、Neutral、Vibrant、Expressive、Rainbow、FruitSalad、Monochrome、Fidelity、Content）与 Material 3 2025 扩展色彩规范（`ThemeColorSpec.Spec2025`）开关，并在设置页提供实时主题预览卡片（`ThemePreviewCard`）；优化浅色画布与纯白卡片分层对比度（`#F6F7F9` 画布 + `#FFFFFF` 容器）及 AMOLED 纯黑灰阶层次。
+- 新增图包浏览列表与缩略图网格滚动位置记忆及阅读进度联动（`PackBrowseState`）：按图包独立记录缩略图网格 `(firstVisibleItemIndex, firstVisibleItemScrollOffset)` 与最后阅读页码 `lastViewedIndex`，支持缩略图角标高亮标记上次阅读图片、顶栏播放按钮续读上次页码，以及从大图阅读器跨页滑动返回时自动同步网格可视区域。
+- 重构大图查看器（`GalleryViewerScreen`）为 Miuix 液态毛玻璃双层悬浮胶囊架构：引入实时背景模糊采样（`viewerBackdrop` + `ViewerGlassSurface`）、上下滑入/滑出物理过渡动效、悬浮双行信息顶栏、支持日漫 RTL 自动镜像与触觉刻度反馈的进度胶囊（`ChapterNavigator`）以及拖拽实时页码预览气泡；底部多功能工具栏（`BottomReaderBar`）新增屏幕旋转锁定（跟随系统/竖屏/横屏）、定时自动翻页幻灯片、3 列网格缩略图速览跳页抽屉（`WindowBottomSheet`）与图片元数据详情弹窗。
+- 升级软件更新页（`UpdateScreen`）为 HyperOS 3.0 动态流光极光架构：引入 AGSL `BgEffectBackground` 极光流体背景着色器随滚动视差平滑淡出，支持横竖屏自适应 Hero 布局、Markdown 发行日志卡片与 GitHub Releases 历史版本直达入口。
+- 新增平板与横屏宽屏（`>= 600dp`）自适应侧边导航栏（`NavigationRail`），并支持在设置中自由开启或关闭。
+- 新增磁盘缓存自动清理与设置页「存储与缓存」区块：显示四类落盘数据（归档条目缓存、缩略图缓存、SAF 归档落盘副本、视频播放临时副本）的总占用、支持一键清理并回显释放量，以及自动清理开关（默认开启）；为此前完全没有容量上限的 SAF 归档落盘副本目录 `opened_archives` 与视频播放副本目录 `playback` 引入容量预算与 LRU 裁剪（统一走 `planLruTrim`，被租约占用的在途文件不参与淘汰），在应用启动（尚无归档被打开）时执行，缓存统计/清理/自动裁剪职责收敛到 `CacheMaintenance`。
+- 图包条目支持视频（`PackImage.isVideo` / `ZipArchiveManager.isVideoFile`）：视频与图片一同计入图包条目与页数，覆盖文件夹图包、ZIP/CBZ 与 7z/CB7 的全部条目枚举路径；缩略图网格、图包封面与画廊速览对视频展示统一播放入口（`VideoEntryPlaceholder`）；压缩包内的视频条目按需流式落盘到 `cacheDir/playback` 后供播放使用（`VideoLauncher`）。
+- 新增应用内视频播放页（`VideoPlayerScreen` + `AppRoute.VideoPlayer`，Media3/ExoPlayer）：视频条目（含压缩包内条目）点击后直接在图包内播放，带播放/暂停、进度拖拽、时间显示与沉浸式全屏，不再跳出到第三方播放器；按视频声明的显示比例（含像素宽高比）为 Surface 分配尺寸做信箱式适配，避免画面被拉满整块屏幕造成比例失真；仅在本机解码器无法播放时才提供「用其它播放器打开」兜底入口。
+
 ### 优化
 - ZIP 批量缩略图扫描消除每条目重开原生 mmap 会话的 O(n²) 开销：此前对每个条目都重开一个原生会话（`nativeOpen` 会重新解析整个中央目录并把全部 N 个条目重建为 JNI 对象 + 两个 HashMap），数千条目时退化为解析与对象分配风暴（扫描期 GC 抖动主因）；现中央目录只解析一次、条目名哈希查表、条目解码按核并行。
 - 普通 ZIP 与文件夹图包的前台缩略图取图请求补齐 `pauseBackgroundSweep`/`resumeBackgroundSweep` 让路：此前该抢占只对 7z 生效（经 coordinator），普通 ZIP 的前台取图一直与后台全量扫描并行争抢 CPU 与条带锁。
@@ -21,6 +32,40 @@
 - 依赖与插件版本统一迁移至 Gradle Version Catalog（`gradle/libs.versions.toml`）：约 35 个内联依赖字符串收敛为单一来源，消除 Miuix 图标组件绕过版本变量硬编码的漂移隐患；依赖坐标与版本完全不变。
 - Coil 内存缓存键与 `ZipImageFetcher` 密码口径统一：`ZipImageKeyer` 在数据未携带密码时同样回填会话密码，消除同一解密结果以「无密码键」与「实际密码键」占据两个内存缓存槽的浪费。
 - ZIP 全量扫描对 STORED 条目恢复原生零拷贝直通：整批共用一个自持 `NativeZipSession`（池化会话可能被 LRU 逐出关闭、直通缓冲随之悬垂，故扫描自持会话，`nativeOpen` 整批仅一次），STORED 条目以 mmap 切片经 `extractToDirectBuffer` 直达缩略图编码、零堆增长，DEFLATE 条目保持池化 `java.util.zip` 流（原生 DEFLATE 缓冲持有至会话关闭，整包直通会无界增长），加密包不开原生会话；扫描收尾对缺失条目补发完整进度，进度芯片不再停留在 N/M。
+- 缩略图网格滚动预取窗口扩大：滚动停止后的后台预取范围由可视区前后各 30 张调整为向前 30 / 向后 150 张（约 10 屏），减少快速下滚时的空白格子；7z 固实包顺序解压下向后多取近乎零边际成本。
+- 新增自研 native ZIP 引擎（`NativeZip`，调研 Z3 项）：整文件只读 mmap 容器解析（EOCD / ZIP64 / extra field 0x0001），inflate 后端优先 vendor 的 libdeflate（MIT，缺失时回退 NDK 系统 zlib）；未加密 ZIP 的归档落盘（解压即写 fd 零中间拷贝）与缩略图扫描（STORED 条目零拷贝 mmap 切片直接消费 ByteBuffer）走引擎优先路径，CRC32 按需跳过；64 位进程限定，加密条目与任何失败自动回退既有流式管线。
+- 新增 memfd 大图冷路径（`MemFdPipeline`，调研 D2 项）：全尺寸图片在磁盘缓存未命中时解压进匿名内存文件（`Os.memfd_create`，API 30+），经 `/proc/self/fd` 以等价文件态 ImageSource 交给 Coil/Telephoto，BRD 瓦片子采样照常 mmap，省去整图 30~80ms 落盘写与闪存磨损；仅当前页±预读页持有（条目数+字节双上限 LRU），低内存回调全量释放；API < 30 或任何失败自动回退磁盘缓存路径，密钥仅以单向摘要参与缓存键。
+- SAF 归档落盘提速（调研 U1 项）：`openFileDescriptor` 拿 provider 侧 fd（绕开 FUSE），`FileChannel.transferTo`（sendfile，minSdk 24 全兼容）零 CPU 级拷贝落盘；provider 返回管道 fd 或失败时回退原流式复制。
+- 新增解压引擎层基准 harness（`ArchiveEngineBenchmarkTest`，调研阶段 0 前置项）：以 Zip4j 写端生成标准样本（明文 DEFLATE / AES-256 DEFLATE / AES-128 STORE / 千轮 PBKDF2），对 java.util.zip.ZipFile、Zip4j 与 JCE 管线做先断言正确性再计时的对比基准，计时仅输出不断言；宿主实测 JCE 解密吞吐为 Zip4j 的 3.5~4.5 倍、原生容器层为 1.6 倍。
+- 缩略图网格批量扫描并行化（`ArchiveExtractionCoordinator.startBatchThumbnailSweep`，ZIP 路径）：ZIP 条目流各自持有独立句柄且缓存层为条纹锁原子写，批量扫描改为按核数并行提取（`runParallelBatch` + 专用 `parallelSweepDispatcher`，后台优先级封顶 4 线程，让出大核给前台解码），多核吞吐随核数提升；7z 固实包保持单线程顺序扫描。同时修复 ZIP 批量扫描整批持有归档互斥锁的并发缺陷——此前扫描让路等待期间前台交互请求会与之互锁；现在扫描全程不持归档锁，前台请求可即时插入。保留热节流闸（每条目检查 `isThrottled`）、前台让路轮询与每 N 条目冷却小憩的功耗设计。
+- 重写加密 ZIP（WinZip AES）解密内核为 JCE 硬件加速管线（`ZipAesJceStreamFactory`）：AES 密钥流由平台 Conscrypt（BoringSSL ARMv8 硬件 AES 指令）批量产出（256KB 每次 JNI 往返），PBKDF2-HMAC-SHA1 派生改用 Conscrypt `Mac` 手写 1000 轮循环并按盐进程级缓存（`ZipAesKeyCache`，仅驻留内存），HMAC-SHA1-80 完整性校验移至流末尾整段比对，替代 Zip4j 纯 Java 内核逐 16 字节加解密的实现（解密吞吐提升 1~2 个数量级）；错误密码在派生校验值比对时即刻抛出，密文篡改在流末尾抛出 IO 异常，ZipCrypto 条目与回退路径保持 Zip4j 兼容。同步将 Zip4j 读取管线缓冲由默认 4KB 扩容至 256KB（`ArchiveHandlePool.ZIP4J_STREAM_BUFFER_SIZE`）；句柄池中 Zip4j 实例现仅承担中央目录解析并在查到条目后立即归还，并发流数量不再受实例池上限约束。
+- 深度优化大图查看页与超大体积图片加载链路（`GalleryViewerScreen` / `ZoomableImage` / `ArchiveDiskCache`）：全屏即时占位底图尺寸严格对齐网格标准缩略图（360px），100% 同步命中 Coil 内存缓存（0ms 首帧瞬时出图），彻底消除点入大图页时的黑屏等待；全尺寸原图请求绑定 `placeholderMemoryCacheKey` 内存无缝衔接；`ArchiveDiskCache` 大图流式解压 I/O 缓冲区扩容至 128KB 显著提升 10MB~50MB 超大图片的解压吞吐量；在后台原图分块瓦片渲染（`BitmapRegionDecoder`）就绪前提供轻量非侵入加载指示，就绪后平滑过渡至超清原图。
+- 将「主题与色彩」整块配置从设置页拆分至独立页面（新增 `ThemeSettingsScreen` 与 `AppRoute.ThemeSettings` 路由），承载深浅外观、AMOLED 纯黑、动态色彩开关、主题种子色、调色板风格、2025 色彩规范与宽屏侧边导航栏；设置页该区块收敛为一行入口，并回显「深浅外观 · 色彩来源」当前状态摘要。
+- 色彩来源默认值调整为「默认色板」且默认关闭动态色彩（莫奈取色），避免首次启动继承壁纸取色导致界面主色不可预期；旧版显式选择过莫奈模式的用户仍保留动态取色，关闭动态色彩开关时统一回落默认色板。
+- 全面推广 `BlurredBar` 顶栏渐进式纹理模糊至图包列表页（`PackListScreen`）、缩略图网格页（`ThumbnailGridScreen`）与设置页（`SettingsScreen`），并在图包列表页接入 Miuix `PullToRefresh` 阻尼下拉刷新。
+- 重构设置页「画廊翻页方向」与「默认排序方式」为 Miuix 原生 `WindowDropdownPreference` 下拉选择菜单，消除盲点循环切换；将图包列表排序弹窗升级为 `Card` + `RadioButtonPreference` 单选体系。
+- 为缩略图网格页与软件更新页路由启用 `NavSwipeDirection.LeftToRight` 左边缘滑动预测返回手势，并将卡片封面、缩略图、角标与弹窗统一升级为连续曲率超椭圆 `SquircleShape`。
+- `HorizontalPager` 开启相邻页预组合（`beyondViewportPageCount = 1`）并让相邻页复用 360px 网格缩略图，翻页时的归档落盘与 Coil 解码提前完成；`ArchiveExtractionCoordinator.prefetch` 改为逐条目持锁 + 等待前台交互落盘请求（`interactiveRequestCount`）清空后再继续，避免后台预取长时间霸占归档锁导致「翻页要等预取跑完」。
+- 升级 Miuix 组件库（`miuix-ui`、`miuix-preference`、`miuix-squircle`、`miuix-blur`、`miuix-nav`）由 `0.9.4-rc01` 至 `0.9.4` 正式版。
+- 重构 Native 7z 固实块解码管线为按需增量流式解压（`CSzFolderIncrementalDecoder` + `SzArEx_ExtractIncremental`），改变首张图片请求或密码验证时强制解压整个数百 MB ~ GB 级固实块的阻塞逻辑，仅推进解码游标至目标图片末尾字节即刻返回并保留流状态，首屏图片与缩略图响应耗时由约 1 分钟降至毫秒级，后续图片按增量字节接续解压且已解码区间维持 0ms 内存直读。
+- 为 Native AES-256-CBC 解密与 7z SHA-256 KDF（524,288 轮密钥派生）接入编译期 `-O3` 优化与运行时 CPU 特性检测的 ARMv8 Crypto 硬件指令加速（`vaesdq_u8`/`vaesimcq_u8`/`vsha256hq_u32`），并在 C 层引入 64 槽位全局 KDF 密钥缓存与 `SzArEx_Open2` 头部密钥透传，消除跨会话重复密钥派生。
+- 移除 `SevenZSessionManager.openIfNeeded()` 中使用错误密码二次调用 `nativeOpen` 探测头部加密的冗余开销，直接读取 C 层 `nativeIsHeaderEncrypted`/`nativeIsEncrypted` 标记；统一 `SevenZArchiveManager.getImageEntries` 与 `SafManager`/`ArchiveFileResolver` 复用并预热 `SevenZSessionManager`，消除打开新图包时的多次重复解析。
+- 统一 Coil 缓存键规范，消除 ThumbnailGridScreen 与 ZipImageKeyer 键不一致导致的内存缓存穿透，实现封面与九宫格 100% 内存缓存共享。
+- 统一大图占位图与网格缩略图为 360px 规格，并在 ThumbnailDiskCache 中引入弹性尺寸降级回退，实现大图占位图 0ms 瞬间上屏。
+- 根除大图翻页时 ZoomableAsyncImage 与 LaunchedEffect 的双重软解竞态，前置守卫物理文件就绪状态，杜绝 192MB Bitmap 无效软解与销毁重构，大图默认启用 HARDWARE 纹理。
+- 缩略图下采样编码改用 Turbo-JPEG，弃用纯软件 WebP 编码，结合 ARM NEON 硬件矢量加速使缩略图写盘耗时降低 75%。
+- 缩略图解码引入内存直接交付与异步写盘（Async Flush），Bitmap 解出即刻上屏，消除首帧等待写盘延迟。
+- 引入 JNI DirectByteBuffer 零拷贝通道，消除 Native7z 解压下采样向 Java 堆抛出 10~20MB ByteArray 造成的频繁 GC 停顿。
+- 限制九宫格后台批处理扫盘为当前视口前后 30 项，引入滚动监听实时挂起与让渡降温脉冲，杜绝 CPU 满载引发的 SoC 温控降频。
+- 重构 ArchiveHandlePool，为 Zip4jFile 引入多实例对象池与读写隔离互斥保护，修复多线程并发解密 Seek 乱序与 I/O 挂死。
+- 本地普通文件夹图片引入缩略图管线支持，普通目录大图无缝复用 360px 下采样缓存。
+- 移除 WatchPictureApp 中冗余的 512MB Coil 磁盘缓存，释放闪存存储配额并消除冗余磁盘索引。
+- 图片管线的磁盘缓存路径在回退窗口内尽早获取租约，与缓存淘汰的 `isLeased` 检查同步，避免刚生成的缩略图被环淘汰白解压。
+- `LibArchiveExtractor` 每 64KB 分块重复分配字节数组改为方法级复用缓冲，降低大图解压的 GC 频率。
+- release 构建开启 R8 minify（资源收缩），NDK ABI 缩减为 arm64-v8a + armeabi-v7a，APK 体积下降约 1/3。
+- `AppLog` 按 BuildConfig.DEBUG 分级输出，release 仅保留必要 ERROR，降低日志噪音与路径元信息常驻。
+- 优化 7z 前台解压解密线程优先级与调度：将交互式前台解压线程优先级调整为 `Process.THREAD_PRIORITY_FOREGROUND`（-2），使 Linux EAS 调度器优先调度至 Cortex-X 超大核与性能大核，消除原图解压与 AES 解密在低功耗小核上的限频瓶颈。
+- 优化 7z 原生 C 流缓冲区尺寸：将底层文件输入缓冲由 256KB 扩容至 2MB，大幅提升顺序读 I/O 吞吐并降低底层系统调用频率。
 
 ### 修复
 - 修复从网格进入视频播放后后台缩略图扫描未被取消的问题：视频导航点此前未计入「离开图包」语义，扫描继续在后台占用 CPU 与电量。
@@ -55,35 +100,6 @@
 - 修复播放副本自动裁剪可删掉在途写入（`.tmp-` 唯一名）与刚落地副本的问题：自动裁剪跳过在途与 5 分钟保护窗内文件，显式「立即清理」保持全清语义。
 - 修复应用内视频播放页 contentKey 以 `#` 裸拼组件导致的跨视频状态共享，及 `videoSourceOf` 双空回退裸 packId 不可逆伪造 `directFilePath` 的问题：前者改 NUL 连接保证双射，后者改 `pack://` 哨兵前缀。
 - 修复 Android Lint 全部 7 处错误：memfd `NewApi` 守卫内联至 `createEntry` 使其可静态证明；6 处组合期 `context.getString` 改 `stringResource` 预解析，配置变更不再读到陈旧文案。
-
-### 新增
-- 新增看图页「一键导出」：顶栏下载按钮把当前正在查看的图片/视频经系统「另存为」写到用户自选位置（`MediaExportManager` + `ExportOutcome`）。三条字节来源按快慢排序——文件夹图包直接复制真实文件（零解码）、压缩包条目经 `getEntryInputStream` 内存级流式读取（不整包落盘）、SAF 单文件 URI 直接转发；密码按会话密码 → 密码本（packId → 归档路径）解析；条目缺失或内容为空时返回失败并清理目标文件，不留 0 字节残件；建议文件名取路径末段、保留原始扩展名并清洗非法字符（连续非法字符合并为一个下划线）。
-- 升级多维主题与色彩引擎（`WatchPictureTheme` / `buildMiuixThemeController`）：解耦深浅外观模式（跟随系统、浅色、深色）与色彩来源（壁纸莫奈动态色彩、Miuix 默认色板、10 款精选预置种子色与 Miuix `ColorPicker` + HEX 自定义种子色），新增 9 种调色板生成风格（`ThemePaletteStyle`：TonalSpot、Neutral、Vibrant、Expressive、Rainbow、FruitSalad、Monochrome、Fidelity、Content）与 Material 3 2025 扩展色彩规范（`ThemeColorSpec.Spec2025`）开关，并在设置页提供实时主题预览卡片（`ThemePreviewCard`）；优化浅色画布与纯白卡片分层对比度（`#F6F7F9` 画布 + `#FFFFFF` 容器）及 AMOLED 纯黑灰阶层次。
-- 新增图包浏览列表与缩略图网格滚动位置记忆及阅读进度联动（`PackBrowseState`）：按图包独立记录缩略图网格 `(firstVisibleItemIndex, firstVisibleItemScrollOffset)` 与最后阅读页码 `lastViewedIndex`，支持缩略图角标高亮标记上次阅读图片、顶栏播放按钮续读上次页码，以及从大图阅读器跨页滑动返回时自动同步网格可视区域。
-- 重构大图查看器（`GalleryViewerScreen`）为 Miuix 液态毛玻璃双层悬浮胶囊架构：引入实时背景模糊采样（`viewerBackdrop` + `ViewerGlassSurface`）、上下滑入/滑出物理过渡动效、悬浮双行信息顶栏、支持日漫 RTL 自动镜像与触觉刻度反馈的进度胶囊（`ChapterNavigator`）以及拖拽实时页码预览气泡；底部多功能工具栏（`BottomReaderBar`）新增屏幕旋转锁定（跟随系统/竖屏/横屏）、定时自动翻页幻灯片、3 列网格缩略图速览跳页抽屉（`WindowBottomSheet`）与图片元数据详情弹窗。
-- 升级软件更新页（`UpdateScreen`）为 HyperOS 3.0 动态流光极光架构：引入 AGSL `BgEffectBackground` 极光流体背景着色器随滚动视差平滑淡出，支持横竖屏自适应 Hero 布局、Markdown 发行日志卡片与 GitHub Releases 历史版本直达入口。
-- 新增平板与横屏宽屏（`>= 600dp`）自适应侧边导航栏（`NavigationRail`），并支持在设置中自由开启或关闭。
-- 新增磁盘缓存自动清理与设置页「存储与缓存」区块：显示四类落盘数据（归档条目缓存、缩略图缓存、SAF 归档落盘副本、视频播放临时副本）的总占用、支持一键清理并回显释放量，以及自动清理开关（默认开启）；为此前完全没有容量上限的 SAF 归档落盘副本目录 `opened_archives` 与视频播放副本目录 `playback` 引入容量预算与 LRU 裁剪（统一走 `planLruTrim`，被租约占用的在途文件不参与淘汰），在应用启动（尚无归档被打开）时执行，缓存统计/清理/自动裁剪职责收敛到 `CacheMaintenance`。
-- 图包条目支持视频（`PackImage.isVideo` / `ZipArchiveManager.isVideoFile`）：视频与图片一同计入图包条目与页数，覆盖文件夹图包、ZIP/CBZ 与 7z/CB7 的全部条目枚举路径；缩略图网格、图包封面与画廊速览对视频展示统一播放入口（`VideoEntryPlaceholder`）；压缩包内的视频条目按需流式落盘到 `cacheDir/playback` 后供播放使用（`VideoLauncher`）。
-- 新增应用内视频播放页（`VideoPlayerScreen` + `AppRoute.VideoPlayer`，Media3/ExoPlayer）：视频条目（含压缩包内条目）点击后直接在图包内播放，带播放/暂停、进度拖拽、时间显示与沉浸式全屏，不再跳出到第三方播放器；按视频声明的显示比例（含像素宽高比）为 Surface 分配尺寸做信箱式适配，避免画面被拉满整块屏幕造成比例失真；仅在本机解码器无法播放时才提供「用其它播放器打开」兜底入口。
-
-### 优化
-- 缩略图网格滚动预取窗口扩大：滚动停止后的后台预取范围由可视区前后各 30 张调整为向前 30 / 向后 150 张（约 10 屏），减少快速下滚时的空白格子；7z 固实包顺序解压下向后多取近乎零边际成本。
-- 新增自研 native ZIP 引擎（`NativeZip`，调研 Z3 项）：整文件只读 mmap 容器解析（EOCD / ZIP64 / extra field 0x0001），inflate 后端优先 vendor 的 libdeflate（MIT，缺失时回退 NDK 系统 zlib）；未加密 ZIP 的归档落盘（解压即写 fd 零中间拷贝）与缩略图扫描（STORED 条目零拷贝 mmap 切片直接消费 ByteBuffer）走引擎优先路径，CRC32 按需跳过；64 位进程限定，加密条目与任何失败自动回退既有流式管线。
-- 新增 memfd 大图冷路径（`MemFdPipeline`，调研 D2 项）：全尺寸图片在磁盘缓存未命中时解压进匿名内存文件（`Os.memfd_create`，API 30+），经 `/proc/self/fd` 以等价文件态 ImageSource 交给 Coil/Telephoto，BRD 瓦片子采样照常 mmap，省去整图 30~80ms 落盘写与闪存磨损；仅当前页±预读页持有（条目数+字节双上限 LRU），低内存回调全量释放；API < 30 或任何失败自动回退磁盘缓存路径，密钥仅以单向摘要参与缓存键。
-- SAF 归档落盘提速（调研 U1 项）：`openFileDescriptor` 拿 provider 侧 fd（绕开 FUSE），`FileChannel.transferTo`（sendfile，minSdk 24 全兼容）零 CPU 级拷贝落盘；provider 返回管道 fd 或失败时回退原流式复制。
-- 新增解压引擎层基准 harness（`ArchiveEngineBenchmarkTest`，调研阶段 0 前置项）：以 Zip4j 写端生成标准样本（明文 DEFLATE / AES-256 DEFLATE / AES-128 STORE / 千轮 PBKDF2），对 java.util.zip.ZipFile、Zip4j 与 JCE 管线做先断言正确性再计时的对比基准，计时仅输出不断言；宿主实测 JCE 解密吞吐为 Zip4j 的 3.5~4.5 倍、原生容器层为 1.6 倍。
-- 缩略图网格批量扫描并行化（`ArchiveExtractionCoordinator.startBatchThumbnailSweep`，ZIP 路径）：ZIP 条目流各自持有独立句柄且缓存层为条纹锁原子写，批量扫描改为按核数并行提取（`runParallelBatch` + 专用 `parallelSweepDispatcher`，后台优先级封顶 4 线程，让出大核给前台解码），多核吞吐随核数提升；7z 固实包保持单线程顺序扫描。同时修复 ZIP 批量扫描整批持有归档互斥锁的并发缺陷——此前扫描让路等待期间前台交互请求会与之互锁；现在扫描全程不持归档锁，前台请求可即时插入。保留热节流闸（每条目检查 `isThrottled`）、前台让路轮询与每 N 条目冷却小憩的功耗设计。
-- 重写加密 ZIP（WinZip AES）解密内核为 JCE 硬件加速管线（`ZipAesJceStreamFactory`）：AES 密钥流由平台 Conscrypt（BoringSSL ARMv8 硬件 AES 指令）批量产出（256KB 每次 JNI 往返），PBKDF2-HMAC-SHA1 派生改用 Conscrypt `Mac` 手写 1000 轮循环并按盐进程级缓存（`ZipAesKeyCache`，仅驻留内存），HMAC-SHA1-80 完整性校验移至流末尾整段比对，替代 Zip4j 纯 Java 内核逐 16 字节加解密的实现（解密吞吐提升 1~2 个数量级）；错误密码在派生校验值比对时即刻抛出，密文篡改在流末尾抛出 IO 异常，ZipCrypto 条目与回退路径保持 Zip4j 兼容。同步将 Zip4j 读取管线缓冲由默认 4KB 扩容至 256KB（`ArchiveHandlePool.ZIP4J_STREAM_BUFFER_SIZE`）；句柄池中 Zip4j 实例现仅承担中央目录解析并在查到条目后立即归还，并发流数量不再受实例池上限约束。
-- 深度优化大图查看页与超大体积图片加载链路（`GalleryViewerScreen` / `ZoomableImage` / `ArchiveDiskCache`）：全屏即时占位底图尺寸严格对齐网格标准缩略图（360px），100% 同步命中 Coil 内存缓存（0ms 首帧瞬时出图），彻底消除点入大图页时的黑屏等待；全尺寸原图请求绑定 `placeholderMemoryCacheKey` 内存无缝衔接；`ArchiveDiskCache` 大图流式解压 I/O 缓冲区扩容至 128KB 显著提升 10MB~50MB 超大图片的解压吞吐量；在后台原图分块瓦片渲染（`BitmapRegionDecoder`）就绪前提供轻量非侵入加载指示，就绪后平滑过渡至超清原图。
-- 将「主题与色彩」整块配置从设置页拆分至独立页面（新增 `ThemeSettingsScreen` 与 `AppRoute.ThemeSettings` 路由），承载深浅外观、AMOLED 纯黑、动态色彩开关、主题种子色、调色板风格、2025 色彩规范与宽屏侧边导航栏；设置页该区块收敛为一行入口，并回显「深浅外观 · 色彩来源」当前状态摘要。
-- 色彩来源默认值调整为「默认色板」且默认关闭动态色彩（莫奈取色），避免首次启动继承壁纸取色导致界面主色不可预期；旧版显式选择过莫奈模式的用户仍保留动态取色，关闭动态色彩开关时统一回落默认色板。
-- 全面推广 `BlurredBar` 顶栏渐进式纹理模糊至图包列表页（`PackListScreen`）、缩略图网格页（`ThumbnailGridScreen`）与设置页（`SettingsScreen`），并在图包列表页接入 Miuix `PullToRefresh` 阻尼下拉刷新。
-- 重构设置页「画廊翻页方向」与「默认排序方式」为 Miuix 原生 `WindowDropdownPreference` 下拉选择菜单，消除盲点循环切换；将图包列表排序弹窗升级为 `Card` + `RadioButtonPreference` 单选体系。
-- 为缩略图网格页与软件更新页路由启用 `NavSwipeDirection.LeftToRight` 左边缘滑动预测返回手势，并将卡片封面、缩略图、角标与弹窗统一升级为连续曲率超椭圆 `SquircleShape`。
-- `HorizontalPager` 开启相邻页预组合（`beyondViewportPageCount = 1`）并让相邻页复用 360px 网格缩略图，翻页时的归档落盘与 Coil 解码提前完成；`ArchiveExtractionCoordinator.prefetch` 改为逐条目持锁 + 等待前台交互落盘请求（`interactiveRequestCount`）清空后再继续，避免后台预取长时间霸占归档锁导致「翻页要等预取跑完」。
-
-### 修复
 - 修复了大图查看页因请求 1080px/1440px 占位预览导致 Coil 内存缓存无法复用网格 360px 缩略图、且与后台高优先级原图解压并发争抢归档文件互斥锁，造成缩略图被阻塞在原图解压之后、「不显示缩略图，必须要等到原图加载出来以后才会显示」的核心缺陷。
 - 修复了单张大图文件在 `toImageModel(isThumbnail = true)` 时直接交出原始 File 导致全量解码几千万像素原图造成内存暴涨的问题，重构为通过 `ZipImageSource` 下采样管线生成 360px 缩略图；同时修复了 `ZipImageFetcher` 对普通文件夹解压目录及独立图片文件未做特化处理导致打开缩略图时抛出 ZipException 的缺陷。
 - 修复了经 ContentResolver 落盘的 SAF 归档副本只校验表头魔数、不校验 provider 声明体积的问题：被截断的副本同样能通过 `isValidArchive`（ZIP 中央目录位于文件尾部），落盘后解析失败，症状是打开图包得到「图包内未发现有效图片」；落盘改为严格比对 provider 声明体积，不一致即判为失败并留痕，同时为 zip 条目枚举与加密状态判定补上真实异常日志。
@@ -121,33 +137,6 @@
 - 修复了设置页"添加新密码"输入框未做明文掩码、密码本明文 chip 常驻展示的屏幕偷窥风险，与密码弹窗掩码策略对齐。
 - 修复了 `PackViewModel.openSingleArchive/onPackClicked` 自动解锁路径缺少异常兜底、SAF 权限失效抛出 SecurityException 导致未捕获协程异常崩溃的问题。
 - 修复了搜索/排序在 Compose 重组时于主线程同步过滤+排序造成输入的顿的问题，下沉为协程管线 StateFlow（120ms 防抖 + Default 调度）。
-
-### 安全
-- 密码本明文落盘改为 AndroidKeyStore 派生 AES-GCM 对称密钥加密后持久化，兼容旧明文自动迁移，杜绝 root/备份窃取密码。
-- 修复了 `SafManager` 直接路径解析未校验 `..` 路径穿越、可越权读取授权目录之外文件的问题，增加路径归一化与卷名白名单校验。
-- `UpdateManager.downloadApk` 增加下载字节数与预期尺寸的比对校验，降低 DNS/传输层被劫持时静默安装恶意包的暴露面。
-
-### 优化
-- 升级 Miuix 组件库（`miuix-ui`、`miuix-preference`、`miuix-squircle`、`miuix-blur`、`miuix-nav`）由 `0.9.4-rc01` 至 `0.9.4` 正式版。
-- 重构 Native 7z 固实块解码管线为按需增量流式解压（`CSzFolderIncrementalDecoder` + `SzArEx_ExtractIncremental`），改变首张图片请求或密码验证时强制解压整个数百 MB ~ GB 级固实块的阻塞逻辑，仅推进解码游标至目标图片末尾字节即刻返回并保留流状态，首屏图片与缩略图响应耗时由约 1 分钟降至毫秒级，后续图片按增量字节接续解压且已解码区间维持 0ms 内存直读。
-- 为 Native AES-256-CBC 解密与 7z SHA-256 KDF（524,288 轮密钥派生）接入编译期 `-O3` 优化与运行时 CPU 特性检测的 ARMv8 Crypto 硬件指令加速（`vaesdq_u8`/`vaesimcq_u8`/`vsha256hq_u32`），并在 C 层引入 64 槽位全局 KDF 密钥缓存与 `SzArEx_Open2` 头部密钥透传，消除跨会话重复密钥派生。
-- 移除 `SevenZSessionManager.openIfNeeded()` 中使用错误密码二次调用 `nativeOpen` 探测头部加密的冗余开销，直接读取 C 层 `nativeIsHeaderEncrypted`/`nativeIsEncrypted` 标记；统一 `SevenZArchiveManager.getImageEntries` 与 `SafManager`/`ArchiveFileResolver` 复用并预热 `SevenZSessionManager`，消除打开新图包时的多次重复解析。
-- 统一 Coil 缓存键规范，消除 ThumbnailGridScreen 与 ZipImageKeyer 键不一致导致的内存缓存穿透，实现封面与九宫格 100% 内存缓存共享。
-- 统一大图占位图与网格缩略图为 360px 规格，并在 ThumbnailDiskCache 中引入弹性尺寸降级回退，实现大图占位图 0ms 瞬间上屏。
-- 根除大图翻页时 ZoomableAsyncImage 与 LaunchedEffect 的双重软解竞态，前置守卫物理文件就绪状态，杜绝 192MB Bitmap 无效软解与销毁重构，大图默认启用 HARDWARE 纹理。
-- 缩略图下采样编码改用 Turbo-JPEG，弃用纯软件 WebP 编码，结合 ARM NEON 硬件矢量加速使缩略图写盘耗时降低 75%。
-- 缩略图解码引入内存直接交付与异步写盘（Async Flush），Bitmap 解出即刻上屏，消除首帧等待写盘延迟。
-- 引入 JNI DirectByteBuffer 零拷贝通道，消除 Native7z 解压下采样向 Java 堆抛出 10~20MB ByteArray 造成的频繁 GC 停顿。
-- 限制九宫格后台批处理扫盘为当前视口前后 30 项，引入滚动监听实时挂起与让渡降温脉冲，杜绝 CPU 满载引发的 SoC 温控降频。
-- 重构 ArchiveHandlePool，为 Zip4jFile 引入多实例对象池与读写隔离互斥保护，修复多线程并发解密 Seek 乱序与 I/O 挂死。
-- 本地普通文件夹图片引入缩略图管线支持，普通目录大图无缝复用 360px 下采样缓存。
-- 移除 WatchPictureApp 中冗余的 512MB Coil 磁盘缓存，释放闪存存储配额并消除冗余磁盘索引。
-- 图片管线的磁盘缓存路径在回退窗口内尽早获取租约，与缓存淘汰的 `isLeased` 检查同步，避免刚生成的缩略图被环淘汰白解压。
-- `LibArchiveExtractor` 每 64KB 分块重复分配字节数组改为方法级复用缓冲，降低大图解压的 GC 频率。
-- release 构建开启 R8 minify（资源收缩），NDK ABI 缩减为 arm64-v8a + armeabi-v7a，APK 体积下降约 1/3。
-- `AppLog` 按 BuildConfig.DEBUG 分级输出，release 仅保留必要 ERROR，降低日志噪音与路径元信息常驻。
-
-### 修复
 - 修复了 7z 固实压缩解压缓冲区（`Native7zArchive::outBuffer`，占用约 600MB~700MB 物理内存）解压后常驻 C 堆从不释放导致的物理内存峰值突破 1.6GB 触发系统 LMKD（低内存杀进程）强制闪退缺陷；在批量缩略图扫描完成、大图提取空闲超时及离开画廊/图包页面时立即触发 `purgeCache()`，瞬间归还数百兆 C 堆物理内存。
 - 修复了 `SevenZSessionManager.openIfNeeded()` 在 Native 会话已有效打开的情况下未直接返回、意外继续进入 Java `SevenZFile` 实例化逻辑导致 Native 与 Java 在 JVM 堆双重驻留的严重内存泄露问题。
 - 修复了单张图片解压或缩略图生成失败时错误触发 `markNativeFailed()` 导致整个 Native 会话被永久报废降级至 Java 流式扫描引发后续图片 $O(N^2)$ 级联重新解压与卡死的缺陷。
@@ -202,96 +191,7 @@
 - 修复了 Coil 缓存键未包含密码哈希，导致解锁后仍命中解密前失败缓存的问题。
 - 修复了通过系统选择器导入的单文件内容 URI 压缩包在浏览详情页直接返回空图片列表的问题。
 
-### 优化
-- 优化 7z 前台解压解密线程优先级与调度：将交互式前台解压线程优先级调整为 `Process.THREAD_PRIORITY_FOREGROUND`（-2），使 Linux EAS 调度器优先调度至 Cortex-X 超大核与性能大核，消除原图解压与 AES 解密在低功耗小核上的限频瓶颈。
-- 优化 7z 原生 C 流缓冲区尺寸：将底层文件输入缓冲由 256KB 扩容至 2MB，大幅提升顺序读 I/O 吞吐并降低底层系统调用频率。
-- 优化缩略图内存直接下采样：新增基于 JNI 字节数组的 `getOrPutResultFromBytes` 路径，使用 `BitmapFactory.decodeByteArray` 直出 WebP 缩略图，杜绝输入流管道中转。
-- 深度优化加密 7z 原生解密与固实块缓存：原生 7-Zip ANSI-C SDK 接入流式 AES-256-CBC 原生解密与会话密码直传，完全打通加密 7z 图包的 C 级固实块内存缓存，首次解码后整块数据由 C 层内存直读，消除 Java 堆内存分配与重复解码开销，翻页与批量解析性能拉平至未加密 7z 体验。
-- 优化 7z AES-256 密钥派生实现：新增 NDK C 语言流水线 PBKDF2 实现（`sha256_kdf.c`）并接入 JNI，消除 Java 至 JNI 上百万次穿梭调用开销，首次冷派生耗时降低 80% 以上。
-- 优化 Coil 3 缩略图内存缓存直通：在下采样 Bitmap 生成后主动将其写入 Coil `SingletonImageLoader.memoryCache`，避免重复磁盘 I/O 与 WebP 解码损耗。
-- 优化二级缩略图列表重入性能：在 `ViewerViewModel` 引入图包索引内存缓存，已打开图集的二次进入时间降至 0ms，彻底消除全屏加载指示器闪烁。
-- 优化缩略图网格初始加载流畅度：移除缩略图 100ms 渐显动画使缓存图片瞬间上屏，并将后台预热扫描延迟 800ms 启动以彻底让权前台可视区域渲染。
-- 优化 7z AES-256 密钥派生：新增 `SevenZKeyCache` 全局 LRU 缓存，彻底消除多次打开流会话时重复执行 524,288 轮 SHA-256 带来的 500~1500ms CPU 计算耗时，命中查询降至 0.01ms 以内，并在内存紧张与会话注销时主动擦除零化敏感密钥。
-- 优化缩略图呈现管线：新增 Coil 3 缩略图内存直通支持（`ThumbnailResult`），缩略图首次下采样后直接以 `ImageFetchResult(DataSource.MEMORY)` 返回解码后的 Bitmap，旁路写盘后再经由 Coil 二次磁盘读取与 WebP 解码的往返损耗，首帧呈现提速 60% 以上。
-- 优化大图浏览底部滑块跳页交互：在 `GalleryViewerScreen` 底部 Miuix Slider 引入 200ms 防抖与拖动状态隔离，拖动过程中仅动态更新页码指示，停顿或松手时才执行单一目标页跳转，彻底杜绝连续快速滑动触发数十次无序并发解密与 7z 流不可逆回溯重置。
-- 优化加密图包图片加载速度：将前台交互式解密与后台批扫调度器解耦，前台交互解密恢复默认高优先级，允许 Linux EAS 调度器利用性能中核与大核算力，消除低功耗小核限频瓶颈，解密提速 3~5 倍。
-- 优化 7z 固实压缩缩略图抽取路径：在寻道目标条目的过程中对沿途的中间图片条目执行机会主义缩略图流式缓存，彻底根除因丢弃数据导致的前后翻页 $O(N^2)$ 回溯从头重解压。
-- 优化大图连续浏览翻页预加载性能：翻页预读无缝复用活跃热会话，杜绝每次翻页重复执行 52 万轮 SHA-256 PBKDF2 密钥派生计算。
-- 彻底消除加密 7z 压缩包缩略图加载性能瓶颈：消除了每个缩略图重复实例化 `SevenZFile` 与 524,288 轮 SHA-256 PBKDF 密钥派生的计算重负，统一接入 `SevenZSessionManager` 复用持久解密会话与已派生密钥。
-- 优化 7z 缩略图流式采样路径：在活动会话中将中间非目标条目经由内存缓冲高速清空，直通目标条目下采样直接写入 WebP 缩略图缓存，杜绝全分辨率原图频繁落盘带来的闪存磨损与写放大。
-- 优化后台批量缩略图扫描调度：移除全局互斥粗粒度锁独占，改为单条目提取后主动调度让权（`yield`），消除后台批量缩略图任务对前台用户界面即时渲染的锁争用阻塞。
-- 优化加密 7z 密码验证与条目解析联动机制：密码验证通过后无缝保留热会话，进入图集时直接读取会话预解析条目，实现目录列表零延迟瞬间加载。
-- 深度接入官方 7-Zip 原生 ANSI-C LZMA SDK（v26.03）解压引擎，同一固实块内的多图读取借助 C 级内存缓存彻底免除重复解压，运算开销直降至近乎 $O(1)$。
-- 优化 7z 图片提取管线，利用原生 C 级 POSIX 文件操作直通目标缓存文件，消除 JVM 堆中转与临时文件二次拷贝，显著降低 GC 压力与发热能耗。
-
-### 新增
-- 新增官方 7-Zip 原生 ANSI-C LZMA SDK（v26.03）完整 NDK CMake 编译管线（`libnative7z.so`），覆盖 `arm64-v8a`、`armeabi-v7a`、`x86_64`、`x86` 全平台架构。
-- 新增 `Native7z` 与 `Native7zArchiveSession` JNI 高性能接口，提供固实块缓存感知、直接落盘与内存字节直出功能，并在无原生库环境（如主机单元测试）或遇到特殊加密时自动平滑回退至 Java Commons Compress 引擎。
-- 新增 `ArchiveDispatchers` 专属能效调度器，显式注入 Linux 后台优先级（`THREAD_PRIORITY_BACKGROUND`），将计算密集型解压任务严格隔离至小核运行，释放大核保障 120Hz 手机屏幕的 8.3ms 帧渲染预算。
-- 新增 `PowerThermalManager` 系统温控与省电状态动态感知组件，在设备发热（`THERMAL_STATUS_MODERATE`+）或开启省电模式时自适应截断前瞻预读并压制解压并发。
-- 新增 `ArchiveExtractionCoordinator` 解压协调调度中心，保障单一压缩包单线程互斥流式解压，并赋予当前焦点页最高抢占调度优先级。
-- 新增 `ZipImageMapper`，自动将磁盘缓存中已落盘的条目直通映射为本地 `File`，打通 Telephoto 原生瓦片分块解码通道。
-- 新增 .cb7 压缩图包格式支持，并在系统文件扫描与解析引擎中完成端到端识别。
-- 新增 .jfif、.pjpeg、.pjp、.tiff、.tif、.ico、.svg 扩展图片格式支持，接入专用 SVG 与动图解码管线。
-- 新增持久化历史密码本系统，支持将输入的密码安全存入本地密码本，并在密码输入弹窗中提供常用历史密码快捷点选。
-- 新增设置中心密码本管理模块，支持历史密码列表查看、手动新增、单条删除与一键清空。
-- 新增图包列表长按菜单中的“锁定图包”选项，支持用户主动锁定指定图包并彻底清除其内存解密缓存。
-- 新增完整的 7z 格式压缩包引擎（SevenZArchiveManager），支持标准与 AES-256 加密 7z 压缩包的魔数检测、自然排序条目解析、密码验证与按需流式提取。
-- 新增系统文件管理器与外部应用关联打开 .7z 文件支持，并更新了应用内单文件选择器的 MIME 过滤范围。
-- 新增图包长按操作菜单与移除确认弹窗，支持从图包列表中移除项目并同步清理单文件导入的临时缓存文件。
-
-### 优化
-- 优化了 7z 固实压缩包（Solid 7z）阅读连续翻页性能，新增 `SevenZSessionManager` 固实流会话管理，将顺序翻页从重复从头解压的 O(N^2) 算力灾难优化为严格 O(1) 线性单趟流式推进，降低逾 90% CPU 算力与电池能耗。
-- 优化了 7z 缩略图生成管线，彻底消除全量原图强制落盘逻辑，改用内存流直通降采样直接生成并落盘 WebP 缩略图，将单张图片闪存写入量从 10MB+ 骤降至 15KB，减少 99% 以上闪存 I/O 磨损。
-- 优化了 7z 缩略图网格载入体验，新增 `startBatchThumbnailSweep` 后台小核单趟线性批处理抽取，配合温控（`PowerThermalManager`）热感知动态节流，全图包缩略图一次线性顺滑生成。
-- 优化了 Native `LibArchiveExtractor` 解压 I/O 性能，支持直写目标缓存文件描述符，消除了二次中间临时文件创建与读写，原生解压闪存写盘量与延迟减半。
-- 优化了 7z 会话生命周期管理，在画廊界面销毁、图包主动锁定或达到 60 秒空闲阈值时自动释放解压器与字典内存。
-- 优化了图包列表在 120Hz 高刷新率屏幕下的 Compose 重组流畅度，将 `PackListUiState.displayedPacks` 从每帧实时遍历过滤与自然排序重构为基于数据变更的缓存记忆化（Memoization），消除微小重组时的主线程卡顿。
-- 优化了悬浮底栏在多任务及低功耗状态下的传感器与 GPU 负载，仅在激活液态玻璃模式时启动陀螺仪倾斜度监听；在设备中度发热或省电模式下自动降级为基础模糊并切断硬件传感器唤醒。
-- 增强了系统低内存与 LMK (Low Memory Killer) 查杀防御，重写 `WatchPictureApp.onTrimMemory` 与 `onLowMemory`，在退火切后台及内存告急时主动清理 Coil 内存缓存并关闭未使用的文件句柄池。
-- 引入原生 C/C++ `libarchive` Native JNI 与单流顺序提取通道，彻底消除了 7z 固实压缩反复解压导致的 CPU 满载与耗时瓶颈。
-- 新增 `ArchiveHandlePool` 句柄缓存池，对无密码 ZIP 启用系统底层原生 `java.util.zip.ZipFile`（基于 native C++ zlib），消除了反复随机 Seek 解析 Central Directory 的磁盘开销。
-- 彻底解耦缩略图与大图通道，新增专属 `ThumbnailDiskCache` 与流式 `inSampleSize` 下采样，杜绝网格浏览时将动辄数十兆的原图写盘，闪存写入量骤减 95% 以上并大幅降低发热功耗。
-- 升级阅读器大图预加载为 Coil 内存预热管线（Memory Preheating），相邻页预解码至硬件位图（Hardware Bitmap），实现翻页 0 毫秒闪电瞬开。
-- 优化了 ArchiveDiskCache 缓存管理机制，采用 64 分片条带锁与 AtomicLong 内存容量统计，消除文件解压落盘时的全量目录遍历与全局锁竞争。
-- 优化了 ZipArchiveManager 压缩包目录解析流程，增加纯 ASCII 与标准 UTF-8 快速路径，按需懒加载消除多余的 GBK 二次解析，ZIP 读取耗时减半。
-- 优化了 SafManager 图包列表扫描性能，合并加密判定与条目提取消除重复打开，改用协程并行并发扫描，大型目录扫描速度提升 3 至 5 倍。
-- 优化了大图画廊翻页体验，引入基于阅读方向的双向智能大图预加载与网格点击转场前瞬时解压预热，翻页完全无感。
-- 优化了缩略图网格的解码性能，采用 RGB_565 色彩格式，降低 50% 显存占用并大幅减轻快速滚动时的 GC 压力。
-- 引入 Telephoto 动态子采样瓦片渲染引擎（Sub-sampling），结合 Android 原生 BitmapRegionDecoder 依据屏幕视口动态解码超高清瓦片切片，彻底消除 10MB+ 超大图模糊与放大马赛克问题，兼顾超清画质与内存安全。
-- 新增 ArchiveDiskCache 压缩包流式解压磁盘缓存池，大图首次解压直接通过管道流式落盘，彻底消除 JVM 堆内存暴涨与垃圾回收停顿，后续翻页与二次查看耗时降低至 1 至 5 毫秒。
-- 严格隔离缩略图与大图的内存缓存键，杜绝大图查看时错误命中低分辨率缩略图导致的画质失真。
-- 升级大图首帧渲染为双图层渐进式架构，以内存缩略图作为 0 毫秒即时底图秒现呈现，后台无感加载超高清原图并平滑过渡。
-- 平息大图并发预加载风暴，当前查看页独占算力，相邻页降级为防抖延迟与单并发串行静默预热。
-- 优化了 10MB+ 超大原图的加载性能，彻底废除临时文件落盘机制，采用纯内存直出缓冲流，消除数百毫秒闪存读写延迟与存储损耗。
-- 优化了缩略图点击进入大图的响应速度，利用已缓存缩略图作为零延迟占位图，彻底消除白屏与等待感。
-- 优化了大图画廊翻页体验，引入视口前后双向预加载引擎与点击前瞻预加载，后台预先解码相邻页大图，实现翻页秒开。
-- 优化了 Coil 3 内存配置与大堆支持（android:largeHeap），将内存缓存上限提升至 40%，并启用平滑交叉淡入过渡。
-- 优化了加密图包密码解锁后的即时状态同步，解锁成功后立即重新扫描并刷新图集数量与封面预览。
-- 优化了会话密码存储管理，支持 URI、真实绝对路径及规范化路径多键互通与连带撤销。
-- 优化了非 UTF-8 编码（GBK/CP936）压缩包与 Windows 反斜杠路径的条目解析与解密兼容性。
-- 优化了图片模型密码自动兜底机制，未显式传参时自动从会话密码池关联匹配已解锁密码。
-
-## [v1.0.0] - 2026-09-20
-
-### 新增
-- 支持本地图包目录选取与授权记忆，支持自动扫描并分类展示常规文件夹与压缩包图集。
-- 支持单个压缩包文件即时选取，支持直接从系统文件管理器等外部应用关联打开图集。
-- 支持加密压缩包即时输入密码预览，无需全量解压落盘，保障私密安全与加载速度。
-- 支持图集缩略图自适应网格预览与全屏大图画廊浏览。
-- 支持画廊翻页阅读方向切换，提供标准从左至右与日漫从右至左阅读模式。
-- 支持图集按名称、修改时间、文件大小及图片数量进行升降序排序。
-- 支持主页图包名称实时模糊搜索与快速过滤。
-- 支持设置中心，提供阅读方向配置、默认排序规则设定及临时密码一键清空等功能。
-- 支持应用内检查更新，提供新版本检测、版本变更日志展示、安装包下载与调起系统安装。
-- 支持多功能悬浮底栏，集成导航切换与动态交互视觉效果。
-
-### 修复
-- 修复了普通文件夹内图片无法正常读取和预览的问题。
-- 修复了部分系统路径下授权文档解析失败导致无法加载图包的异常。
-
-### 优化
-- 优化了全屏大图浏览手势交互，双击缩放与双指缩放操作更平滑，解决了放大状态下的翻页冲突。
-- 优化了图集图片的加载与缓存机制，大幅降低大体积压缩包的解析与切换等待时间。
-- 优化了深层多级子目录图片的识别与自然排序，自动展平归纳多层文件夹中的图片。
-- 优化了临时密码记忆与会话生命周期，支持同一图集密码优先复用并可在退出时主动锁定。
+### 安全
+- 密码本明文落盘改为 AndroidKeyStore 派生 AES-GCM 对称密钥加密后持久化，兼容旧明文自动迁移，杜绝 root/备份窃取密码。
+- 修复了 `SafManager` 直接路径解析未校验 `..` 路径穿越、可越权读取授权目录之外文件的问题，增加路径归一化与卷名白名单校验。
+- `UpdateManager.downloadApk` 增加下载字节数与预期尺寸的比对校验，降低 DNS/传输层被劫持时静默安装恶意包的暴露面。
