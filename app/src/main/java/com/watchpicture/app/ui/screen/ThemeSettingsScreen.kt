@@ -4,7 +4,7 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -89,8 +89,8 @@ fun ThemeSettingsScreen(
     val amoledDark by prefsRepo.amoledDarkFlow.collectAsStateWithLifecycle(initialValue = false)
     val wideScreenRail by prefsRepo.wideScreenRailFlow.collectAsStateWithLifecycle(initialValue = true)
 
-    val isSystemDark = isSystemInDarkTheme()
-    val isDarkAppearance = darkMode == 2 || (darkMode == 0 && isSystemDark)
+    // 深色判断统一走主题方案，兼容应用内深浅外观覆盖（应用内“深色”+系统浅色时 AMOLED 开关仍可用）
+    val isDarkAppearance = colorScheme.surface.luminance() < 0.5f
 
     var showColorPickerDialog by remember { mutableStateOf(false) }
 
