@@ -6,7 +6,7 @@
 
 - 环境：JDK 21、Android SDK Platform 37（`compileSdk = 37`、`targetSdk = 35`、`minSdk = 24`）、CMake 3.22.1、NDK `29.0.14206865`
 - 单元测试：`./gradlew testDebugUnitTest`
-- Release 包：`./gradlew assembleRelease`（产物 `app/build/outputs/apk/release/app-release-unsigned.apk`）
+- Release 包：`./gradlew assembleRelease`（产物 `app/build/outputs/apk/release/app-release.apk`）
 - 完成标准 = 编译（含测试）通过。
 
 ## 项目约定（硬约束）

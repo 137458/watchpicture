@@ -41,4 +41,4 @@ WatchPicture 是一款轻量、高性能的安卓「图包快捷查看器」应�
 ```bash
 ./gradlew assembleRelease
 ```
-产物位置：`app/build/outputs/apk/release/app-release-unsigned.apk`
+产物位置：`app/build/outputs/apk/release/app-release.apk`
