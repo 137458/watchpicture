@@ -4,10 +4,10 @@ WatchPicture 是一款轻量、高性能的安卓「图包快捷查看器」应�
 
 ## 核心特性
 
-- **Miuix 原生交互体验**：基于 `top.yukonga.miuix.kmp` 官方组件库构建，具备大标题折叠 TopAppBar、触感反馈 MiuixCard、WindowDialog 密码弹窗、MiuixSlider 快速跳页控制器与悬浮胶囊底栏。
-- **内存级流式读取，严禁全量解压落盘**：采用自研 Native 引擎、Commons Compress 与 Coil 3 自定义 `Fetcher` 管道，所有解压与解密在内存管道中流式消费，大体积压缩包即开即显。对于无法流式消费的视频播放等场景，单条目按需落盘至受容量预算与保护窗约束的缓存目录。
+- **Miuix 原生交互体验**：基于 `top.yukonga.miuix.kmp` 官方组件库构建，具备 `TopAppBar` + `MiuixScrollBehavior` 大标题折叠、`Card`、`WindowDialog` 密码弹窗、`WindowBottomSheet` 速览抽屉、`Slider` 跳页控制器、自研 `FloatingBottomBar` 悬浮胶囊底栏，以及宽屏（`>= 600dp`）`NavigationRail` 侧边导航。
+- **内存级流式读取，严禁全量解压落盘**：采用自研 Native 引擎（`NativeZip` / `Native7z` / `LibArchiveExtractor`）、Zip4j、Commons Compress 与 Coil 3 自定义 `Fetcher` 管道，所有解压与解密在内存管道中流式消费，大体积压缩包即开即显。对于无法流式消费的视频播放等场景，单条目按需落盘至受容量预算与保护窗约束的缓存目录。
 - **多引擎分级协同架构**：
-  - **Native C++ 引擎**：基于 mmap 实现，支持 ZIP 中央目录单次解析与哈希索引，STORED 条目零拷贝直通，整包扫描零堆内存增长。
+  - **Native C++ 引擎**：基于 mmap 实现，支持 ZIP 中央目录单次解析与哈希索引，STORED 条目零拷贝直通，整包扫描零堆内存增长；inflate 后端为 vendored libdeflate 1.26（MIT，缺失时回退 NDK 系统 zlib），未加密归档另有 libarchive JNI 直写快路径（7z AES 由原生 7z 解码器承担）。
   - **池化句柄流式解压**：高并发池化 `java.util.zip` 与条目流按核并行调度，消除重复解析的开销。
   - **7z 固实块生命周期驱动回收**：固实块缓存与页面导航生命周期及系统内存压力事件联动，彻底消除翻页重复解压与内存悬垂；集成 Vendored 7z 解码器与 PBKDF2 密钥缓存。
 - **自适应缩略图全量预缓存系统**：
@@ -25,7 +25,7 @@ WatchPicture 是一款轻量、高性能的安卓「图包快捷查看器」应�
 - 运行时与平台：Kotlin 2.3.21, Android SDK 37 (Min SDK 24, Target SDK 35), Java 21, CMake 3.22.1, NDK 29
 - UI 框架：Jetpack Compose + Miuix Compose (`top.yukonga.miuix.kmp:0.9.4`)
 - 图片渲染：Coil 3 (`io.coil-kt.coil3:3.0.4`)
-- 归档解析引擎：自研 Native C++ 引擎 + Commons Compress + Zip4j
+- 归档解析引擎：自研 Native C++ 引擎（ZIP / 7z / libarchive）+ Commons Compress + Zip4j 2.11.5 + libarchive 1.1.6
 - 视频播放：Media3 / ExoPlayer
 - 依赖管理：Gradle Version Catalog (`gradle/libs.versions.toml`)
 - 架构设计：Kotlin Coroutines + StateFlow (MVVM + Clean Architecture)
